@@ -798,14 +798,20 @@ export default function App() {
 
     analyzeMove(fenBefore, uci, controller.signal).then((result) => {
       if (requestId !== coachRequestRef.current) return;
-      setCoachResult(result);
-      if (result.shouldCoach) {
-        setCoachNotes((current) => {
-          const note: CoachNote = { ...result, gameId: gameId || '', savedAt: Date.now(), playerColor: myColor };
-          return [note, ...current.filter((item) => item.ply !== note.ply)].slice(0, 16);
-        });
-        speak(result.feedback);
+
+      // Normal moves are still checked by Stockfish, but they should not
+      // interrupt the player or appear as misleading "small inaccuracies".
+      if (!result.shouldCoach) {
+        setCoachResult(null);
+        return;
       }
+
+      setCoachResult(result);
+      setCoachNotes((current) => {
+        const note: CoachNote = { ...result, gameId: gameId || '', savedAt: Date.now(), playerColor: myColor };
+        return [note, ...current.filter((item) => item.ply !== note.ply)].slice(0, 16);
+      });
+      speak(result.feedback);
     }).catch((error) => {
       if (isAbortError(error) || requestId !== coachRequestRef.current) return;
       setCoachError(`Coach analysis unavailable: ${String(error)}`);
@@ -815,7 +821,10 @@ export default function App() {
   }, [isCoachGame, voiceEnabled, gameId, myColor]);
 
   useEffect(() => {
-    if (!gameId || !isCoachGame) {
+    // Normal phone games use the exact local pre-move FEN captured when the
+    // player makes the move. Only SenseRobot games need stream-observed
+    // coaching because the move is made on the physical board.
+    if (!gameId || !isCoachGame || !isSenseRobotGame) {
       observedCoachPlyRef.current = null;
       return;
     }
@@ -900,10 +909,12 @@ export default function App() {
     initialFen,
     myColor,
     isCoachGame,
+    isSenseRobotGame,
     analyzeStudentMove,
   ]);
 
     const submitMove = useCallback(async (
+      fenBefore: string,
       basePly: number,
       from: string,
       to: string,
@@ -926,6 +937,10 @@ export default function App() {
       if (pendingMoveRef.current?.uci === uci) {
         setStatus('Move accepted — syncing board…');
       }
+
+      // Restore the earlier, more reliable coaching path for normal games:
+      // analyze the exact board position that existed when the move was made.
+      analyzeStudentMove(fenBefore, uci);
     } catch (error) {
       if (pendingMoveRef.current?.uci === uci) {
         pendingMoveRef.current = null;
@@ -963,8 +978,8 @@ export default function App() {
       setPendingPromotion({ from, to, fenBefore, basePly, choices: promotions });
       return;
     }
-    void submitMove(basePly, from, to);
-  }, [token, gameId, canMove, activeGame, position.chess, position.plyCount, submitMove]);
+    void submitMove(fenBefore, basePly, from, to);
+  }, [isSenseRobotGame, token, gameId, canMove, activeGame, position.chess, position.plyCount, submitMove]);
 
   async function waitForBotReady(): Promise<BotRuntimeStatus> {
     const deadline = Date.now() + 8000;
@@ -1732,7 +1747,7 @@ export default function App() {
       <div className="promotion-modal">
         <strong>Promote pawn to</strong>
         <div className="promotion-options">
-          {pendingPromotion.choices.map((choice) => <button key={choice} onClick={() => void submitMove(pendingPromotion.basePly, pendingPromotion.from, pendingPromotion.to, choice)}>
+          {pendingPromotion.choices.map((choice) => <button key={choice} onClick={() => void submitMove(pendingPromotion.fenBefore, pendingPromotion.basePly, pendingPromotion.from, pendingPromotion.to, choice)}>
             {{ q: '♕', r: '♖', b: '♗', n: '♘' }[choice]}
           </button>)}
         </div>
