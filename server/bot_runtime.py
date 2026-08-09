@@ -171,6 +171,7 @@ class BotEngine:
 class LichessBotRuntime:
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        self._start_lock = threading.Lock()
         self._stop = threading.Event()
         self._event_thread: threading.Thread | None = None
         self._game_threads: dict[str, threading.Thread] = {}
@@ -180,6 +181,7 @@ class LichessBotRuntime:
         self._connected = False
         self._running = False
         self._last_error = ""
+        self._api_cooldown_until = 0.0
         self._last_move_ms: int | None = None
         self._last_game_id: str | None = None
         self._submitted_ply: dict[str, int] = {}
@@ -209,6 +211,30 @@ class LichessBotRuntime:
     def _headers(token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {token}"}
 
+    def _set_api_cooldown(self, seconds: float = 65.0) -> None:
+        with self._lock:
+            self._api_cooldown_until = max(
+                self._api_cooldown_until,
+                time.monotonic() + seconds,
+            )
+
+
+    def _wait_for_api_cooldown(self) -> None:
+        while not self._stop.is_set():
+            with self._lock:
+                remaining = (
+                    self._api_cooldown_until
+                    - time.monotonic()
+                )
+
+            if remaining <= 0:
+                return
+
+            if self._stop.wait(
+                min(remaining, 1.0)
+            ):
+                return
+
     def _request(
         self,
         method: str,
@@ -217,16 +243,44 @@ class LichessBotRuntime:
         timeout: float | tuple[float, float] = 12,
         allow: tuple[int, ...] = (200,),
     ) -> requests.Response:
+        self._wait_for_api_cooldown()
+
         token, _ = self._credentials()
+
         response = requests.request(
             method,
             f"{LICHESS_URL}{path}",
             headers=self._headers(token),
             timeout=timeout,
         )
+
+        if response.status_code == 429:
+            self._set_api_cooldown(65)
+
+            with self._lock:
+                self._last_error = (
+                    "Lichess rate limit reached. "
+                    "Pausing all bot API requests for 65 seconds."
+                )
+
+            raise RuntimeError(
+                "Lichess returned 429. "
+                "Bot API cooldown started."
+            )
+
         if response.status_code not in allow:
-            detail = response.text.strip().replace("\n", " ")[:300]
-            raise RuntimeError(f"Lichess returned {response.status_code}: {detail or response.reason}")
+            detail = (
+                response.text
+                .strip()
+                .replace("\n", " ")[:300]
+            )
+
+            raise RuntimeError(
+                f"Lichess returned "
+                f"{response.status_code}: "
+                f"{detail or response.reason}"
+            )
+
         return response
 
     def _validate_account(self) -> None:
@@ -244,48 +298,106 @@ class LichessBotRuntime:
             self._username = username
 
     def start(self) -> dict[str, Any]:
-        with self._lock:
-            if self._running and self._event_thread and self._event_thread.is_alive():
-                return self.status(message="Bot is already running.")
+        # Only one caller may initialize/start the runtime at a time.
+        # This prevents Render bootstrap + frontend /api/bot/start from
+        # creating duplicate Lichess event streams.
+        with self._start_lock:
 
-        try:
-            self._validate_account()
-            self._engine.warmup()  # Avoid first-move process startup lag.
-        except Exception as exc:
             with self._lock:
-                self._last_error = str(exc)
-                self._running = False
+                if (
+                    self._running
+                    and self._event_thread
+                    and self._event_thread.is_alive()
+                ):
+                    return self.status(
+                        message="Bot is already running."
+                    )
+
+            try:
+                self._validate_account()
+
+                # Avoid first-move Stockfish startup lag.
+                self._engine.warmup()
+
+            except Exception as exc:
+                with self._lock:
+                    self._last_error = str(exc)
+                    self._running = False
+                    self._connected = False
+                raise
+
+            with self._lock:
+                # Check again because another start may have completed
+                # before we obtained the start lock.
+                if (
+                    self._running
+                    and self._event_thread
+                    and self._event_thread.is_alive()
+                ):
+                    return self.status(
+                        message="Bot is already running."
+                    )
+
+                self._stop.clear()
+                self._last_error = ""
+                self._running = True
                 self._connected = False
-            raise
 
-        with self._lock:
-            self._stop.clear()
-            self._last_error = ""
-            self._running = True
-            self._connected = False
-            thread = threading.Thread(target=self._event_loop, name="lichess-bot-events", daemon=True)
-            self._event_thread = thread
-            thread.start()
+                thread = threading.Thread(
+                    target=self._event_loop,
+                    name="lichess-bot-events",
+                    daemon=True,
+                )
 
-        # Recover a game after backend restart instead of leaving the player
-        # waiting forever for a gameStart event that already happened.
-        try:
-            playing = self._request("GET", "/api/account/playing").json().get("nowPlaying", [])
-            for game in playing if isinstance(playing, list) else []:
-                game_id = str(game.get("gameId") or "")
-                if game_id:
-                    self._ensure_game_thread(game_id)
-        except Exception as exc:
-            with self._lock:
-                self._last_error = f"Could not recover active games: {exc}"
+                self._event_thread = thread
+                thread.start()
 
-        deadline = time.monotonic() + 4.0
-        while time.monotonic() < deadline and not self._stop.is_set():
-            if self.status().get("connected"):
-                return self.status(message="Bot connected and ready.")
-            time.sleep(0.08)
-        return self.status(message="Bot runtime started; reconnecting to Lichess.")
+            # Recover active games after a backend restart.
+            try:
+                playing = (
+                    self._request(
+                        "GET",
+                        "/api/account/playing",
+                    )
+                    .json()
+                    .get("nowPlaying", [])
+                )
 
+                if isinstance(playing, list):
+                    for game in playing:
+                        game_id = str(
+                            game.get("gameId") or ""
+                        )
+
+                        if game_id:
+                            self._ensure_game_thread(game_id)
+
+            except Exception as exc:
+                with self._lock:
+                    self._last_error = (
+                        f"Could not recover active games: {exc}"
+                    )
+
+            deadline = time.monotonic() + 4.0
+
+            while (
+                time.monotonic() < deadline
+                and not self._stop.is_set()
+            ):
+                if self.status().get("connected"):
+                    return self.status(
+                        message="Bot connected and ready."
+                    )
+
+                time.sleep(0.08)
+
+            return self.status(
+                message=(
+                    "Bot runtime started; "
+                    "reconnecting to Lichess."
+                )
+            )
+        
     def stop(self) -> dict[str, Any]:
         with self._lock:
             self._stop.set()
@@ -421,57 +533,108 @@ class LichessBotRuntime:
         )
 
     def _event_loop(self) -> None:
-        backoff = 0.8
+        backoff = 1.0
+
         while not self._stop.is_set():
             try:
                 token, _ = self._credentials()
 
+                self._wait_for_api_cooldown()
                 with requests.get(
                     f"{LICHESS_URL}/api/stream/event",
-                    headers={**self._headers(token), "Accept": "application/x-ndjson"},
+                    headers={
+                        **self._headers(token),
+                        "Accept": "application/x-ndjson",
+                    },
                     stream=True,
                     timeout=(10, 300),
                 ) as response:
+
                     if response.status_code == 429:
+                        self._set_api_cooldown(65)
+
                         with self._lock:
                             self._connected = False
                             self._last_error = (
                                 "Lichess rate limited the bot event stream. "
-                                "Waiting 60 seconds before retrying."
+                                "Pausing all bot API requests for 65 seconds."
                             )
-                        if self._stop.wait(60):
-                            return
-                        backoff = 0.8
+
                         continue
 
                     if response.status_code != 200:
                         raise RuntimeError(
-                            f"Bot event stream returned {response.status_code}: "
+                            f"Bot event stream returned "
+                            f"{response.status_code}: "
                             f"{response.text[:200]}"
                         )
 
                     with self._lock:
                         self._connected = True
                         self._last_error = ""
-                    backoff = 0.8
+
+                    # A successful connection resets the reconnect delay.
+                    backoff = 1.0
 
                     for raw in response.iter_lines():
                         if self._stop.is_set():
                             return
-                        if raw:
-                            self._handle_event(json.loads(raw.decode("utf-8")))
 
+                        if not raw:
+                            continue
+
+                        self._handle_event(
+                            json.loads(
+                                raw.decode("utf-8")
+                            )
+                        )
+
+                # A 200 stream ending is still a disconnect.
+                # Do NOT reconnect immediately.
                 with self._lock:
                     self._connected = False
+                    self._last_error = (
+                        "Lichess bot event stream disconnected. "
+                        "Reconnecting shortly."
+                    )
+
+                if self._stop.wait(backoff):
+                    return
+
+                backoff = min(
+                    30.0,
+                    backoff * 2.0,
+                )
+
+            except requests.RequestException as exc:
+                with self._lock:
+                    self._connected = False
+                    self._last_error = (
+                        f"Bot event stream network error: {exc}"
+                    )
+
+                if self._stop.wait(backoff):
+                    return
+
+                backoff = min(
+                    30.0,
+                    backoff * 2.0,
+                )
 
             except Exception as exc:
                 with self._lock:
                     self._connected = False
-                    self._last_error = f"Bot event stream: {exc}"
+                    self._last_error = (
+                        f"Bot event stream: {exc}"
+                    )
 
                 if self._stop.wait(backoff):
                     return
-                backoff = min(12.0, backoff * 1.8)
+
+                backoff = min(
+                    30.0,
+                    backoff * 2.0,
+                )
 
         with self._lock:
             self._connected = False
@@ -542,6 +705,7 @@ class LichessBotRuntime:
                 bot_color: chess.Color | None = None
                 try:
                     token, _ = self._credentials()
+                    self._wait_for_api_cooldown()
                     with requests.get(
                         f"{LICHESS_URL}/api/bot/game/stream/{game_id}",
                         headers={**self._headers(token), "Accept": "application/x-ndjson"},
@@ -549,14 +713,14 @@ class LichessBotRuntime:
                         timeout=(10, 300),
                     ) as response:
                         if response.status_code == 429:
+                            self._set_api_cooldown(65)
+
                             with self._lock:
                                 self._last_error = (
-                                    f"Game {game_id}: Lichess rate limited the game stream. "
-                                    "Waiting 60 seconds before retrying."
+                                    f"Game {game_id}: Lichess rate limited the API. "
+                                    "Pausing all bot API requests for 65 seconds."
                                 )
-                            if self._stop.wait(60):
-                                return
-                            backoff = 0.7
+
                             continue
 
                         if response.status_code != 200:
