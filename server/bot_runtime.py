@@ -492,12 +492,9 @@ class LichessBotRuntime:
                 "Bot event stream is not connected yet. Try again in a moment."
             )
 
-        started_after = time.monotonic() - 0.25
         path = f"/api/challenge/{challenge_id}/accept"
 
-        # SenseRobot open rooms may specify the joining color.
-        # Normal phone challenges leave color empty and use the regular
-        # Lichess challenge-accept path.
+        # SenseRobot open-room joins may specify which color the bot takes.
         if color:
             path += f"?color={color}"
 
@@ -507,100 +504,48 @@ class LichessBotRuntime:
             allow=(200, 404, 409),
         )
 
-        # Normally the bot event stream reports gameStart immediately.
-        # Do not wait too long here: if that event is delayed/missed, the
-        # actual Lichess game may already be running and can no-start/abort
-        # while nobody has attached the bot game stream.
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Lichess challenge transitioned ({response.status_code}) before it could be accepted."
+            )
+
+        # IMPORTANT:
+        # For a normal direct Lichess challenge, Lichess documents that the
+        # resulting game ID is the same as the challenge ID. Attach the bot
+        # game stream immediately instead of waiting for a separate gameStart
+        # event. That removes the race where the human can play move 1 before
+        # the backend has attached the bot to the game.
+        if not color:
+            game_id = challenge_id
+            self._ensure_game_thread(game_id)
+
+            payload = self.status(
+                message="Challenge accepted and bot attached to game."
+            )
+            payload["gameId"] = game_id
+            payload["color"] = None
+            return payload
+
+        # SenseRobot/open-room flow keeps using the bot event stream because
+        # it is a different entry path and may include an explicit join color.
+        started_after = time.monotonic() - 0.25
         game_id = self._wait_for_game_start(
             opponent=opponent,
             since=started_after,
-            timeout=2.0,
+            timeout=8.0,
         )
 
         if game_id:
             self._ensure_game_thread(game_id)
             payload = self.status(
-                message="Challenge accepted and game started."
+                message="Open challenge joined and game started."
             )
             payload["gameId"] = game_id
-            payload["color"] = color or None
+            payload["color"] = color
             return payload
 
-        # Recovery path: the challenge can already have become a real game
-        # even if gameStart was missed by the event stream. Ask Lichess once
-        # for the bot's active games, find the matching opponent, and attach
-        # the bot game stream explicitly.
-        lookup_error: Exception | None = None
-        try:
-            playing = (
-                self._request("GET", "/api/account/playing")
-                .json()
-                .get("nowPlaying", [])
-            )
-
-            opponent_key = opponent.strip().lower()
-            candidates: list[tuple[str, str]] = []
-
-            if isinstance(playing, list):
-                for game in playing:
-                    candidate_id = str(
-                        game.get("gameId") or game.get("id") or ""
-                    ).strip()
-                    if not candidate_id:
-                        continue
-
-                    opponent_data = game.get("opponent") or {}
-                    candidate_opponent = str(
-                        opponent_data.get("username")
-                        or opponent_data.get("name")
-                        or opponent_data.get("id")
-                        or ""
-                    ).strip().lower()
-
-                    candidates.append(
-                        (candidate_id, candidate_opponent)
-                    )
-
-            recovered_game_id: str | None = None
-
-            if opponent_key:
-                for candidate_id, candidate_opponent in candidates:
-                    if candidate_opponent == opponent_key:
-                        recovered_game_id = candidate_id
-                        break
-
-            # If Lichess omitted opponent metadata but the bot has only one
-            # active game, that game is unambiguous.
-            if recovered_game_id is None and len(candidates) == 1:
-                recovered_game_id = candidates[0][0]
-
-            if recovered_game_id:
-                self._ensure_game_thread(recovered_game_id)
-                payload = self.status(
-                    message="Challenge accepted; active game recovered."
-                )
-                payload["gameId"] = recovered_game_id
-                payload["color"] = color or None
-                return payload
-
-        except Exception as exc:
-            lookup_error = exc
-
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Lichess challenge transitioned ({response.status_code}) "
-                "but no active game could be recovered."
-            )
-
-        suffix = (
-            f" Active-game lookup failed: {lookup_error}"
-            if lookup_error
-            else ""
-        )
-
         raise RuntimeError(
-            "Lichess accepted the challenge, but the bot could not attach "
-            f"to the started game.{suffix}"
+            "Lichess accepted the open challenge, but the bot did not receive gameStart within 8 seconds."
         )
 
     def _event_loop(self) -> None:
