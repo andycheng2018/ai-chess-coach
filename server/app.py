@@ -151,7 +151,25 @@ def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
     if should_coach:
-        result.update(coach_payload(analysis))
+        # Stockfish remains the source of truth for all chess facts.
+        # Build arrows/highlights deterministically from engine analysis.
+        coaching = fallback_coaching(analysis)
+
+        # GPT is allowed to improve ONLY the wording.
+        llm_payload = coach_payload(analysis)
+
+        for key in (
+            "title",
+            "feedback",
+            "lesson",
+            "question",
+        ):
+            value = llm_payload.get(key)
+
+            if isinstance(value, str) and value.strip():
+                coaching[key] = value.strip()
+
+        result.update(coaching)
     else:
         classification = str(analysis["classification"])
         if classification == "good":

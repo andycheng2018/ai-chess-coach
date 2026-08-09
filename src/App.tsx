@@ -131,14 +131,6 @@ function readLearningNotes(gameId: string): CoachNote[] {
   return readLearningSessions().find((session) => session.gameId === gameId)?.notes || [];
 }
 
-function readLatestLearningSession(username?: string): StoredLearningSession | null {
-  const normalized = username?.toLowerCase();
-  const sessions = readLearningSessions()
-    .filter((session) => !normalized || !session.username || session.username.toLowerCase() === normalized)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-  return sessions[0] || null;
-}
-
 function storeLearningNotes(gameId: string, username: string | undefined, notes: CoachNote[]) {
   try {
     const existing = readLearningSessions().filter((session) => session.gameId !== gameId);
@@ -778,12 +770,6 @@ export default function App() {
     if (gameId) setCoachNotes(readLearningNotes(gameId));
     setRollbackSignal((value) => value + 1);
   }, [gameId]);
-
-  useEffect(() => {
-    if (gameId || !account || coachNotes.length) return;
-    const latest = readLatestLearningSession(account.username);
-    if (latest?.notes.length) setCoachNotes(latest.notes);
-  }, [gameId, account, coachNotes.length]);
 
   useEffect(() => {
     if (!gameId || !coachNotes.length) return;
