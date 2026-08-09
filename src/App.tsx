@@ -59,6 +59,9 @@ const TIME_CONTROLS = [
 ] as const;
 
 type TimeControlId = (typeof TIME_CONTROLS)[number]['id'];
+type CoachDetail = 'quick' | 'balanced' | 'deep';
+
+const COACH_DETAIL_STORAGE_KEY = 'ai-chess-coach.coach-detail.v1';
 
 function readStoredGame(): StoredGame | null {
   try {
@@ -153,6 +156,18 @@ function readPreferredTimeControl(): TimeControlId {
 
 function storePreferredTimeControl(value: TimeControlId) {
   try { window.localStorage.setItem(TIME_CONTROL_STORAGE_KEY, value); } catch { /* no-op */ }
+}
+
+function readCoachDetail(): CoachDetail {
+  try {
+    const value = window.localStorage.getItem(COACH_DETAIL_STORAGE_KEY);
+    if (value === 'quick' || value === 'balanced' || value === 'deep') {
+      return value;
+    }
+  } catch {
+    // no-op
+  }
+  return 'balanced';
 }
 
 function destinations(chess: Chess): Map<string, string[]> {
@@ -272,6 +287,8 @@ export default function App() {
   const [coachNotes, setCoachNotes] = useState<CoachNote[]>([]);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [hintsEnabled, setHintsEnabled] = useState(true);
+
+  const [coachDetail, setCoachDetail] = useState<CoachDetail>(readCoachDetail);
   const [reviewMode, setReviewMode] = useState<CoachReviewMode | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
   const [historyPly, setHistoryPly] = useState<number | null>(null);
@@ -360,6 +377,17 @@ export default function App() {
   useEffect(() => {
     movesTextRef.current = movesText;
   }, [movesText]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        COACH_DETAIL_STORAGE_KEY,
+        coachDetail,
+      );
+    } catch {
+      // no-op
+    }
+  }, [coachDetail]);
 
   const displayedClock = useMemo(() => {
     if (!clock.enabled) return { white: null, black: null };
@@ -796,7 +824,7 @@ export default function App() {
     setReviewMode(null);
     setReviewTarget(null);
 
-    analyzeMove(fenBefore, uci, controller.signal).then((result) => {
+    analyzeMove(fenBefore, uci, coachDetail, controller.signal).then((result) => {
       if (requestId !== coachRequestRef.current) return;
 
       // Normal moves are still checked by Stockfish, but they should not
@@ -818,7 +846,7 @@ export default function App() {
     }).finally(() => {
       if (requestId === coachRequestRef.current) setCoachThinking(false);
     });
-  }, [isCoachGame, voiceEnabled, gameId, myColor]);
+  }, [isCoachGame, voiceEnabled, gameId, myColor, coachDetail]);
 
   useEffect(() => {
     // Normal phone games use the exact local pre-move FEN captured when the
@@ -1532,6 +1560,30 @@ export default function App() {
               <strong>Ready to coach</strong>
               <div>After each move, I’ll quickly check it. Bigger mistakes get a concrete explanation, best-move arrow, and the opponent’s threat when it matters.</div>
             </>}
+          </div>
+          <div className="coach-detail-setting">
+            <span>Coach detail</span>
+
+            <div className="coach-detail-options">
+              {(
+                [
+                  ['quick', 'Quick'],
+                  ['balanced', 'Balanced'],
+                  ['deep', 'Deep'],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={
+                    coachDetail === value ? 'active' : ''
+                  }
+                  onClick={() => setCoachDetail(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="coach-actions">
             <label><input type="checkbox" checked={voiceEnabled} onChange={(event) => setVoiceEnabled(event.target.checked)} /> Voice</label>

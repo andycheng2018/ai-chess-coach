@@ -7,13 +7,11 @@ from typing import Any
 
 from openai import OpenAI
 
-
 PROMPT_PATH = (
     Path(__file__).resolve().parent
     / "prompts"
     / "kid_coach_prompt.txt"
 )
-
 
 COACH_RESPONSE_SCHEMA = {
     "type": "object",
@@ -41,9 +39,66 @@ COACH_RESPONSE_SCHEMA = {
 }
 
 
+COACH_DETAIL_CONFIG: dict[str, dict[str, Any]] = {
+    "quick": {
+        "target": "35-50 words",
+        "max_output_tokens": 220,
+        "instruction": """
+COACH DETAIL LEVEL: QUICK
+
+Keep the feedback approximately 35-50 words.
+
+Focus on:
+- the main problem with the student's move
+- the strongest relevant opponent idea, if supported
+- why the Stockfish best move is better
+
+Be concrete and concise. Do not add extra background or repeat yourself.
+""".strip(),
+    },
+    "balanced": {
+        "target": "60-90 words",
+        "max_output_tokens": 320,
+        "instruction": """
+COACH DETAIL LEVEL: BALANCED
+
+Keep the feedback approximately 60-90 words.
+
+Explain:
+- what went wrong
+- why it matters in this exact position
+- the opponent's strongest relevant idea, if supported
+- why the Stockfish best move is better
+- one reusable thinking habit
+
+Prefer concrete chess language over generic advice.
+""".strip(),
+    },
+    "deep": {
+        "target": "100-140 words",
+        "max_output_tokens": 520,
+        "instruction": """
+COACH DETAIL LEVEL: DEEP
+
+Keep the feedback approximately 100-140 words.
+
+Explain:
+- what went wrong
+- the tactical or positional reason
+- the opponent's strongest relevant reply, if supported
+- the important engine continuation when useful
+- why the Stockfish best move improves the position
+- one reusable lesson the student can apply later
+
+Be detailed but focused. Do not pad the answer or repeat the same point.
+""".strip(),
+    },
+}
+
+
 class LLMCoach:
     """
-    Turns deterministic Stockfish analysis into concise,
+    Turns deterministic Stockfish analysis into
     student-friendly coaching.
 
     Stockfish remains the source of truth for chess facts.
@@ -73,21 +128,22 @@ class LLMCoach:
     def create_feedback(
         self,
         analysis: dict[str, Any],
+        detail: str = "balanced",
     ) -> dict[str, Any]:
         """
-        Generate wording for an already-computed Stockfish analysis.
+        Generate wording for an already-computed
+        Stockfish analysis.
 
-        The model does NOT choose:
-        - classification
-        - centipawn loss
-        - best move
-        - opponent reply
-        - arrows
-        - board highlights
-        - FENs
-
-        Those remain controlled by deterministic engine analysis.
+        The detail setting changes explanation depth only.
+        It never changes Stockfish's chess conclusions.
         """
+
+        normalized_detail = str(detail).strip().lower()
+
+        detail_config = COACH_DETAIL_CONFIG.get(
+            normalized_detail,
+            COACH_DETAIL_CONFIG["balanced"],
+        )
 
         payload = {
             "fen_before": analysis.get("fen_before"),
@@ -96,16 +152,12 @@ class LLMCoach:
             "move_number": analysis.get("move_number"),
             "color": analysis.get("color"),
 
-            "played_move": analysis.get(
-                "played_move"
-            ),
+            "played_move": analysis.get("played_move"),
             "played_move_uci": analysis.get(
                 "played_move_uci"
             ),
 
-            "best_move": analysis.get(
-                "best_move"
-            ),
+            "best_move": analysis.get("best_move"),
             "best_move_uci": analysis.get(
                 "best_move_uci"
             ),
@@ -124,8 +176,6 @@ class LLMCoach:
                 "centipawn_loss"
             ),
 
-            # Limit engine lines so the prompt stays compact
-            # and the live coach remains responsive.
             "best_line": analysis.get(
                 "best_line",
                 [],
@@ -139,12 +189,24 @@ class LLMCoach:
             "theme_hint": analysis.get(
                 "theme_hint"
             ),
+
+            "coach_detail": normalized_detail
+            if normalized_detail in COACH_DETAIL_CONFIG
+            else "balanced",
+
+            "feedback_target": detail_config["target"],
         }
+
+        combined_instructions = (
+            self.instructions
+            + "\n\n"
+            + str(detail_config["instruction"])
+        )
 
         response = self.client.responses.create(
             model=self.model,
 
-            instructions=self.instructions,
+            instructions=combined_instructions,
 
             input=json.dumps(
                 payload,
@@ -160,10 +222,10 @@ class LLMCoach:
                 },
             },
 
-            max_output_tokens=320,
+            max_output_tokens=int(
+                detail_config["max_output_tokens"]
+            ),
 
-            # Live coaching does not need server-side
-            # conversation persistence.
             store=False,
         )
 
@@ -197,12 +259,12 @@ class LLMCoach:
                 "Coach returned empty feedback."
             )
 
-        # Defensive size limits.
-        # These are intentionally larger than the prompt's
-        # requested lengths so normal responses are not cut off.
+        # Do not hard-cut feedback. The model already has
+        # a detail-specific word target and token budget.
+        # Character slicing can cut a sentence in half.
         return {
             "title": title[:80],
-            "feedback": feedback[:500],
-            "lesson": lesson[:160],
-            "question": question[:180],
+            "feedback": feedback,
+            "lesson": lesson[:200],
+            "question": question[:220],
         }

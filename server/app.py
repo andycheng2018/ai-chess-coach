@@ -98,12 +98,18 @@ def fallback_coaching(analysis: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def coach_payload(analysis: dict[str, Any]) -> dict[str, Any]:
+def coach_payload(
+    analysis: dict[str, Any],
+    detail: str = "balanced",
+) -> dict[str, Any]:
     if not os.environ.get("OPENAI_API_KEY", "").strip():
         return fallback_coaching(analysis)
     try:
         with _llm_lock:
-            return get_llm_coach().create_feedback(analysis)
+            return get_llm_coach().create_feedback(
+                analysis,
+                detail=detail,
+            )
     except Exception as exc:
         print(f"LLM coach unavailable; using deterministic fallback: {exc}")
         return fallback_coaching(analysis)
@@ -112,6 +118,14 @@ def coach_payload(analysis: dict[str, Any]) -> dict[str, Any]:
 def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
     fen = str(payload.get("fen", "")).strip()
     move_uci = str(payload.get("move", "")).strip().lower()
+
+    detail = str(
+        payload.get("detail", "balanced")
+    ).strip().lower()
+
+    if detail not in {"quick", "balanced", "deep"}:
+        detail = "balanced"
+
     if not fen or not move_uci:
         raise ValueError("fen and move are required")
 
@@ -148,6 +162,7 @@ def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
         "opponentReplyUci": analysis["opponent_reply_uci"],
         "fenBefore": analysis["fen_before"],
         "fenAfter": analysis["fen_after"],
+        "coachDetail": detail,
     }
 
     if should_coach:
@@ -156,7 +171,10 @@ def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
         coaching = fallback_coaching(analysis)
 
         # GPT is allowed to improve ONLY the wording.
-        llm_payload = coach_payload(analysis)
+        llm_payload = coach_payload(
+            analysis,
+            detail=detail,
+        )
 
         for key in (
             "title",
