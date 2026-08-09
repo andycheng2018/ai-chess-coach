@@ -18,8 +18,14 @@ load_dotenv(ROOT / ".env")
 from bot_runtime import BOT_LEVELS, runtime
 from coach.stockfish_analyzer import StockfishAnalyzer, find_stockfish
 
-HOST = "127.0.0.1"
-PORT = int(os.environ.get("CHESS_SERVER_PORT", "8765"))
+HOST = os.environ.get("HOST", "0.0.0.0")
+
+PORT = int(
+    os.environ.get(
+        "PORT",
+        os.environ.get("CHESS_SERVER_PORT", "8765")
+    )
+)
 COACH_TIME_MS = int(os.environ.get("COACH_TIME_MS", "180"))
 MISTAKE_THRESHOLD_CP = int(os.environ.get("COACH_MISTAKE_THRESHOLD_CP", "80"))
 MAX_BODY_BYTES = 64 * 1024
