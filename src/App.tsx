@@ -25,6 +25,7 @@ const BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'bot_2435';
 const ACTIVE_GAME_STORAGE_KEY = 'ai-chess-coach.active-game.v1';
 const LEARNING_LOG_STORAGE_KEY = 'ai-chess-coach.learning-log.v2';
 const TIME_CONTROL_STORAGE_KEY = 'ai-chess-coach.time-control.v1';
+const SENSE_ROBOT_GAME_STORAGE_KEY = 'ai-chess-coach.sense-robot-game.v1';
 
 type StoredGame = { gameId: string; username?: string; savedAt: number };
 type Player = { name: string; rating?: number; title?: string };
@@ -79,6 +80,37 @@ function storeActiveGame(gameId: string, username?: string) {
 
 function forgetStoredGame() {
   try { window.localStorage.removeItem(ACTIVE_GAME_STORAGE_KEY); } catch { /* no-op */ }
+}
+
+function readSenseRobotGameId(): string | null {
+  try {
+    return window.localStorage.getItem(
+      SENSE_ROBOT_GAME_STORAGE_KEY,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function storeSenseRobotGameId(gameId: string) {
+  try {
+    window.localStorage.setItem(
+      SENSE_ROBOT_GAME_STORAGE_KEY,
+      gameId,
+    );
+  } catch {
+    // no-op
+  }
+}
+
+function forgetSenseRobotGame() {
+  try {
+    window.localStorage.removeItem(
+      SENSE_ROBOT_GAME_STORAGE_KEY,
+    );
+  } catch {
+    // no-op
+  }
 }
 
 function readLearningSessions(): StoredLearningSession[] {
@@ -221,6 +253,7 @@ export default function App() {
   const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
+  const [senseRobotGameId, setSenseRobotGameId] = useState<string | null>(readSenseRobotGameId);
   const gameIdRef = useRef<string | null>(null);
   const [initialFen, setInitialFen] = useState('startpos');
   const [movesText, setMovesText] = useState('');
@@ -286,14 +319,19 @@ export default function App() {
   const activeGame =
     gameStatus === 'started' || gameStatus === 'created';
 
+  const isSenseRobotGame =
+    Boolean(gameId && senseRobotGameId === gameId);
+
   const isMyTurn =
     activeGame && myColor === turnColor;
 
   const canMove =
+    !isSenseRobotGame &&
     historyPly == null &&
     isMyTurn &&
     !moveInFlight &&
     !pendingPromotion;
+    
   const isCoachGame = players.white.name.toLowerCase() === BOT_USERNAME.toLowerCase()
     || players.black.name.toLowerCase() === BOT_USERNAME.toLowerCase();
   const coachArrows: Arrow[] = useMemo(() => {
@@ -912,11 +950,18 @@ export default function App() {
     }
   }, [token, gameId, activeGame, analyzeStudentMove]);
 
-  const handleBoardMove = useCallback((from: string, to: string) => {
-    if (!token || !gameId || !canMove || !activeGame) {
-      setRollbackSignal((value) => value + 1);
-      return;
-    }
+    const handleBoardMove = useCallback((from: string, to: string) => {
+      if (
+        isSenseRobotGame ||
+        !token ||
+        !gameId ||
+        !canMove ||
+        !activeGame
+      ) {
+        setRollbackSignal((value) => value + 1);
+        return;
+      }
+
     const fenBefore = position.chess.fen();
     const basePly = position.plyCount;
     const clone = new Chess(fenBefore);
@@ -1033,8 +1078,17 @@ export default function App() {
     try {
       setStatus('Preparing coach bot…');
 
-      let state = await startBot();
-      setBot(state);
+      // Always apply the difficulty currently selected
+      // in Chess Buddy before joining the SenseRobot room.
+      const levelState = await setBotLevel(level);
+      setBot(levelState);
+
+      let state = levelState;
+
+      if (!state.running) {
+        state = await startBot();
+        setBot(state);
+      }
 
       if (!state.connected) {
         state = await waitForBotReady();
@@ -1054,6 +1108,10 @@ export default function App() {
       }
 
       setActiveGameId(joined.gameId);
+
+      storeSenseRobotGameId(joined.gameId);
+      setSenseRobotGameId(joined.gameId);
+
       setGameStatus('recovering');
 
       setStatus(
@@ -1099,9 +1157,14 @@ export default function App() {
   function resetFinishedGame() {
     coachAbortRef.current?.abort();
     coachRequestRef.current += 1;
+
     forgetStoredGame();
     gameIdRef.current = null;
     setGameId(null);
+
+    forgetSenseRobotGame();
+    setSenseRobotGameId(null);
+
     movesTextRef.current = '';
     setMovesText('');
     setInitialFen('startpos');
@@ -1272,7 +1335,23 @@ export default function App() {
         <PlayerBar player={players[bottomSide]} clock={displayedClock[bottomSide]} active={activeGame && turnColor === bottomSide} side={bottomSide} />
         <div className="under-board">
           <span>{gameId ? `Training game · ${LEVELS.find((item) => item.id === level)?.label} · ${currentTimeControlLabel}` : 'No active game'}</span>
-          <span>{gameId ? (activeGame ? (moveInFlight ? 'Syncing your move…' : isMyTurn ? 'Your turn' : `${players[turnColor].name} is thinking`) : gameStatus === 'recovering' ? 'Reconnecting to game…' : `${gameOutcomeTitle} · ${gameReason}`) : recoveryChecked ? 'Choose a level and start' : 'Checking for an active game…'}</span>
+          <span>
+            {gameId
+              ? activeGame
+                ? moveInFlight
+                  ? 'Syncing your move…'
+                  : isMyTurn
+                    ? isSenseRobotGame
+                      ? 'Your turn · move on SenseRobot'
+                      : 'Your turn'
+                    : `${players[turnColor].name} is thinking`
+                : gameStatus === 'recovering'
+                  ? 'Reconnecting to game…'
+                  : `${gameOutcomeTitle} · ${gameReason}`
+              : recoveryChecked
+                ? 'Choose a level and start'
+                : 'Checking for an active game…'}
+          </span>
         </div>
       </section>
 
