@@ -85,7 +85,7 @@ class BotEngine:
         if self._engine is not None:
             return self._engine
         engine = chess.engine.SimpleEngine.popen_uci(find_stockfish())
-        configure_supported_options(engine, {"Threads": 1, "Hash": 64})
+        configure_supported_options(engine, {"Threads": 1, "Hash": 16})
         self._engine = engine
         return engine
 

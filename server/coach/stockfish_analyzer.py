@@ -142,7 +142,7 @@ class StockfishAnalyzer:
         self.stockfish_path = find_stockfish()
         self.time_ms = max(50, time_ms)
         self.engine = chess.engine.SimpleEngine.popen_uci(self.stockfish_path)
-        configure_supported_options(self.engine, {"Threads": 1, "Hash": 64})
+        configure_supported_options(self.engine, {"Threads": 1, "Hash": 16})
 
     def close(self) -> None:
         try:
