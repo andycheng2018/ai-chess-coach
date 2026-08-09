@@ -46,7 +46,7 @@ Return JSON:
 
 {
   "title": "short 2-6 word headline",
-  "feedback": "roughly 70-120 words of concrete explanation",
+  "feedback": "roughly 60-90 words of concrete explanation",
   "lesson": "one reusable chess habit, maximum 18 words",
   "question": "one useful question for the student, maximum 20 words"
 }

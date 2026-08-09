@@ -784,6 +784,14 @@ class LichessBotRuntime:
 
                             status = str(state.get("status") or "started")
                             if status not in ACTIVE_STATUSES:
+                                print(
+                                    f"[GAME TERMINAL] "
+                                    f"game={game_id} "
+                                    f"status={status} "
+                                    f"moves={state.get('moves', '')!r} "
+                                    f"winner={state.get('winner')!r}",
+                                    flush=True,
+                                )
                                 finished = True
                                 break
                             self._maybe_accept_takeback(game_id, state, bot_color)
