@@ -379,49 +379,52 @@ class LichessBotRuntime:
                 token, _ = self._credentials()
 
                 with requests.get(
-                    f"{LICHESS_URL}/api/bot/game/stream/{game_id}",
+                    f"{LICHESS_URL}/api/stream/event",
                     headers={**self._headers(token), "Accept": "application/x-ndjson"},
                     stream=True,
                     timeout=(10, 300),
                 ) as response:
-
                     if response.status_code == 429:
                         with self._lock:
+                            self._connected = False
                             self._last_error = (
-                                f"Game {game_id}: Lichess rate limited the game stream. "
+                                "Lichess rate limited the bot event stream. "
                                 "Waiting 60 seconds before retrying."
                             )
-
                         if self._stop.wait(60):
                             return
-
-                        backoff = 0.7
+                        backoff = 0.8
                         continue
 
                     if response.status_code != 200:
                         raise RuntimeError(
-                            f"Game stream returned {response.status_code}: "
+                            f"Bot event stream returned {response.status_code}: "
                             f"{response.text[:200]}"
                         )
-                
+
                     with self._lock:
                         self._connected = True
                         self._last_error = ""
                     backoff = 0.8
+
                     for raw in response.iter_lines():
                         if self._stop.is_set():
                             return
                         if raw:
                             self._handle_event(json.loads(raw.decode("utf-8")))
+
                 with self._lock:
                     self._connected = False
+
             except Exception as exc:
                 with self._lock:
                     self._connected = False
                     self._last_error = f"Bot event stream: {exc}"
+
                 if self._stop.wait(backoff):
                     return
                 backoff = min(12.0, backoff * 1.8)
+
         with self._lock:
             self._connected = False
 
@@ -497,8 +500,23 @@ class LichessBotRuntime:
                         stream=True,
                         timeout=(10, 300),
                     ) as response:
+                        if response.status_code == 429:
+                            with self._lock:
+                                self._last_error = (
+                                    f"Game {game_id}: Lichess rate limited the game stream. "
+                                    "Waiting 60 seconds before retrying."
+                                )
+                            if self._stop.wait(60):
+                                return
+                            backoff = 0.7
+                            continue
+
                         if response.status_code != 200:
-                            raise RuntimeError(f"Game stream returned {response.status_code}: {response.text[:200]}")
+                            raise RuntimeError(
+                                f"Game stream returned {response.status_code}: "
+                                f"{response.text[:200]}"
+                            )
+
                         backoff = 0.7
                         for raw in response.iter_lines():
                             if self._stop.is_set():
