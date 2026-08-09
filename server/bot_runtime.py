@@ -186,6 +186,7 @@ class LichessBotRuntime:
         self._takeback_seen: set[tuple[str, int]] = set()
         self._game_start_condition = threading.Condition(self._lock)
         self._recent_game_starts: list[tuple[float, str, str]] = []
+        self._game_states: dict[str, dict[str, Any]] = {}
 
     def level(self) -> BotLevel:
         with self._lock:
@@ -316,6 +317,25 @@ class LichessBotRuntime:
             if message:
                 payload["message"] = message
             return payload
+
+    def game_state(self, game_id: str) -> dict[str, Any] | None:
+        game_id = game_id.strip()
+
+        if not game_id:
+            return None
+
+        with self._lock:
+            cached = self._game_states.get(game_id)
+
+            if not cached:
+                return None
+
+            return {
+                "gameId": cached["gameId"],
+                "initialFen": cached["initialFen"],
+                "state": dict(cached["state"]),
+                "updatedAt": cached["updatedAt"],
+            }
 
     def _wait_for_game_start(self, *, opponent: str = "", since: float, timeout: float = 8.0) -> str | None:
         """Wait for the bot event stream to report the newly started game.
@@ -573,6 +593,14 @@ class LichessBotRuntime:
                                 state = event
                             else:
                                 continue
+
+                            with self._lock:
+                                self._game_states[game_id] = {
+                                    "gameId": game_id,
+                                    "initialFen": initial_fen,
+                                    "state": dict(state),
+                                    "updatedAt": int(time.time() * 1000),
+                                }
 
                             status = str(state.get("status") or "started")
                             if status not in ACTIVE_STATUSES:

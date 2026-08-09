@@ -12,6 +12,22 @@ export type BotRuntimeStatus = {
   message?: string;
 };
 
+export type CachedGameState = {
+  gameId: string;
+  initialFen: string;
+  state: {
+    moves?: string;
+    status?: string;
+    winner?: 'white' | 'black';
+    wtime?: number;
+    btime?: number;
+    winc?: number;
+    binc?: number;
+    [key: string]: unknown;
+  };
+  updatedAt: number;
+};
+
 const CONTROL_URL = import.meta.env.VITE_BOT_CONTROL_URL || 'http://127.0.0.1:8765';
 
 async function jsonRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -107,4 +123,27 @@ export function parseSenseRoomUrl(rawValue: string): SenseRoom {
     challengeId,
     color,
   };
+}
+
+export async function getCachedGameState(
+  gameId: string,
+): Promise<CachedGameState | null> {
+  const response = await fetch(
+    `${CONTROL_URL}/api/bot/game/${encodeURIComponent(gameId)}/state`,
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message ||
+        `${response.status} ${response.statusText}`,
+    );
+  }
+
+  return data as CachedGameState;
 }

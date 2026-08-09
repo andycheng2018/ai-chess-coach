@@ -247,6 +247,26 @@ class Handler(BaseHTTPRequestHandler):
             })
         elif self.path == "/api/bot/status":
             self._send(200, runtime.status())
+        elif (
+            self.path.startswith("/api/bot/game/")
+            and self.path.endswith("/state")
+        ):
+            raw = self.path[
+                len("/api/bot/game/"):
+                -len("/state")
+            ].strip("/")
+
+            game_id = unquote(raw)
+
+            cached = runtime.game_state(game_id)
+
+            if cached is None:
+                self._send(
+                    404,
+                    {"message": "Game state not cached yet."},
+                )
+            else:
+                self._send(200, cached)
         elif self.path == "/api/bot/levels":
             self._send(200, {
                 "levels": [

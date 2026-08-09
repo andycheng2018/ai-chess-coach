@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Move, type Square } from 'chess.js';
 import { ChessBoard, type Arrow } from './components/ChessBoard';
 import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativeOAuth } from './auth';
-import { acceptBotChallenge, getBotStatus, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
+import { acceptBotChallenge, getBotStatus, getCachedGameState, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import { analyzeMove, type CoachResult } from './coach';
 import {
   abortGame,
@@ -224,6 +224,7 @@ export default function App() {
   const gameIdRef = useRef<string | null>(null);
   const [initialFen, setInitialFen] = useState('startpos');
   const [movesText, setMovesText] = useState('');
+  const movesTextRef = useRef('');
   const [orientation, setOrientation] = useState<'white' | 'black'>('white');
   const [myColor, setMyColor] = useState<'white' | 'black'>('white');
   const [gameStatus, setGameStatus] = useState(storedGameAtLoad.current?.gameId ? 'recovering' : 'idle');
@@ -251,6 +252,7 @@ export default function App() {
   const [historyPly, setHistoryPly] = useState<number | null>(null);
   const coachRequestRef = useRef(0);
   const coachAbortRef = useRef<AbortController | null>(null);
+  const observedCoachPlyRef = useRef<number | null>(null);
   const reviewTouchStart = useRef<{ x: number; y: number } | null>(null);
   const [reviewDragX, setReviewDragX] = useState(0);
   const [reviewDragging, setReviewDragging] = useState(false);
@@ -325,6 +327,9 @@ export default function App() {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    movesTextRef.current = movesText;
+  }, [movesText]);
 
   const displayedClock = useMemo(() => {
     if (!clock.enabled) return { white: null, black: null };
@@ -494,10 +499,17 @@ export default function App() {
     };
 
     const applyState = (state: any, clockEnabled?: boolean) => {
-      const nextMoves = String(state?.moves || '');
-      const nextStatus = String(state?.status || 'started');
-      const nextWinner: Winner = state?.winner === 'white' || state?.winner === 'black' ? state.winner : null;
-      setMovesText(nextMoves);
+    const nextMoves = String(state?.moves || '');
+    const nextStatus = String(state?.status || 'started');
+    const nextWinner: Winner =
+      state?.winner === 'white' || state?.winner === 'black'
+        ? state.winner
+        : null;
+
+    // Keep the synchronous ref in lockstep with the
+    // authoritative Lichess stream.
+    movesTextRef.current = nextMoves;
+    setMovesText(nextMoves);
       setGameStatus(nextStatus);
       if (nextWinner) setWinner(nextWinner);
       syncPendingMove(nextMoves);
@@ -585,8 +597,135 @@ export default function App() {
   }, [token, gameId, account, setActiveGameId]);
 
   useEffect(() => {
+    if (!gameId) return;
+
+    let cancelled = false;
+    let requestInFlight = false;
+
+    const syncFromBotBackend = async () => {
+      if (requestInFlight || cancelled) return;
+
+      requestInFlight = true;
+
+      try {
+        const cached = await getCachedGameState(gameId);
+
+        if (!cached || cancelled) {
+          return;
+        }
+
+        const cachedMoves = String(
+          cached.state?.moves || '',
+        ).trim();
+
+        const currentMoves =
+          movesTextRef.current.trim();
+
+        const cachedMoveList = cachedMoves
+          ? cachedMoves.split(/\s+/)
+          : [];
+
+        const currentMoveList = currentMoves
+          ? currentMoves.split(/\s+/)
+          : [];
+
+        // The normal Lichess stream remains the primary source.
+        //
+        // Only use Render when its cached game has MORE moves
+        // than the iPhone currently knows about.
+        if (
+          cachedMoveList.length >
+          currentMoveList.length
+        ) {
+          movesTextRef.current = cachedMoves;
+          setMovesText(cachedMoves);
+
+          if (cached.initialFen) {
+            setInitialFen(cached.initialFen);
+          }
+
+          const state = cached.state;
+
+          if (
+            state.winner === 'white' ||
+            state.winner === 'black'
+          ) {
+            setWinner(state.winner);
+          }
+
+          const nextStatus = String(
+            state.status || 'started',
+          );
+
+          setGameStatus(nextStatus);
+
+          setClock((previous) => ({
+            enabled: previous.enabled,
+            white:
+              typeof state.wtime === 'number'
+                ? state.wtime
+                : previous.white,
+            black:
+              typeof state.btime === 'number'
+                ? state.btime
+                : previous.black,
+            increment:
+              typeof state.winc === 'number'
+                ? state.winc
+                : previous.increment,
+            updatedAt: Date.now(),
+          }));
+
+          // If our own move was waiting for confirmation,
+          // the cached state can also confirm it.
+          const pendingMove =
+            pendingMoveRef.current;
+
+          if (
+            pendingMove &&
+            cachedMoveList.length >
+              pendingMove.basePly
+          ) {
+            pendingMoveRef.current = null;
+            setMoveInFlight(false);
+          }
+
+          setStatus(
+            'Game resynced automatically.',
+          );
+        }
+      } catch (error) {
+        // Do not interrupt the game just because the backup
+        // sync temporarily failed. The normal Lichess stream
+        // may still be working perfectly.
+        console.warn(
+          'Backup game sync failed:',
+          error,
+        );
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    // Check once immediately.
+    void syncFromBotBackend();
+
+    // Then use Render as a lightweight safety net.
+    const timer = window.setInterval(
+      () => void syncFromBotBackend(),
+      1500,
+    );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [gameId]);
+
+  useEffect(() => {
     coachAbortRef.current?.abort();
     coachRequestRef.current += 1;
+    observedCoachPlyRef.current = null;
     setCoachResult(null);
     setCoachError('');
     setCoachThinking(false);
@@ -651,13 +790,101 @@ export default function App() {
     });
   }, [isCoachGame, voiceEnabled, gameId, myColor]);
 
-  const submitMove = useCallback(async (
-    fenBefore: string,
-    basePly: number,
-    from: string,
-    to: string,
-    promotion?: PromotionChoice,
-  ) => {
+  useEffect(() => {
+    if (!gameId || !isCoachGame) {
+      observedCoachPlyRef.current = null;
+      return;
+    }
+
+    const moves = movesText.trim()
+      ? movesText.trim().split(/\s+/)
+      : [];
+
+    const currentPly = moves.length;
+
+    // First observation after connecting/reconnecting.
+    //
+    // Don't suddenly analyze every historical move from
+    // a game that was already in progress.
+    if (observedCoachPlyRef.current == null) {
+      observedCoachPlyRef.current = currentPly;
+      return;
+    }
+
+    const previousPly = observedCoachPlyRef.current;
+
+    if (currentPly <= previousPly) {
+      observedCoachPlyRef.current = currentPly;
+      return;
+    }
+
+    // Mark these moves as observed before starting analysis
+    // so React updates/re-renders cannot analyze them twice.
+    observedCoachPlyRef.current = currentPly;
+
+    let latestStudentMoveIndex = -1;
+
+    // Look only at NEW moves.
+    //
+    // Array index 0 = ply 1 = White
+    // Array index 1 = ply 2 = Black
+    // etc.
+    for (
+      let moveIndex = previousPly;
+      moveIndex < currentPly;
+      moveIndex += 1
+    ) {
+      const moverColor: 'white' | 'black' =
+        moveIndex % 2 === 0
+          ? 'white'
+          : 'black';
+
+      if (moverColor === myColor) {
+        latestStudentMoveIndex = moveIndex;
+      }
+    }
+
+    // The only new move(s) were made by the bot.
+    if (latestStudentMoveIndex < 0) {
+      return;
+    }
+
+    const uci = moves[latestStudentMoveIndex];
+
+    if (!uci) {
+      return;
+    }
+
+    // Rebuild the exact board immediately BEFORE
+    // the student's move.
+    const movesBeforeStudentMove = moves
+      .slice(0, latestStudentMoveIndex)
+      .join(' ');
+
+    const beforePosition = replay(
+      initialFen,
+      movesBeforeStudentMove,
+    );
+
+    analyzeStudentMove(
+      beforePosition.chess.fen(),
+      uci,
+    );
+  }, [
+    gameId,
+    movesText,
+    initialFen,
+    myColor,
+    isCoachGame,
+    analyzeStudentMove,
+  ]);
+
+    const submitMove = useCallback(async (
+      basePly: number,
+      from: string,
+      to: string,
+      promotion?: PromotionChoice,
+    ) => {
     if (!token || !gameId || !activeGame || pendingMoveRef.current) {
       setRollbackSignal((value) => value + 1);
       return;
@@ -675,7 +902,6 @@ export default function App() {
       if (pendingMoveRef.current?.uci === uci) {
         setStatus('Move accepted — syncing board…');
       }
-      analyzeStudentMove(fenBefore, uci);
     } catch (error) {
       if (pendingMoveRef.current?.uci === uci) {
         pendingMoveRef.current = null;
@@ -706,7 +932,7 @@ export default function App() {
       setPendingPromotion({ from, to, fenBefore, basePly, choices: promotions });
       return;
     }
-    void submitMove(fenBefore, basePly, from, to);
+    void submitMove(basePly, from, to);
   }, [token, gameId, canMove, activeGame, position.chess, position.plyCount, submitMove]);
 
   async function waitForBotReady(): Promise<BotRuntimeStatus> {
@@ -876,6 +1102,7 @@ export default function App() {
     forgetStoredGame();
     gameIdRef.current = null;
     setGameId(null);
+    movesTextRef.current = '';
     setMovesText('');
     setInitialFen('startpos');
     setGameStatus('idle');
@@ -1440,7 +1667,7 @@ export default function App() {
       <div className="promotion-modal">
         <strong>Promote pawn to</strong>
         <div className="promotion-options">
-          {pendingPromotion.choices.map((choice) => <button key={choice} onClick={() => void submitMove(pendingPromotion.fenBefore, pendingPromotion.basePly, pendingPromotion.from, pendingPromotion.to, choice)}>
+          {pendingPromotion.choices.map((choice) => <button key={choice} onClick={() => void submitMove(pendingPromotion.basePly, pendingPromotion.from, pendingPromotion.to, choice)}>
             {{ q: '♕', r: '♖', b: '♗', n: '♘' }[choice]}
           </button>)}
         </div>
