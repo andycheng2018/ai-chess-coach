@@ -182,8 +182,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors_origin(self) -> str:
         origin = self.headers.get("Origin", "")
-        if origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:"):
+
+        allowed_origins = {
+            "capacitor://localhost",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        }
+
+        if origin in allowed_origins:
             return origin
+
         return "http://localhost:5173"
 
     def _send(self, status: int, payload: dict[str, Any]) -> None:
