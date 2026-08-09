@@ -160,7 +160,7 @@ class LLMCoach:
                 },
             },
 
-            max_output_tokens=200,
+            max_output_tokens=320,
 
             # Live coaching does not need server-side
             # conversation persistence.
