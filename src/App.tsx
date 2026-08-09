@@ -25,7 +25,6 @@ const BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'bot_2435';
 const ACTIVE_GAME_STORAGE_KEY = 'ai-chess-coach.active-game.v1';
 const LEARNING_LOG_STORAGE_KEY = 'ai-chess-coach.learning-log.v2';
 const TIME_CONTROL_STORAGE_KEY = 'ai-chess-coach.time-control.v1';
-const SENSE_ROBOT_GAME_STORAGE_KEY = 'ai-chess-coach.sense-robot-game.v1';
 
 type StoredGame = { gameId: string; username?: string; savedAt: number };
 type Player = { name: string; rating?: number; title?: string };
@@ -83,37 +82,6 @@ function storeActiveGame(gameId: string, username?: string) {
 
 function forgetStoredGame() {
   try { window.localStorage.removeItem(ACTIVE_GAME_STORAGE_KEY); } catch { /* no-op */ }
-}
-
-function readSenseRobotGameId(): string | null {
-  try {
-    return window.localStorage.getItem(
-      SENSE_ROBOT_GAME_STORAGE_KEY,
-    );
-  } catch {
-    return null;
-  }
-}
-
-function storeSenseRobotGameId(gameId: string) {
-  try {
-    window.localStorage.setItem(
-      SENSE_ROBOT_GAME_STORAGE_KEY,
-      gameId,
-    );
-  } catch {
-    // no-op
-  }
-}
-
-function forgetSenseRobotGame() {
-  try {
-    window.localStorage.removeItem(
-      SENSE_ROBOT_GAME_STORAGE_KEY,
-    );
-  } catch {
-    // no-op
-  }
 }
 
 function readLearningSessions(): StoredLearningSession[] {
@@ -260,7 +228,10 @@ export default function App() {
   const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
-  const [senseRobotGameId, setSenseRobotGameId] = useState<string | null>(readSenseRobotGameId);
+  // SenseRobot mode is intentionally NOT restored from localStorage.
+  // A game becomes a SenseRobot game only after this app successfully
+  // scans and joins a SenseRobot QR room in the current session.
+  const [senseRobotGameId, setSenseRobotGameId] = useState<string | null>(null);
   const gameIdRef = useRef<string | null>(null);
   const [initialFen, setInitialFen] = useState('startpos');
   const [movesText, setMovesText] = useState('');
@@ -516,6 +487,14 @@ export default function App() {
         if (event.type === 'gameStart' && event.game) {
           const opponent = event.game.opponent?.username?.toLowerCase();
           if (opponent === BOT_USERNAME.toLowerCase()) {
+            // A normal Lichess gameStart must stay a normal online game.
+            // Preserve SenseRobot mode only when this is the exact game
+            // that was activated by a successful QR scan.
+            const startedGameId = event.game.id;
+
+            setSenseRobotGameId((current) =>
+              current === startedGameId ? current : null
+            );
             setActiveGameId(event.game.id);
             setGameStatus('recovering');
             setStatus(`Game started against ${BOT_USERNAME}.`);
@@ -1042,13 +1021,23 @@ export default function App() {
 
   async function startCoachGame() {
     if (!token || !account || startingGame || activeGame || gameId || !recoveryChecked) return;
+
     setStartingGame(true);
     setStatus('Checking for an existing training game…');
+
+    // Normal Play is always a regular Lichess online game.
+    // Only the QR scanner is allowed to enable SenseRobot mode.
+    setSenseRobotGameId(null);
+
     try {
       // Refreshes and slow API propagation must never create a second game.
-      // Rejoin any existing coach game before creating a new challenge.
       const existingGames = await getPlayingGames(token);
-      const existing = existingGames.find((game) => game.opponent?.username?.toLowerCase() === BOT_USERNAME.toLowerCase());
+      const existing = existingGames.find(
+        (game) =>
+          game.opponent?.username?.toLowerCase() ===
+          BOT_USERNAME.toLowerCase(),
+      );
+
       if (existing?.gameId) {
         setActiveGameId(existing.gameId);
         setGameStatus('recovering');
@@ -1057,35 +1046,96 @@ export default function App() {
       }
 
       setStatus('Preparing coach bot…');
+
       const levelState = await setBotLevel(level);
       setBot(levelState);
+
       let state = levelState;
-      if (!state.running) state = await startBot();
+      if (!state.running) {
+        state = await startBot();
+      }
+
       setBot(state);
       await waitForBotReady();
-      const selectedTimeControl = TIME_CONTROLS.find((item) => item.id === timeControlId) || TIME_CONTROLS[4];
+
+      const selectedTimeControl =
+        TIME_CONTROLS.find((item) => item.id === timeControlId) ||
+        TIME_CONTROLS[4];
+
       setCurrentTimeControlLabel(selectedTimeControl.label);
-      setStatus(`Challenging ${BOT_USERNAME} · ${selectedTimeControl.label}…`);
+      setStatus(
+        `Challenging ${BOT_USERNAME} · ${selectedTimeControl.label}…`,
+      );
+
       const challenge = await challengeBot(token, BOT_USERNAME, {
         timeControl: selectedTimeControl.timeControl,
         color: preferredColor,
       });
-      const accepted = await acceptBotChallenge(challenge.id, account.username);
-      setBot(accepted);
-      if (accepted.gameId) {
-        setActiveGameId(accepted.gameId);
-        setGameStatus('recovering');
-        setStatus(`Game started against ${BOT_USERNAME}.`);
-      } else {
-        await new Promise((resolve) => window.setTimeout(resolve, 900));
-        const games = await getPlayingGames(token);
-        const found = games.find((game) => game.opponent?.username?.toLowerCase() === BOT_USERNAME.toLowerCase());
-        if (!found?.gameId) throw new Error('Lichess accepted the challenge but no game was reported. Try Play again.');
-        setActiveGameId(found.gameId);
-        setGameStatus('recovering');
+
+      let acceptedGameId: string | null = null;
+      let acceptError: unknown = null;
+
+      try {
+        const accepted = await acceptBotChallenge(
+          challenge.id,
+          account.username,
+        );
+        setBot(accepted);
+        acceptedGameId = accepted.gameId || null;
+      } catch (error) {
+        // A game can already exist even when the bot's gameStart event
+        // arrives late. Recover the real Lichess game before giving up.
+        acceptError = error;
       }
+
+      if (!acceptedGameId) {
+        setStatus('Challenge accepted · connecting to game…');
+
+        // Poll gently for a short period. This prevents the phone from
+        // getting stranded on the setup screen while the real game times out.
+        const deadline = Date.now() + 9000;
+
+        while (Date.now() < deadline && !acceptedGameId) {
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, 750),
+          );
+
+          try {
+            const games = await getPlayingGames(token);
+            const found = games.find(
+              (game) =>
+                game.opponent?.username?.toLowerCase() ===
+                BOT_USERNAME.toLowerCase(),
+            );
+
+            if (found?.gameId) {
+              acceptedGameId = found.gameId;
+            }
+          } catch {
+            // A transient read failure should not abandon a game that
+            // may already be starting.
+          }
+        }
+      }
+
+      if (!acceptedGameId) {
+        throw (
+          acceptError ||
+          new Error(
+            'The challenge was accepted, but the game did not become visible in time.',
+          )
+        );
+      }
+
+      setActiveGameId(acceptedGameId);
+      setGameStatus('recovering');
+      setStatus(`Game started against ${BOT_USERNAME}.`);
     } catch (error) {
-      setStatus(`Could not start game: ${String(error)}`);
+      setStatus(
+        `Could not start game: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     } finally {
       setStartingGame(false);
     }
@@ -1138,7 +1188,8 @@ export default function App() {
 
       setActiveGameId(joined.gameId);
 
-      storeSenseRobotGameId(joined.gameId);
+      // This successful QR scan is the one and only activation path
+      // for SenseRobot mode.
       setSenseRobotGameId(joined.gameId);
 
       setGameStatus('recovering');
@@ -1191,7 +1242,6 @@ export default function App() {
     gameIdRef.current = null;
     setGameId(null);
 
-    forgetSenseRobotGame();
     setSenseRobotGameId(null);
 
     movesTextRef.current = '';
@@ -1234,6 +1284,7 @@ export default function App() {
   const mistakes = coachNotes.filter((note) => note.classification === 'mistake').length;
   const focusLessons = Array.from(new Set(coachNotes.map((note) => note.lesson).filter(Boolean))).slice(0, 3);
   const botLabel = bot.connected ? 'Coach bot ready' : bot.running ? 'Coach bot connecting' : 'Coach bot offline';
+  const selectedLevel = LEVELS.find((item) => item.id === level) || LEVELS[2];
   const selectedTimeControl = TIME_CONTROLS.find((item) => item.id === timeControlId) || TIME_CONTROLS[4];
   const reviewBestUci = reviewTarget?.bestMoveUci || '';
   const reviewReplyUci = reviewTarget?.opponentReplyUci || '';
@@ -1363,7 +1414,18 @@ export default function App() {
         </section>
         <PlayerBar player={players[bottomSide]} clock={displayedClock[bottomSide]} active={activeGame && turnColor === bottomSide} side={bottomSide} />
         <div className="under-board">
-          <span>{gameId ? `Training game · ${LEVELS.find((item) => item.id === level)?.label} · ${currentTimeControlLabel}` : 'No active game'}</span>
+          <span>
+            {gameId ? (
+              <span className="under-board-meta">
+                <span>Training game</span>
+                <span className="bot-level-pill">
+                  {selectedLevel.label}
+                  <small>~{selectedLevel.elo}</small>
+                </span>
+                <span>{currentTimeControlLabel}</span>
+              </span>
+            ) : 'No active game'}
+          </span>
           <span>
             {gameId
               ? activeGame
@@ -1442,6 +1504,17 @@ export default function App() {
         </section>}
 
         {gameId && <section className="card game-card">
+          <div className="active-game-banner">
+            <div>
+              <span className="active-game-kicker">CURRENT OPPONENT</span>
+              <strong>{selectedLevel.label}</strong>
+              <small>Estimated strength ~{selectedLevel.elo}</small>
+            </div>
+            <div className="active-game-chips">
+              <span>{currentTimeControlLabel}</span>
+              <span>{isSenseRobotGame ? 'SenseRobot' : 'Phone'}</span>
+            </div>
+          </div>
           <div className="game-toolbar">
             <button className="icon-button" title="Flip board" onClick={() => setOrientation((value) => value === 'white' ? 'black' : 'white')}>⇅</button>
             <button className="icon-button" title="Request takeback" disabled={!activeGame} onClick={requestTakeback}>↶</button>
@@ -1575,12 +1648,16 @@ export default function App() {
                 <button
                   key={value}
                   type="button"
-                  className={
+                  className={`coach-detail-button ${
                     coachDetail === value ? 'active' : ''
-                  }
+                  }`}
+                  aria-pressed={coachDetail === value}
                   onClick={() => setCoachDetail(value)}
                 >
-                  {label}
+                  <span>{label}</span>
+                  {coachDetail === value ? (
+                    <span className="coach-detail-check" aria-hidden="true">✓</span>
+                  ) : null}
                 </button>
               ))}
             </div>
@@ -1743,13 +1820,62 @@ export default function App() {
           />
         </div>
         <div className="review-explanation">
-          <strong>{reviewMode === 'better' ? `Better: ${reviewTarget.bestMove}` : reviewTarget.opponentReply ? `Threat: ${reviewTarget.opponentReply}` : 'What changed?'}</strong>
-          <p>{reviewMode === 'better'
-            ? `Trace the green arrow and compare it with ${reviewTarget.playedMove}. What does the better move improve or prevent?`
-            : reviewTarget.opponentReply
-              ? 'The red arrow shows the reply you needed to notice. Look at what it attacks, checks, or wins.'
-              : 'Look at the board after your move and identify which pieces or squares became less safe.'}</p>
-          {reviewTarget.lesson ? <small>Lesson: {reviewTarget.lesson}</small> : null}
+          <strong>
+            {reviewMode === 'better'
+              ? `Better: ${reviewTarget.bestMove}`
+              : reviewTarget.opponentReply
+                ? `Threat: ${reviewTarget.opponentReply}`
+                : 'What changed?'}
+          </strong>
+          <p>
+            {reviewMode === 'better'
+              ? `Trace the green arrow and compare it with ${reviewTarget.playedMove}.`
+              : reviewTarget.opponentReply
+                ? 'The red arrow shows the strongest reply you needed to notice.'
+                : 'Look at what changed immediately after your move.'}
+          </p>
+        </div>
+
+        <div className="review-analysis">
+          <div className="review-analysis-head">
+            <span>COACH ANALYSIS</span>
+            <span className={`quality-badge ${reviewTarget.classification}`}>
+              {reviewTarget.classification}
+            </span>
+          </div>
+
+          <p>{reviewTarget.feedback}</p>
+
+          <div className="review-analysis-moves">
+            <span>
+              <small>You played</small>
+              <strong>{reviewTarget.playedMove}</strong>
+            </span>
+            <span>
+              <small>Better</small>
+              <strong>{reviewTarget.bestMove}</strong>
+            </span>
+            {reviewTarget.opponentReply ? (
+              <span>
+                <small>Best reply</small>
+                <strong>{reviewTarget.opponentReply}</strong>
+              </span>
+            ) : null}
+          </div>
+
+          {reviewTarget.lesson ? (
+            <div className="review-analysis-lesson">
+              <span>Remember</span>
+              {reviewTarget.lesson}
+            </div>
+          ) : null}
+
+          {reviewTarget.question ? (
+            <div className="review-analysis-question">
+              <span>Ask yourself</span>
+              {reviewTarget.question}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>}
