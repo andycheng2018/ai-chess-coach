@@ -338,38 +338,66 @@ class LichessBotRuntime:
                     return None
                 self._game_start_condition.wait(timeout=remaining)
 
-    def accept_challenge(self, challenge_id: str, opponent: str = "") -> dict[str, Any]:
+    def accept_challenge(
+        self,
+        challenge_id: str,
+        opponent: str = "",
+        color: str = "",
+    ) -> dict[str, Any]:
         challenge_id = challenge_id.strip()
         if not challenge_id:
             raise ValueError("challenge id is required")
+
+        color = color.strip().lower()
+        if color and color not in {"white", "black"}:
+            raise ValueError("color must be white or black")
+
         if not self.status()["running"]:
             self.start()
+
         if not self.status().get("connected"):
-            raise RuntimeError("Bot event stream is not connected yet. Try Play again in a moment.")
+            raise RuntimeError(
+                "Bot event stream is not connected yet. Try again in a moment."
+            )
 
         started_after = time.monotonic() - 0.25
+
+        path = f"/api/challenge/{challenge_id}/accept"
+
+        # Open Lichess challenges can specify which color the joining
+        # player should take. SenseRobot includes this in its QR URL.
+        if color:
+            path += f"?color={color}"
+
         response = self._request(
             "POST",
-            f"/api/challenge/{challenge_id}/accept",
+            path,
             allow=(200, 404, 409),
         )
 
-        game_id = self._wait_for_game_start(opponent=opponent, since=started_after, timeout=8.0)
+        game_id = self._wait_for_game_start(
+            opponent=opponent,
+            since=started_after,
+            timeout=8.0,
+        )
+
         if game_id:
-            payload = self.status(message="Challenge accepted and game started.")
+            payload = self.status(
+                message="Open challenge joined and game started."
+            )
             payload["gameId"] = game_id
+            payload["color"] = color or None
             return payload
 
-        # 404/409 can mean the challenge transitioned between create and accept.
-        # Surface the real state instead of pretending startup succeeded.
         if response.status_code != 200:
             raise RuntimeError(
-                f"Lichess challenge transitioned ({response.status_code}) but no gameStart event arrived. "
-                "Try Play again."
+                f"Lichess challenge transitioned ({response.status_code}) "
+                "but no gameStart event arrived."
             )
+
         raise RuntimeError(
-            "Lichess accepted the challenge, but the bot did not receive gameStart within 8 seconds. "
-            "Try Play again; if it repeats, restart the backend."
+            "Lichess accepted the challenge, but the bot did not "
+            "receive gameStart within 8 seconds."
         )
 
     def _event_loop(self) -> None:

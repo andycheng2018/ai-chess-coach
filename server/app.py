@@ -276,6 +276,27 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._json_body()
                 opponent = str(body.get("opponent", "")).strip()
                 self._send(200, runtime.accept_challenge(unquote(raw), opponent=opponent))
+            elif self.path == "/api/bot/join-room":
+                body = self._json_body()
+
+                challenge_id = str(body.get("challengeId", "")).strip()
+                color = str(body.get("color", "")).strip().lower()
+                opponent = str(body.get("opponent", "")).strip()
+
+                if not challenge_id:
+                    raise ValueError("challengeId is required")
+
+                if color and color not in {"white", "black"}:
+                    raise ValueError("color must be white or black")
+
+                self._send(
+                    200,
+                    runtime.accept_challenge(
+                        challenge_id,
+                        opponent=opponent,
+                        color=color,
+                    ),
+                )
             elif self.path == "/api/coach/analyze":
                 self._send(200, analyze_move(self._json_body()))
             else:

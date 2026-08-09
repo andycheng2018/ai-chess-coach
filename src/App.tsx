@@ -1,3 +1,4 @@
+import { scanSenseRoom } from './senseScanner';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Move, type Square } from 'chess.js';
 import { ChessBoard, type Arrow } from './components/ChessBoard';
@@ -216,6 +217,7 @@ export default function App() {
   const [preferredColor, setPreferredColor] = useState<'random' | 'white' | 'black'>('random');
   const [bot, setBot] = useState<BotRuntimeStatus>({ running: false, connected: false });
   const [startingGame, setStartingGame] = useState(false);
+  const [scanningRoom, setScanningRoom] = useState(false);
   const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
@@ -789,6 +791,61 @@ export default function App() {
     }
   }
 
+  async function scanSenseRobotRoom() {
+    if (
+      scanningRoom ||
+      startingGame ||
+      activeGame ||
+      gameId ||
+      !recoveryChecked
+    ) {
+      return;
+    }
+
+    setScanningRoom(true);
+
+    try {
+      setStatus('Preparing coach bot…');
+
+      let state = await startBot();
+      setBot(state);
+
+      if (!state.connected) {
+        state = await waitForBotReady();
+        setBot(state);
+      }
+
+      setStatus('Scan the SenseRobot room QR code…');
+
+      const joined = await scanSenseRoom();
+
+      setBot(joined);
+
+      if (!joined.gameId) {
+        throw new Error(
+          'The room was joined, but Lichess did not report a game.'
+        );
+      }
+
+      setActiveGameId(joined.gameId);
+      setGameStatus('recovering');
+
+      setStatus(
+        `SenseRobot room joined as ${BOT_USERNAME}.`
+      );
+    } catch (error) {
+      setStatus(
+        `Could not join SenseRobot room: ${
+          error instanceof Error
+            ? error.message
+            : String(error)
+        }`
+      );
+    } finally {
+      setScanningRoom(false);
+    }
+  }
+
   function requestTakeback() {
     if (!token || !gameId) return;
     handleTakeback(token, gameId, true)
@@ -1032,6 +1089,20 @@ export default function App() {
           {bot.error ? <div className="inline-error">{bot.error}</div> : null}
           <button className="primary wide" disabled={startingGame || !recoveryChecked} onClick={() => void startCoachGame()}>
             {!recoveryChecked ? 'Checking active game…' : startingGame ? 'Starting…' : `Play ${BOT_USERNAME}`}
+          </button>
+
+          <button
+            className="ghost wide"
+            disabled={
+              scanningRoom ||
+              startingGame ||
+              !recoveryChecked
+            }
+            onClick={() => void scanSenseRobotRoom()}
+          >
+            {scanningRoom
+              ? 'Scanning…'
+              : '▣ Scan SenseRobot Room'}
           </button>
         </section>}
 

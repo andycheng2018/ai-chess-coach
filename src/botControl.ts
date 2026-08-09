@@ -44,3 +44,67 @@ export function setBotLevel(level: string): Promise<BotRuntimeStatus> {
     body: JSON.stringify({ level }),
   });
 }
+
+export function joinSenseRoom(
+  challengeId: string,
+  color: 'white' | 'black',
+): Promise<BotRuntimeStatus> {
+  return jsonRequest('/api/bot/join-room', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      challengeId,
+      color,
+    }),
+  });
+}
+
+export type SenseRoom = {
+  challengeId: string;
+  color: 'white' | 'black';
+};
+
+export function parseSenseRoomUrl(rawValue: string): SenseRoom {
+  let url: URL;
+
+  try {
+    url = new URL(rawValue.trim());
+  } catch {
+    throw new Error('This QR code is not a valid URL.');
+  }
+
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname.toLowerCase() !== 'lichess.org'
+  ) {
+    throw new Error('This is not a Lichess room QR code.');
+  }
+
+  const parts = url.pathname
+    .split('/')
+    .filter(Boolean);
+
+  if (parts.length !== 1) {
+    throw new Error('Invalid Lichess room URL.');
+  }
+
+  const challengeId = parts[0];
+
+  // Lichess challenge/game IDs are 8 characters.
+  if (!/^[a-zA-Z0-9]{8}$/.test(challengeId)) {
+    throw new Error('Invalid Lichess challenge ID.');
+  }
+
+  const color = url.searchParams.get('color');
+
+  if (color !== 'white' && color !== 'black') {
+    throw new Error(
+      'The room QR code does not specify white or black.'
+    );
+  }
+
+  return {
+    challengeId,
+    color,
+  };
+}
