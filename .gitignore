@@ -1,0 +1,13 @@
+node_modules/
+.venv/
+dist/
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+.env
+bot/config.yml
+.pytest_cache/
+vite.config.js
+vite.config.d.ts
+bot/config.yml

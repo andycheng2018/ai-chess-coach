@@ -1,0 +1,4 @@
+# Optional alternative to LICHESS_BOT_TOKEN in .env.
+# Copy to config.yml and paste the bot account token.
+token: PASTE_BOT_2435_TOKEN_HERE
+username: bot_2435
