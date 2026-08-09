@@ -246,14 +246,50 @@ export default function App() {
   const [hintsEnabled, setHintsEnabled] = useState(true);
   const [reviewMode, setReviewMode] = useState<CoachReviewMode | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
+  const [historyPly, setHistoryPly] = useState<number | null>(null);
   const coachRequestRef = useRef(0);
   const coachAbortRef = useRef<AbortController | null>(null);
+  const reviewTouchStart = useRef<{ x: number; y: number } | null>(null);
+  const [reviewDragX, setReviewDragX] = useState(0);
+  const [reviewDragging, setReviewDragging] = useState(false);
+  const [reviewNoTransition, setReviewNoTransition] = useState(false);
+  const reviewAnimatingRef = useRef(false);
 
-  const position = useMemo(() => replay(initialFen, movesText), [initialFen, movesText]);
-  const turnColor: 'white' | 'black' = position.chess.turn() === 'w' ? 'white' : 'black';
-  const activeGame = gameStatus === 'started' || gameStatus === 'created';
-  const isMyTurn = activeGame && myColor === turnColor;
-  const canMove = isMyTurn && !moveInFlight && !pendingPromotion;
+  const position = useMemo(
+  () => replay(initialFen, movesText),
+  [initialFen, movesText],
+);
+
+  const displayPosition = useMemo(() => {
+    // null means we are looking at the live/current position.
+    if (historyPly == null || historyPly >= position.plyCount) {
+      return position;
+    }
+
+    const moves = movesText.trim()
+      ? movesText.trim().split(/\s+/)
+      : [];
+
+    return replay(
+      initialFen,
+      moves.slice(0, historyPly).join(' '),
+    );
+  }, [initialFen, movesText, historyPly, position]);
+
+  const turnColor: 'white' | 'black' =
+    position.chess.turn() === 'w' ? 'white' : 'black';
+
+  const activeGame =
+    gameStatus === 'started' || gameStatus === 'created';
+
+  const isMyTurn =
+    activeGame && myColor === turnColor;
+
+  const canMove =
+    historyPly == null &&
+    isMyTurn &&
+    !moveInFlight &&
+    !pendingPromotion;
   const isCoachGame = players.white.name.toLowerCase() === BOT_USERNAME.toLowerCase()
     || players.black.name.toLowerCase() === BOT_USERNAME.toLowerCase();
   const coachArrows: Arrow[] = useMemo(() => {
@@ -837,6 +873,91 @@ export default function App() {
   const gameReason = gameEndReason(gameStatus, winner, myColor);
   const orderedCoachNotes = [...coachNotes].sort((a, b) => a.ply - b.ply);
 
+  const reviewIndex = reviewTarget
+    ? orderedCoachNotes.findIndex(
+        (note) => note.ply === reviewTarget.ply
+      )
+    : -1;
+
+  function openReviewAt(index: number) {
+    if (!orderedCoachNotes.length) return;
+
+    const normalized =
+      (index + orderedCoachNotes.length) % orderedCoachNotes.length;
+
+    setReviewTarget(orderedCoachNotes[normalized]);
+  }
+
+  function previousReview() {
+    if (!orderedCoachNotes.length) return;
+
+    openReviewAt(
+      reviewIndex >= 0
+        ? reviewIndex - 1
+        : orderedCoachNotes.length - 1
+    );
+  }
+
+  function nextReview() {
+    if (!orderedCoachNotes.length) return;
+
+    openReviewAt(
+      reviewIndex >= 0
+        ? reviewIndex + 1
+        : 0
+    );
+  }
+
+  function animateReviewChange(direction: 'next' | 'previous') {
+    if (reviewAnimatingRef.current) return;
+
+    if (orderedCoachNotes.length < 2) {
+      setReviewDragging(false);
+      setReviewDragX(0);
+      return;
+    }
+
+    reviewAnimatingRef.current = true;
+    setReviewDragging(false);
+
+    const width = Math.max(window.innerWidth, 400);
+
+    // Swipe left -> current review exits left.
+    const outgoing =
+      direction === 'next'
+        ? -width
+        : width;
+
+    // New review enters from opposite side.
+    const incoming = -outgoing;
+
+    setReviewDragX(outgoing);
+
+    window.setTimeout(() => {
+      if (direction === 'next') {
+        nextReview();
+      } else {
+        previousReview();
+      }
+
+      // Instantly move the NEW review to the opposite side.
+      setReviewNoTransition(true);
+      setReviewDragX(incoming);
+
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          // Animate new review into the center.
+          setReviewNoTransition(false);
+          setReviewDragX(0);
+
+          window.setTimeout(() => {
+            reviewAnimatingRef.current = false;
+          }, 220);
+        });
+      });
+    }, 180);
+  }
+
   return <div className="app-shell">
     <header>
       <div className="brand-row"><span className="eyebrow">AI CHESS COACH</span><strong>{account?.username || 'Connecting…'}</strong></div>
@@ -853,13 +974,13 @@ export default function App() {
         <PlayerBar player={players[topSide]} clock={displayedClock[topSide]} active={activeGame && turnColor === topSide} side={topSide} />
         <section className="board-panel">
           <ChessBoard
-            fen={position.chess.fen()}
+            fen={displayPosition.chess.fen()}
             orientation={orientation}
             movableColor={canMove ? myColor : undefined}
-            destinations={destinations(position.chess)}
-            lastMove={position.lastMove}
-            coachArrows={coachArrows}
-            coachHighlights={coachHighlights}
+            destinations={canMove ? destinations(position.chess) : new Map()}
+            lastMove={displayPosition.lastMove}
+            coachArrows={historyPly == null ? coachArrows : []}
+            coachHighlights={historyPly == null ? coachHighlights : []}
             rollbackSignal={rollbackSignal}
             onMove={handleBoardMove}
           />
@@ -925,10 +1046,90 @@ export default function App() {
             <b>{gameScore}</b>
           </div> : null}
           <div className="move-list">
-            {position.san.length === 0 ? <span className="muted">Moves will appear here.</span> : Array.from({ length: Math.ceil(position.san.length / 2) }, (_, index) => <div className="move-row" key={index}>
-              <b>{index + 1}.</b><span>{position.san[index * 2] || ''}</span><span>{position.san[index * 2 + 1] || ''}</span>
-            </div>)}
-          </div>
+              {position.san.length === 0 ? (
+                <span className="muted">Moves will appear here.</span>
+              ) : (
+                Array.from(
+                  { length: Math.ceil(position.san.length / 2) },
+                  (_, index) => {
+                    const whiteMoveIndex = index * 2;
+                    const blackMoveIndex = index * 2 + 1;
+
+                    const whitePly = whiteMoveIndex + 1;
+                    const blackPly = blackMoveIndex + 1;
+
+                    const whiteCoachNote = coachNotes.find(
+                      (note) => note.ply === whitePly
+                    );
+
+                    const blackCoachNote = coachNotes.find(
+                      (note) => note.ply === blackPly
+                    );
+
+                    const whiteMove = position.san[whiteMoveIndex];
+                    const blackMove = position.san[blackMoveIndex];
+
+                    return (
+                      <div className="move-row" key={index}>
+                        <b>{index + 1}.</b>
+
+                        {whiteMove ? (
+                          <button
+                            type="button"
+                            className={`move-cell ${
+                              historyPly === whitePly ? 'active' : ''
+                            } ${
+                              whiteCoachNote?.classification === 'blunder'
+                                ? 'move-blunder'
+                                : whiteCoachNote?.classification === 'mistake'
+                                  ? 'move-mistake'
+                                  : ''
+                            }`}
+                            onClick={() => {
+                              setHistoryPly(
+                                whitePly >= position.plyCount
+                                  ? null
+                                  : whitePly
+                              );
+                            }}
+                          >
+                            {whiteMove}
+                          </button>
+                        ) : (
+                          <span />
+                        )}
+
+                        {blackMove ? (
+                          <button
+                            type="button"
+                            className={`move-cell ${
+                              historyPly === blackPly ? 'active' : ''
+                            } ${
+                              blackCoachNote?.classification === 'blunder'
+                                ? 'move-blunder'
+                                : blackCoachNote?.classification === 'mistake'
+                                  ? 'move-mistake'
+                                  : ''
+                            }`}
+                            onClick={() => {
+                              setHistoryPly(
+                                blackPly >= position.plyCount
+                                  ? null
+                                  : blackPly
+                              );
+                            }}
+                          >
+                            {blackMove}
+                          </button>
+                        ) : (
+                          <span />
+                        )}
+                      </div>
+                    );
+                  }
+                )
+              )}
+            </div>
           <div className="game-actions">
             <button className="ghost" disabled={!activeGame} onClick={() => setEndGameConfirm(true)}>
               End game…
@@ -988,14 +1189,102 @@ export default function App() {
     </main>
 
     {reviewMode && reviewTarget && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Review coached position" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewMode(null); }}>
-      <div className="review-modal">
+      <div
+        className="review-modal"
+        style={{
+          transform: `translate3d(${reviewDragX}px, 0, 0)`,
+          transition:
+            reviewNoTransition || reviewDragging
+              ? 'none'
+              : 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
+          willChange: 'transform',
+        }}
+        onTouchStart={(event) => {
+          if (reviewAnimatingRef.current) return;
+
+          const touch = event.changedTouches[0];
+
+          reviewTouchStart.current = {
+            x: touch.clientX,
+            y: touch.clientY,
+          };
+
+          setReviewDragging(true);
+        }}
+        onTouchMove={(event) => {
+          if (
+            !reviewTouchStart.current ||
+            reviewAnimatingRef.current
+          ) {
+            return;
+          }
+
+          const touch = event.changedTouches[0];
+
+          const dx =
+            touch.clientX - reviewTouchStart.current.x;
+
+          const dy =
+            touch.clientY - reviewTouchStart.current.y;
+
+          // Don't interfere with vertical scrolling.
+          if (Math.abs(dy) > Math.abs(dx)) {
+            return;
+          }
+
+          // Slight resistance makes it feel less stiff.
+          setReviewDragX(dx * 0.9);
+        }}
+        onTouchEnd={(event) => {
+          const start = reviewTouchStart.current;
+          reviewTouchStart.current = null;
+
+          if (!start || reviewAnimatingRef.current) {
+            return;
+          }
+
+          const touch = event.changedTouches[0];
+
+          const dx = touch.clientX - start.x;
+          const dy = touch.clientY - start.y;
+
+          // Not enough movement -> snap back.
+          if (
+            Math.abs(dx) < 65 ||
+            Math.abs(dx) < Math.abs(dy)
+          ) {
+            setReviewDragging(false);
+            setReviewDragX(0);
+            return;
+          }
+
+          if (dx < 0) {
+            animateReviewChange('next');
+          } else {
+            animateReviewChange('previous');
+          }
+        }}
+      >
         <div className="review-modal-head">
           <div>
             <span className="eyebrow">COACH REVIEW</span>
             <strong>Move {reviewTarget.moveNumber} · {reviewTarget.playedMove}</strong>
             <small>{reviewTarget.title}</small>
           </div>
-          <button className="ghost" onClick={() => setReviewMode(null)}>Close</button>
+          <div className="review-nav">
+            <span>
+              {reviewIndex >= 0 ? reviewIndex + 1 : 1}
+              {' / '}
+              {orderedCoachNotes.length}
+            </span>
+
+            <button
+              className="ghost"
+              onClick={() => setReviewMode(null)}
+            >
+              Close
+            </button>
+          </div>
         </div>
         <div className="review-tabs">
           <button className={reviewMode === 'better' ? 'active' : ''} onClick={() => setReviewMode('better')}>Before your move</button>

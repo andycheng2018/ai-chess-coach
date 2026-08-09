@@ -334,7 +334,20 @@ header {
 }
 
 @media (max-width: 620px) {
-  header { padding: 10px 12px; align-items: flex-start; }
+  header {
+    padding:
+      calc(10px + env(safe-area-inset-top, 0px))
+      12px
+      10px;
+    align-items: flex-start;
+  }
+
+  .game-layout {
+    width: calc(100% - 12px);
+    padding-top: 8px;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+  }
   .brand-row { align-items: flex-start; flex-direction: column; gap: 2px; }
   .header-actions { justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   .header-status { display: none; }
@@ -435,3 +448,58 @@ header {
   cursor: pointer;
 }
 .danger-button:hover { filter: brightness(1.08); }
+
+.move-cell {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  padding: 5px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.move-cell:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.move-cell.active {
+  background: #81b64c;
+  color: #fff;
+}
+
+.review-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-nav > span {
+  min-width: 42px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.move-cell.move-mistake {
+  color: #ef6b6b;
+  background: rgba(239, 107, 107, 0.10);
+}
+
+.move-cell.move-blunder {
+  color: #ff4d4d;
+  background: rgba(255, 77, 77, 0.18);
+  font-weight: 750;
+}
+
+.move-cell.move-mistake:hover,
+.move-cell.move-blunder:hover {
+  background: rgba(255, 77, 77, 0.25);
+}
+
+.review-modal {
+  touch-action: pan-y;
+  overscroll-behavior-x: contain;
+}

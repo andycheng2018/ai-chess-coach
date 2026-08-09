@@ -141,7 +141,14 @@ function isAbortError(error: unknown): boolean {
 
 function isRetryableStreamError(error: unknown): boolean {
   if (!(error instanceof LichessHttpError)) return true;
-  return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+
+  return (
+    error.status === 404 ||
+    error.status === 408 ||
+    error.status === 425 ||
+    error.status === 429 ||
+    error.status >= 500
+  );
 }
 
 export async function retryingStream(
@@ -151,23 +158,67 @@ export async function retryingStream(
   onFatal?: (error: unknown) => void,
 ): Promise<void> {
   let attempt = 0;
+  let notFoundAttempts = 0;
+
   while (!signal.aborted) {
+    let lastError: unknown = null;
+
     try {
       await open(signal);
+
       if (signal.aborted) return;
+
+      // A stream successfully opened and later ended.
+      notFoundAttempts = 0;
     } catch (error) {
-      if (signal.aborted || isAbortError(error)) return;
-      if (!isRetryableStreamError(error)) {
+      if (signal.aborted || isAbortError(error)) {
+        return;
+      }
+
+      lastError = error;
+
+      if (error instanceof LichessHttpError && error.status === 404) {
+        notFoundAttempts += 1;
+
+        // Newly-created games can briefly return 404 before
+        // their game stream becomes available.
+        if (notFoundAttempts > 6) {
+          onFatal?.(error);
+          return;
+        }
+      } else if (!isRetryableStreamError(error)) {
         onFatal?.(error);
         return;
       }
     }
+
     attempt += 1;
     onReconnect?.(attempt);
-    const delay = Math.min(5000, 600 * 2 ** Math.min(attempt, 3));
+
+    let delay = Math.min(
+      5000,
+      600 * 2 ** Math.min(attempt - 1, 3),
+    );
+
+    // Lichess asks us to back off significantly after rate limiting.
+    if (
+      lastError instanceof LichessHttpError &&
+      lastError.status === 429
+    ) {
+      delay = 60_000;
+    }
+
     await new Promise<void>((resolve) => {
       const timer = window.setTimeout(resolve, delay);
-      signal.addEventListener('abort', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+
+      signal.addEventListener(
+        'abort',
+        () => {
+          window.clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
     });
   }
 }
