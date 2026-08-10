@@ -824,6 +824,10 @@ export default function App() {
           );
 
           if (!result.shouldCoach) {
+            // Give lightweight feedback for normal moves,
+            // but do NOT add them to the Learning Log.
+            setCoachResult(result);
+            speak(result.feedback);
             continue;
           }
 
@@ -1679,7 +1683,11 @@ const analyzeStudentMove = useCallback(
             {coachThinking ? <div className="coach-thinking"><span className="spinner" />Analyzing your move…</div> : coachError ? <div className="inline-error">{coachError}</div> : coachResult ? <>
               <div className="coach-heading">
                 <strong>{coachResult.title}</strong>
-                <span className={`quality-badge ${coachResult.classification}`}>{coachResult.classification}</span>
+                {coachResult.shouldCoach ? (
+                  <span className={`quality-badge ${coachResult.classification}`}>
+                    {coachResult.classification}
+                  </span>
+                ) : null}
               </div>
               <div>{coachResult.feedback}</div>
               {coachResult.question ? <div className="coach-question"><span>Ask yourself</span>{coachResult.question}</div> : null}

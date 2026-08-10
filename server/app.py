@@ -189,23 +189,47 @@ def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
 
         result.update(coaching)
     else:
-        classification = str(analysis["classification"])
-        if classification == "good":
+        cp_loss = int(analysis["centipawn_loss"])
+        played = str(analysis["played_move"])
+        best = str(analysis["best_move"])
+        played_uci = str(analysis["played_move_uci"])
+        best_uci = str(analysis["best_move_uci"])
+
+        # Exact Stockfish top choice.
+        if played_uci == best_uci:
             result.update({
-                "title": "Solid move",
-                "feedback": f"{analysis['played_move']} has no major problem. Keep looking for your opponent's forcing ideas before the next move.",
-                "lesson": "Keep checking threats even after a good move",
-                "question": "What changed after my move?",
+                "title": "Great move",
+                "feedback": f"Great move — {played} is the top choice.",
+                "lesson": "",
+                "question": "",
                 "arrows": [],
                 "highlightsBefore": [],
                 "highlightsAfter": [],
             })
+
+        # Very close to best.
+        elif cp_loss < 35:
+            result.update({
+                "title": "Good move",
+                "feedback": f"{played} looks good.",
+                "lesson": "",
+                "question": "",
+                "arrows": [],
+                "highlightsBefore": [],
+                "highlightsAfter": [],
+            })
+
+        # Small difference — useful, but not worth interrupting
+        # with full mistake coaching.
         else:
             result.update({
-                "title": "Small inaccuracy",
-                "feedback": f"{analysis['played_move']} is playable, but {analysis['best_move']} was a little more precise. No major mistake here.",
-                "lesson": "Compare two candidate moves before choosing",
-                "question": "Is there a more active version of my idea?",
+                "title": "Fine move",
+                "feedback": (
+                    f"{played} is fine. "
+                    f"{best} is slightly more precise."
+                ),
+                "lesson": "",
+                "question": "",
                 "arrows": [],
                 "highlightsBefore": [],
                 "highlightsAfter": [],
