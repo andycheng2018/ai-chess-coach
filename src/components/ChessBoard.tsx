@@ -384,7 +384,13 @@ export function ChessBoard(props: Props) {
           aria-label={square}
         >
           {piece && pieceCode && !hideStatic && <span
-            className={`piece ${piece.color}`}
+            className={`piece ${piece.color} ${
+              pieceCode.toLowerCase() === 'k'
+                ? 'king-piece'
+                : pieceCode.toLowerCase() === 'q'
+                  ? 'queen-piece'
+                  : ''
+            }`}
             onPointerDown={(event) => beginDrag(event, square, pieceCode)}
           >{piece.glyph}</span>}
           {isDestination && <span className={piece ? 'destination capture' : 'destination'} />}

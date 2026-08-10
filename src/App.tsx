@@ -263,8 +263,14 @@ export default function App() {
   const [reviewMode, setReviewMode] = useState<CoachReviewMode | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
   const [historyPly, setHistoryPly] = useState<number | null>(null);
-  const coachRequestRef = useRef(0);
+  type CoachJob = {
+    fenBefore: string;
+    uci: string;
+  };
+
   const coachAbortRef = useRef<AbortController | null>(null);
+  const coachQueueRef = useRef<CoachJob[]>([]);
+  const coachProcessingRef = useRef(false);
   const observedCoachPlyRef = useRef<number | null>(null);
   const reviewTouchStart = useRef<{ x: number; y: number } | null>(null);
   const [reviewDragX, setReviewDragX] = useState(0);
@@ -761,7 +767,8 @@ export default function App() {
 
   useEffect(() => {
     coachAbortRef.current?.abort();
-    coachRequestRef.current += 1;
+    coachQueueRef.current = [];
+    coachProcessingRef.current = false;
     observedCoachPlyRef.current = null;
     setCoachResult(null);
     setCoachError('');
@@ -791,42 +798,90 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   }
 
-  const analyzeStudentMove = useCallback((fenBefore: string, uci: string) => {
-    if (!isCoachGame) return;
-    coachAbortRef.current?.abort();
-    const controller = new AbortController();
-    coachAbortRef.current = controller;
-    const requestId = ++coachRequestRef.current;
-    setCoachThinking(true);
-    setCoachError('');
-    setCoachResult(null);
-    setReviewMode(null);
-    setReviewTarget(null);
+  const processCoachQueue = useCallback(async () => {
+    if (coachProcessingRef.current) return;
 
-    analyzeMove(fenBefore, uci, coachDetail, controller.signal).then((result) => {
-      if (requestId !== coachRequestRef.current) return;
+    coachProcessingRef.current = true;
 
-      // Normal moves are still checked by Stockfish, but they should not
-      // interrupt the player or appear as misleading "small inaccuracies".
-      if (!result.shouldCoach) {
-        setCoachResult(null);
-        return;
+    try {
+      while (coachQueueRef.current.length > 0) {
+        const job = coachQueueRef.current.shift();
+
+        if (!job) continue;
+
+        const controller = new AbortController();
+        coachAbortRef.current = controller;
+
+        setCoachThinking(true);
+        setCoachError('');
+
+        try {
+          const result = await analyzeMove(
+            job.fenBefore,
+            job.uci,
+            coachDetail,
+            controller.signal,
+          );
+
+          if (!result.shouldCoach) {
+            continue;
+          }
+
+          // Always save the mistake even if the player
+          // has already played several more moves.
+          setCoachNotes((current) => {
+            const note: CoachNote = {
+              ...result,
+              gameId: gameId || '',
+              savedAt: Date.now(),
+              playerColor: myColor,
+            };
+
+            return [
+              note,
+              ...current.filter((item) => item.ply !== note.ply),
+            ].slice(0, 16);
+          });
+
+          // Only replace the live coaching card if this is
+          // still useful to show.
+          setCoachResult(result);
+
+          speak(result.feedback);
+        } catch (error) {
+          if (!isAbortError(error)) {
+            setCoachError(
+              `Coach analysis unavailable: ${String(error)}`,
+            );
+          }
+        }
       }
+    } finally {
+      coachProcessingRef.current = false;
+      coachAbortRef.current = null;
+      setCoachThinking(false);
+    }
+  }, [
+    coachDetail,
+    gameId,
+    myColor,
+    voiceEnabled,
+  ]);
 
-      setCoachResult(result);
-      setCoachNotes((current) => {
-        const note: CoachNote = { ...result, gameId: gameId || '', savedAt: Date.now(), playerColor: myColor };
-        return [note, ...current.filter((item) => item.ply !== note.ply)].slice(0, 16);
-      });
-      speak(result.feedback);
-    }).catch((error) => {
-      if (isAbortError(error) || requestId !== coachRequestRef.current) return;
-      setCoachError(`Coach analysis unavailable: ${String(error)}`);
-    }).finally(() => {
-      if (requestId === coachRequestRef.current) setCoachThinking(false);
+
+const analyzeStudentMove = useCallback(
+  (fenBefore: string, uci: string) => {
+    if (!isCoachGame) return;
+
+    coachQueueRef.current.push({
+      fenBefore,
+      uci,
     });
-  }, [isCoachGame, voiceEnabled, gameId, myColor, coachDetail]);
 
+    void processCoachQueue();
+  },
+  [isCoachGame, processCoachQueue],
+);
   useEffect(() => {
     // Normal phone games use the exact local pre-move FEN captured when the
     // player makes the move. Only SenseRobot games need stream-observed
@@ -1236,7 +1291,8 @@ export default function App() {
 
   function resetFinishedGame() {
     coachAbortRef.current?.abort();
-    coachRequestRef.current += 1;
+    coachQueueRef.current = [];
+    coachProcessingRef.current = false;
 
     forgetStoredGame();
     gameIdRef.current = null;
