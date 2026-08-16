@@ -12,6 +12,7 @@ import {
 import {
   speakCoach,
   stopCoachSpeech,
+  unlockCoachAudio,
 } from './tts';
 import {
   abortGame,
@@ -1852,7 +1853,14 @@ const analyzeStudentMove = useCallback(
 
                   setVoiceEnabled(enabled);
 
-                  if (!enabled) {
+                  if (enabled) {
+                    /*
+                    * IMPORTANT:
+                    * This happens directly inside a user click,
+                    * so iOS can unlock audio playback.
+                    */
+                    void unlockCoachAudio();
+                  } else {
                     stopCoachSpeech();
                   }
                 }}

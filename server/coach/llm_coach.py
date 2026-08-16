@@ -41,21 +41,24 @@ COACH_RESPONSE_SCHEMA = {
 
 COACH_DETAIL_CONFIG: dict[str, dict[str, Any]] = {
     "quick": {
-        "target": "35-50 words",
-        "max_output_tokens": 220,
-        "instruction": """
+    "target": "12-22 words",
+    "max_output_tokens": 120,
+    "instruction": """
 COACH DETAIL LEVEL: QUICK
 
-Keep the feedback approximately 35-50 words.
+Use only 1 or 2 short sentences.
 
-Focus on:
-- the main problem with the student's move
-- the strongest relevant opponent idea, if supported
-- why the Stockfish best move is better
+Keep spoken feedback approximately 12-22 words.
 
-Be concrete and concise. Do not add extra background or repeat yourself.
+Explain only the single most important idea.
+
+Do not give a full analysis.
+
+Do not repeat the move unless necessary.
+
+Sound like a friendly chess coach talking to a kid.
 """.strip(),
-    },
+},
     "balanced": {
         "target": "60-90 words",
         "max_output_tokens": 320,

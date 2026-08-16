@@ -56,6 +56,9 @@ _analyzer_lock = threading.Lock()
 _llm_coach: Any = None
 _llm_lock = threading.Lock()
 
+_tts_session = requests.Session()
+_tts_lock = threading.Lock()
+
 
 def get_analyzer() -> StockfishAnalyzer:
     global _analyzer
@@ -317,37 +320,51 @@ def synthesize_speech(
             "ElevenLabs voice ID is not configured"
         )
 
-    response = requests.post(
-        (
-            "https://api.elevenlabs.io/"
-            f"v1/text-to-speech/{voice_id}"
-        ),
+    with _tts_lock:
+        response = _tts_session.post(
+            (
+                "https://api.elevenlabs.io/"
+                f"v1/text-to-speech/{voice_id}"
+            ),
 
-        params={
-            "output_format": "mp3_44100_128",
-        },
+            params={
+                "output_format": "mp3_44100_128",
+            },
 
-        headers={
-            "xi-api-key": ELEVENLABS_API_KEY,
-            "Content-Type": "application/json",
-            "Accept": "audio/mpeg",
-        },
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg",
+            },
 
-        json={
-            "text": text,
-            "model_id": ELEVENLABS_MODEL_ID,
-        },
+            json={
+                "text": text,
+                "model_id": ELEVENLABS_MODEL_ID,
+            },
 
-        timeout=15,
-    )
+            timeout=15,
+        )
 
     try:
         response.raise_for_status()
 
     except requests.RequestException as exc:
+        detail = (
+            response.text[:500]
+            if response.text
+            else "No response body"
+        )
+
+        print(
+            "[TTS] ElevenLabs error:",
+            response.status_code,
+            detail,
+        )
+
         raise RuntimeError(
             "ElevenLabs request failed with "
-            f"HTTP {response.status_code}"
+            f"HTTP {response.status_code}: "
+            f"{detail}"
         ) from exc
 
     if not response.content:
@@ -356,7 +373,7 @@ def synthesize_speech(
         )
 
     return response.content
-
+    
 
 def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
     fen = str(payload.get("fen", "")).strip()
@@ -629,10 +646,37 @@ class Handler(BaseHTTPRequestHandler):
                 warning = str(exc)
             self._send(200, {
                 "ok": True,
+
                 "stockfish": stockfish,
+
                 "bot": runtime.status(),
-                "coachTimeMs": COACH_TIME_MS,
-                "mistakeThresholdCp": MISTAKE_THRESHOLD_CP,
+
+                "coachTimeMs":
+                    COACH_TIME_MS,
+
+                "mistakeThresholdCp":
+                    MISTAKE_THRESHOLD_CP,
+
+                "tts": {
+                    "configured": bool(
+                        ELEVENLABS_API_KEY
+                        and ELEVENLABS_VOICE_ID
+                    ),
+
+                    "englishVoiceConfigured":
+                        bool(
+                            ELEVENLABS_VOICE_ID
+                        ),
+
+                    "chineseVoiceConfigured":
+                        bool(
+                            ELEVENLABS_VOICE_ID_ZH
+                        ),
+
+                    "model":
+                        ELEVENLABS_MODEL_ID,
+                },
+
                 "warning": warning,
             })
         elif self.path == "/api/bot/status":

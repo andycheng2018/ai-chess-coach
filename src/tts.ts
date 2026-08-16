@@ -1,21 +1,54 @@
 import type { CoachLanguage } from './coach';
 
 const CONTROL_URL =
-  import.meta.env.VITE_BOT_CONTROL_URL || 'http://127.0.0.1:8765';
+  import.meta.env.VITE_BOT_CONTROL_URL ||
+  'http://127.0.0.1:8765';
 
-let activeAudio: HTMLAudioElement | null = null;
-let activeObjectUrl: string | null = null;
 let activeRequest: AbortController | null = null;
+
+let audioContext: AudioContext | null = null;
+let activeSource: AudioBufferSourceNode | null = null;
+
+/**
+ * iOS/WKWebView usually wants audio to be unlocked
+ * from an actual user gesture.
+ *
+ * Call this when the user turns Voice ON.
+ */
+export async function unlockCoachAudio(): Promise<void> {
+  try {
+    if (!audioContext) {
+      audioContext = new AudioContext();
+    }
+
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    console.log(
+      '[TTS] Audio unlocked:',
+      audioContext.state,
+    );
+  } catch (error) {
+    console.warn(
+      '[TTS] Could not unlock WebAudio:',
+      error,
+    );
+  }
+}
 
 function browserSpeak(
   text: string,
   language: CoachLanguage,
 ) {
-  if (!('speechSynthesis' in window)) return;
+  if (!('speechSynthesis' in window)) {
+    return;
+  }
 
   window.speechSynthesis.cancel();
 
-  const utterance = new SpeechSynthesisUtterance(text);
+  const utterance =
+    new SpeechSynthesisUtterance(text);
 
   utterance.lang =
     language === 'zh-CN'
@@ -24,37 +57,49 @@ function browserSpeak(
 
   utterance.rate =
     language === 'zh-CN'
-      ? 0.92
-      : 0.96;
+      ? 0.96
+      : 1.0;
 
-  const voices = window.speechSynthesis.getVoices();
+  const voices =
+    window.speechSynthesis.getVoices();
 
-  const preferredVoice = voices.find((voice) =>
-    language === 'zh-CN'
-      ? voice.lang.toLowerCase().startsWith('zh')
-      : voice.lang.toLowerCase().startsWith('en'),
-  );
+  const preferredVoice =
+    voices.find((voice) =>
+      language === 'zh-CN'
+        ? voice.lang
+            .toLowerCase()
+            .startsWith('zh')
+        : voice.lang
+            .toLowerCase()
+            .startsWith('en'),
+    );
 
   if (preferredVoice) {
     utterance.voice = preferredVoice;
   }
 
-  window.speechSynthesis.speak(utterance);
+  console.warn(
+    '[TTS] Using browser fallback voice.',
+  );
+
+  window.speechSynthesis.speak(
+    utterance,
+  );
 }
 
 export function stopCoachSpeech() {
   activeRequest?.abort();
   activeRequest = null;
 
-  if (activeAudio) {
-    activeAudio.pause();
-    activeAudio.src = '';
-    activeAudio = null;
-  }
+  if (activeSource) {
+    try {
+      activeSource.stop();
+    } catch {
+      // Already stopped.
+    }
 
-  if (activeObjectUrl) {
-    URL.revokeObjectURL(activeObjectUrl);
-    activeObjectUrl = null;
+    activeSource.disconnect();
+    activeSource = null;
   }
 
   if ('speechSynthesis' in window) {
@@ -68,21 +113,37 @@ export async function speakCoach(
 ): Promise<void> {
   const cleanText = text.trim();
 
-  if (!cleanText) return;
+  if (!cleanText) {
+    return;
+  }
 
   stopCoachSpeech();
 
-  const controller = new AbortController();
+  const controller =
+    new AbortController();
+
   activeRequest = controller;
 
+  const startedAt =
+    performance.now();
+
   try {
+    console.log(
+      '[TTS] Requesting ElevenLabs:',
+      {
+        language,
+        text: cleanText,
+      },
+    );
+
     const response = await fetch(
       `${CONTROL_URL}/api/tts`,
       {
         method: 'POST',
 
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type':
+            'application/json',
         },
 
         body: JSON.stringify({
@@ -94,34 +155,87 @@ export async function speakCoach(
       },
     );
 
+    const responseAt =
+      performance.now();
+
+    console.log(
+      `[TTS] Backend responded in ${Math.round(
+        responseAt - startedAt,
+      )} ms`,
+    );
+
     if (!response.ok) {
+      const message =
+        await response
+          .text()
+          .catch(() => '');
+
       throw new Error(
-        `ElevenLabs TTS unavailable: ${response.status}`,
+        `TTS backend ${response.status}: ${message}`,
       );
     }
 
-    const blob = await response.blob();
+    const audioBytes =
+      await response.arrayBuffer();
 
-    if (!blob.size) {
-      throw new Error('TTS returned empty audio.');
-    }
+    console.log(
+      '[TTS] Received audio bytes:',
+      audioBytes.byteLength,
+    );
 
     activeRequest = null;
 
-    activeObjectUrl = URL.createObjectURL(blob);
+    /*
+     * Use WebAudio rather than creating a new HTMLAudioElement
+     * for every message.
+     *
+     * This is more reliable after iOS audio has been unlocked
+     * by the Voice checkbox.
+     */
+    if (!audioContext) {
+      audioContext =
+        new AudioContext();
+    }
 
-    activeAudio = new Audio(activeObjectUrl);
-    activeAudio.preload = 'auto';
+    if (
+      audioContext.state ===
+      'suspended'
+    ) {
+      await audioContext.resume();
+    }
 
-    activeAudio.onended = () => {
-      stopCoachSpeech();
+    const decoded =
+      await audioContext.decodeAudioData(
+        audioBytes.slice(0),
+      );
+
+    const source =
+      audioContext.createBufferSource();
+
+    source.buffer = decoded;
+
+    source.connect(
+      audioContext.destination,
+    );
+
+    activeSource = source;
+
+    source.onended = () => {
+      if (activeSource === source) {
+        activeSource = null;
+      }
+
+      source.disconnect();
     };
 
-    activeAudio.onerror = () => {
-      stopCoachSpeech();
-    };
+    console.log(
+      `[TTS] Playing ElevenLabs after ${Math.round(
+        performance.now() -
+          startedAt,
+      )} ms`,
+    );
 
-    await activeAudio.play();
+    source.start();
   } catch (error) {
     if (
       error instanceof DOMException &&
@@ -132,16 +246,14 @@ export async function speakCoach(
 
     activeRequest = null;
 
-    if (activeObjectUrl) {
-      URL.revokeObjectURL(activeObjectUrl);
-      activeObjectUrl = null;
-    }
+    console.error(
+      '[TTS] ElevenLabs failed:',
+      error,
+    );
 
-    activeAudio = null;
-
-    // Safety fallback:
-    // if ElevenLabs is unavailable,
-    // use the device/browser's built-in speech.
-    browserSpeak(cleanText, language);
+    browserSpeak(
+      cleanText,
+      language,
+    );
   }
 }
