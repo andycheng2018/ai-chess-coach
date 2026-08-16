@@ -4,7 +4,15 @@ import { Chess, type Move, type Square } from 'chess.js';
 import { ChessBoard, type Arrow } from './components/ChessBoard';
 import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativeOAuth } from './auth';
 import { acceptBotChallenge, getBotStatus, getCachedGameState, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
-import { analyzeMove, type CoachResult } from './coach';
+import {
+  analyzeMove,
+  type CoachLanguage,
+  type CoachResult,
+} from './coach';
+import {
+  speakCoach,
+  stopCoachSpeech,
+} from './tts';
 import {
   abortGame,
   challengeBot,
@@ -60,7 +68,11 @@ const TIME_CONTROLS = [
 type TimeControlId = (typeof TIME_CONTROLS)[number]['id'];
 type CoachDetail = 'quick' | 'balanced' | 'deep';
 
-const COACH_DETAIL_STORAGE_KEY = 'ai-chess-coach.coach-detail.v1';
+const COACH_DETAIL_STORAGE_KEY =
+  'ai-chess-coach.coach-detail.v1';
+
+const COACH_LANGUAGE_STORAGE_KEY =
+  'ai-chess-coach.coach-language.v1';
 
 function readStoredGame(): StoredGame | null {
   try {
@@ -136,6 +148,20 @@ function readCoachDetail(): CoachDetail {
     // no-op
   }
   return 'balanced';
+}
+
+function readCoachLanguage(): CoachLanguage {
+  try {
+    const value = window.localStorage.getItem(
+      COACH_LANGUAGE_STORAGE_KEY,
+    );
+
+    return value === 'zh-CN'
+      ? 'zh-CN'
+      : 'en';
+  } catch {
+    return 'en';
+  }
 }
 
 function destinations(chess: Chess): Map<string, string[]> {
@@ -260,6 +286,7 @@ export default function App() {
   const [hintsEnabled, setHintsEnabled] = useState(true);
 
   const [coachDetail, setCoachDetail] = useState<CoachDetail>(readCoachDetail);
+  const [coachLanguage, setCoachLanguage] = useState<CoachLanguage>(readCoachLanguage);
   const [reviewMode, setReviewMode] = useState<CoachReviewMode | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
   const [historyPly, setHistoryPly] = useState<number | null>(null);
@@ -365,6 +392,23 @@ export default function App() {
       // no-op
     }
   }, [coachDetail]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        COACH_LANGUAGE_STORAGE_KEY,
+        coachLanguage,
+      );
+    } catch {
+      // no-op
+    }
+  }, [coachLanguage]);
+
+  useEffect(() => {
+    return () => {
+      stopCoachSpeech();
+    };
+  }, []);
 
   const displayedClock = useMemo(() => {
     if (!clock.enabled) return { white: null, black: null };
@@ -791,11 +835,12 @@ export default function App() {
   }, [gameId, account?.username, coachNotes]);
 
   function speak(text: string) {
-    if (!voiceEnabled || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.96;
-    window.speechSynthesis.speak(utterance);
+    if (!voiceEnabled) return;
+
+    void speakCoach(
+      text,
+      coachLanguage,
+    );
   }
 
   const processCoachQueue = useCallback(async () => {
@@ -821,6 +866,7 @@ export default function App() {
             job.uci,
             coachDetail,
             controller.signal,
+            coachLanguage,
           );
 
           if (!result.shouldCoach) {
@@ -867,6 +913,7 @@ export default function App() {
     }
   }, [
     coachDetail,
+    coachLanguage,
     gameId,
     myColor,
     voiceEnabled,
@@ -1678,7 +1725,13 @@ const analyzeStudentMove = useCallback(
         </section>}
 
         <section className="card coach-card">
-          <div className="section-title"><span>2</span> Live coach</div>
+          <div className="section-title">
+            <span>2</span>
+
+            {coachLanguage === 'zh-CN'
+              ? 'AI 教练'
+              : 'Live coach'}
+          </div>
           <div className={`coach-bubble ${coachResult?.classification || ''}`}>
             {coachThinking ? <div className="coach-thinking"><span className="spinner" />Analyzing your move…</div> : coachError ? <div className="inline-error">{coachError}</div> : coachResult ? <>
               <div className="coach-heading">
@@ -1690,13 +1743,75 @@ const analyzeStudentMove = useCallback(
                 ) : null}
               </div>
               <div>{coachResult.feedback}</div>
-              {coachResult.question ? <div className="coach-question"><span>Ask yourself</span>{coachResult.question}</div> : null}
-              {coachResult.lesson ? <div className="coach-lesson">Remember: {coachResult.lesson}</div> : null}
+              {coachResult.question ? (
+                <div className="coach-question">
+                  <span>
+                    {coachLanguage === 'zh-CN'
+                      ? '想一想'
+                      : 'Ask yourself'}
+                  </span>
+
+                  {coachResult.question}
+                </div>
+              ) : null}
+              {coachResult.lesson ? (
+              <div className="coach-lesson">
+                {coachLanguage === 'zh-CN'
+                  ? '记住：'
+                  : 'Remember: '}
+
+                {coachResult.lesson}
+              </div>
+            ) : null}
               {coachResult.shouldCoach ? <button className="coach-review-button" onClick={() => { setReviewTarget(coachResult); setReviewMode('better'); }}>Review this position</button> : null}
             </> : <>
               <strong>Ready to coach</strong>
               <div>After each move, I’ll quickly check it. Bigger mistakes get a concrete explanation, best-move arrow, and the opponent’s threat when it matters.</div>
             </>}
+          </div>
+          <div className="coach-detail-setting">
+            <span>
+              {coachLanguage === 'zh-CN'
+                ? '教练语言'
+                : 'Coach language'}
+            </span>
+
+            <div className="coach-detail-options">
+              {(
+                [
+                  ['en', 'English'],
+                  ['zh-CN', '中文'],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`coach-detail-button ${
+                    coachLanguage === value
+                      ? 'active'
+                      : ''
+                  }`}
+                  aria-pressed={
+                    coachLanguage === value
+                  }
+                  onClick={() => {
+                    stopCoachSpeech();
+                    setCoachLanguage(value);
+                  }}
+                >
+                  <span>{label}</span>
+
+                  {coachLanguage === value ? (
+                    <span
+                      className="coach-detail-check"
+                      aria-hidden="true"
+                    >
+                      ✓
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="coach-detail-setting">
             <span>Coach detail</span>
@@ -1727,7 +1842,26 @@ const analyzeStudentMove = useCallback(
             </div>
           </div>
           <div className="coach-actions">
-            <label><input type="checkbox" checked={voiceEnabled} onChange={(event) => setVoiceEnabled(event.target.checked)} /> Voice</label>
+            <label>
+              <input
+                type="checkbox"
+                checked={voiceEnabled}
+                onChange={(event) => {
+                  const enabled =
+                    event.target.checked;
+
+                  setVoiceEnabled(enabled);
+
+                  if (!enabled) {
+                    stopCoachSpeech();
+                  }
+                }}
+              />
+
+              {coachLanguage === 'zh-CN'
+                ? ' 语音'
+                : ' Voice'}
+            </label>
             <label><input type="checkbox" checked={hintsEnabled} onChange={(event) => setHintsEnabled(event.target.checked)} /> Board hints</label>
           </div>
           <div className="hint-legend"><span><i className="legend-line best" />best</span><span><i className="legend-line danger" />threat</span><span><i className="legend-square" />key square</span></div>

@@ -29,6 +29,10 @@ export type CoachResult = {
 
 export type CoachDetail = 'quick' | 'balanced' | 'deep';
 
+export type CoachLanguage =
+  | 'en'
+  | 'zh-CN';
+
 const CONTROL_URL =
   import.meta.env.VITE_BOT_CONTROL_URL || 'http://127.0.0.1:8765';
 
@@ -46,6 +50,7 @@ export async function analyzeMove(
   move: string,
   detailOrSignal: CoachDetail | AbortSignal = 'balanced',
   maybeSignal?: AbortSignal,
+  language: CoachLanguage = 'en',
 ): Promise<CoachResult> {
   const detail: CoachDetail =
     typeof detailOrSignal === 'string'
@@ -64,6 +69,7 @@ export async function analyzeMove(
       fen,
       move,
       detail,
+      language,
     }),
     signal,
   });

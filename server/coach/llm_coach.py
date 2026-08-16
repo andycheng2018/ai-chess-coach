@@ -95,6 +95,23 @@ Be detailed but focused. Do not pad the answer or repeat the same point.
     },
 }
 
+LANGUAGE_INSTRUCTIONS = {
+    "en": (
+        "COACH LANGUAGE: English. "
+        "Use natural, encouraging language suitable for a child or student. "
+        "Keep standard chess notation such as Nf3, Qxd5+, and O-O unchanged."
+    ),
+
+    "zh-CN": (
+        "COACH LANGUAGE: Simplified Chinese (简体中文). "
+        "Write every user-facing field in natural, friendly Mandarin "
+        "suitable for a child or student. "
+        "Keep standard chess notation such as Nf3, Qxd5+, and O-O unchanged. "
+        "Use short sentences that sound natural when spoken aloud. "
+        "Do not mix English explanations into the Chinese response. "
+        "Treat English word-count targets only as a general brevity guideline."
+    ),
+}
 
 class LLMCoach:
     """
@@ -129,6 +146,7 @@ class LLMCoach:
         self,
         analysis: dict[str, Any],
         detail: str = "balanced",
+        language: str = "en",
     ) -> dict[str, Any]:
         """
         Generate wording for an already-computed
@@ -143,6 +161,18 @@ class LLMCoach:
         detail_config = COACH_DETAIL_CONFIG.get(
             normalized_detail,
             COACH_DETAIL_CONFIG["balanced"],
+        )
+
+        normalized_language = (
+            "zh-CN"
+            if str(language).strip().lower()
+            in {
+                "zh",
+                "zh-cn",
+                "chinese",
+                "mandarin",
+            }
+            else "en"
         )
 
         payload = {
@@ -195,12 +225,15 @@ class LLMCoach:
             else "balanced",
 
             "feedback_target": detail_config["target"],
+            "language": normalized_language,
         }
 
         combined_instructions = (
             self.instructions
             + "\n\n"
             + str(detail_config["instruction"])
+            + "\n\n"
+            + LANGUAGE_INSTRUCTIONS[normalized_language]
         )
 
         response = self.client.responses.create(
