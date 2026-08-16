@@ -37,6 +37,258 @@ export async function unlockCoachAudio(): Promise<void> {
   }
 }
 
+const EN_PIECES: Record<string, string> = {
+  K: 'king',
+  Q: 'queen',
+  R: 'rook',
+  B: 'bishop',
+  N: 'knight',
+};
+
+const ZH_PIECES: Record<string, string> = {
+  K: '王',
+  Q: '后',
+  R: '车',
+  B: '象',
+  N: '马',
+};
+
+const ZH_RANKS: Record<string, string> = {
+  '1': '一',
+  '2': '二',
+  '3': '三',
+  '4': '四',
+  '5': '五',
+  '6': '六',
+  '7': '七',
+  '8': '八',
+};
+
+function squareForSpeech(
+  square: string,
+  language: CoachLanguage,
+): string {
+  const file = square[0].toUpperCase();
+  const rank = square[1];
+
+  if (language === 'zh-CN') {
+    return `${file} ${ZH_RANKS[rank] || rank}`;
+  }
+
+  // The space makes ElevenLabs say:
+  // "g three" rather than trying to read "g3"
+  return `${file} ${rank}`;
+}
+
+function sanToSpeech(
+  rawSan: string,
+  language: CoachLanguage,
+): string {
+  let san = rawSan;
+
+  let ending = '';
+
+  if (san.endsWith('#')) {
+    ending =
+      language === 'zh-CN'
+        ? '，将死'
+        : ', checkmate';
+
+    san = san.slice(0, -1);
+  } else if (san.endsWith('+')) {
+    ending =
+      language === 'zh-CN'
+        ? '，将军'
+        : ', check';
+
+    san = san.slice(0, -1);
+  }
+
+  // Castling
+  if (
+    san === 'O-O-O' ||
+    san === '0-0-0'
+  ) {
+    return (
+      (language === 'zh-CN'
+        ? '后翼易位'
+        : 'castles queenside') +
+      ending
+    );
+  }
+
+  if (
+    san === 'O-O' ||
+    san === '0-0'
+  ) {
+    return (
+      (language === 'zh-CN'
+        ? '王翼易位'
+        : 'castles kingside') +
+      ending
+    );
+  }
+
+  // Promotion
+  let promotionPiece: string | null =
+    null;
+
+  const promotionMatch =
+    san.match(/=([QRBN])$/i);
+
+  if (promotionMatch) {
+    promotionPiece =
+      promotionMatch[1].toUpperCase();
+
+    san = san.replace(
+      /=([QRBN])$/i,
+      '',
+    );
+  }
+
+  // Piece moves:
+  // Nf3
+  // Nxg3
+  // Nbd2
+  // R1e2
+  // Qxd5
+  const pieceMove = san.match(
+    /^([KQRBN])([a-h1-8]{0,2})(x?)([a-h][1-8])$/i,
+  );
+
+  if (pieceMove) {
+    const piece =
+      pieceMove[1].toUpperCase();
+
+    const capture =
+      pieceMove[3] === 'x';
+
+    const destination =
+      squareForSpeech(
+        pieceMove[4],
+        language,
+      );
+
+    if (language === 'zh-CN') {
+      const pieceName =
+        ZH_PIECES[piece];
+
+      return (
+        `${pieceName}${
+          capture ? '吃到' : '走到'
+        }${destination}` +
+        ending
+      );
+    }
+
+    const pieceName =
+      EN_PIECES[piece];
+
+    return (
+      `${pieceName} ${
+        capture ? 'takes' : 'to'
+      } ${destination}` +
+      ending
+    );
+  }
+
+  // Pawn capture:
+  // exd5
+  const pawnCapture =
+    san.match(
+      /^[a-h]x([a-h][1-8])$/i,
+    );
+
+  if (pawnCapture) {
+    const destination =
+      squareForSpeech(
+        pawnCapture[1],
+        language,
+      );
+
+    let result =
+      language === 'zh-CN'
+        ? `兵吃到${destination}`
+        : `pawn takes ${destination}`;
+
+    if (promotionPiece) {
+      result +=
+        language === 'zh-CN'
+          ? `，升变为${
+              ZH_PIECES[promotionPiece]
+            }`
+          : `, promotes to ${
+              EN_PIECES[promotionPiece]
+            }`;
+    }
+
+    return result + ending;
+  }
+
+  // Pawn promotion:
+  // e8=Q
+  if (
+    promotionPiece &&
+    /^[a-h][1-8]$/i.test(san)
+  ) {
+    const destination =
+      squareForSpeech(
+        san,
+        language,
+      );
+
+    if (language === 'zh-CN') {
+      return (
+        `兵走到${destination}，升变为${
+          ZH_PIECES[promotionPiece]
+        }` + ending
+      );
+    }
+
+    return (
+      `pawn to ${destination}, promotes to ${
+        EN_PIECES[promotionPiece]
+      }` + ending
+    );
+  }
+
+  return rawSan;
+}
+
+function makeSpeechFriendly(
+  text: string,
+  language: CoachLanguage,
+): string {
+  /*
+   * Matches chess SAN inside normal sentences.
+   *
+   * Examples:
+   * Nf3
+   * Nxg3
+   * Qxd5+
+   * Nbd2
+   * exd5
+   * e8=Q
+   * O-O
+   * O-O-O
+   */
+  const sanPattern =
+    /(^|[^A-Za-z0-9])((?:O-O-O|O-O|0-0-0|0-0|[KQRBN][a-h1-8]{0,2}x?[a-h][1-8](?:=[QRBN])?[+#]?|[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?|[a-h][1-8]=[QRBN][+#]?))(?=$|[^A-Za-z0-9])/gi;
+
+  return text.replace(
+    sanPattern,
+    (
+      _match,
+      prefix: string,
+      san: string,
+    ) =>
+      `${prefix}${sanToSpeech(
+        san,
+        language,
+      )}`,
+  );
+}
+
 function browserSpeak(
   text: string,
   language: CoachLanguage,
@@ -111,13 +363,17 @@ export async function speakCoach(
   text: string,
   language: CoachLanguage,
 ): Promise<void> {
-  const cleanText = text.trim();
+    const cleanText = text.trim();
 
-  if (!cleanText) {
-    return;
-  }
+    if (!cleanText) return;
 
-  stopCoachSpeech();
+    const spokenText =
+    makeSpeechFriendly(
+        cleanText,
+        language,
+    );
+
+    stopCoachSpeech();
 
   const controller =
     new AbortController();
@@ -147,7 +403,7 @@ export async function speakCoach(
         },
 
         body: JSON.stringify({
-          text: cleanText,
+          text: spokenText,
           language,
         }),
 
@@ -252,7 +508,7 @@ export async function speakCoach(
     );
 
     browserSpeak(
-      cleanText,
+      spokenText,
       language,
     );
   }

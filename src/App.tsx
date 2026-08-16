@@ -43,7 +43,15 @@ type CoachReviewMode = 'better' | 'threat';
 type PendingPromotion = { from: string; to: string; fenBefore: string; basePly: number; choices: PromotionChoice[] };
 type PendingMove = { uci: string; basePly: number };
 type Winner = 'white' | 'black' | null;
-type CoachNote = CoachResult & { gameId: string; savedAt: number; playerColor: 'white' | 'black' };
+type CoachNote =
+  CoachResult & {
+    gameId: string;
+    savedAt: number;
+    playerColor:
+      | 'white'
+      | 'black';
+    language?: CoachLanguage;
+  };
 type ReviewTarget = CoachResult & { playerColor?: 'white' | 'black' };
 type StoredLearningSession = { gameId: string; username?: string; updatedAt: number; notes: CoachNote[] };
 
@@ -886,6 +894,7 @@ export default function App() {
               gameId: gameId || '',
               savedAt: Date.now(),
               playerColor: myColor,
+              language: coachLanguage,
             };
 
             return [

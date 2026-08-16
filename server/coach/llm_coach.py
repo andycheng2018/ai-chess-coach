@@ -102,17 +102,29 @@ LANGUAGE_INSTRUCTIONS = {
     "en": (
         "COACH LANGUAGE: English. "
         "Use natural, encouraging language suitable for a child or student. "
-        "Keep standard chess notation such as Nf3, Qxd5+, and O-O unchanged."
+        "When explaining chess moves, prefer clear spoken chess language. "
+        "For example, say 'knight takes g3' instead of only 'Nxg3', "
+        "'knight to f3' instead of only 'Nf3', "
+        "'queen takes d5, check' instead of only 'Qxd5+', "
+        "and 'castles kingside' instead of only 'O-O'. "
+        "You may include standard chess notation in parentheses when it helps teach notation, "
+        "for example 'knight takes g3 (Nxg3)'. "
+        "Make move explanations easy for a young chess student to understand when spoken aloud."
     ),
 
     "zh-CN": (
         "COACH LANGUAGE: Simplified Chinese (简体中文). "
         "Write every user-facing field in natural, friendly Mandarin "
         "suitable for a child or student. "
-        "Keep standard chess notation such as Nf3, Qxd5+, and O-O unchanged. "
+        "When explaining chess moves, prefer clear spoken Chinese. "
+        "For example, say '马吃 g3' instead of only 'Nxg3', "
+        "'马走到 f3' instead of only 'Nf3', "
+        "'后吃 d5，将军' instead of only 'Qxd5+', "
+        "and '王翼易位' instead of only 'O-O'. "
+        "You may include standard chess notation in parentheses when useful, "
+        "for example '马吃 g3（Nxg3）'. "
         "Use short sentences that sound natural when spoken aloud. "
-        "Do not mix English explanations into the Chinese response. "
-        "Treat English word-count targets only as a general brevity guideline."
+        "Do not mix unnecessary English explanations into the Chinese response."
     ),
 }
 
