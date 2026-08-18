@@ -21,6 +21,15 @@ from coach.stockfish_analyzer import StockfishAnalyzer, find_stockfish
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 
+EXTRA_CORS_ORIGINS = {
+    item.strip()
+    for item in os.environ.get(
+        "CORS_ALLOWED_ORIGINS",
+        "",
+    ).split(",")
+    if item.strip()
+}
+
 PORT = int(
     os.environ.get(
         "PORT",
@@ -548,8 +557,15 @@ class Handler(BaseHTTPRequestHandler):
             "http://127.0.0.1:5173",
         }
 
+        allowed_origins.update(EXTRA_CORS_ORIGINS)
+
+        # Allow Chess Buddy frontend deployed on Render.
+        if origin.startswith("https://") and origin.endswith(".onrender.com"):
+            return origin
+
         if origin in allowed_origins:
             return origin
+
 
         return "http://localhost:5173"
 
@@ -646,35 +662,18 @@ class Handler(BaseHTTPRequestHandler):
                 warning = str(exc)
             self._send(200, {
                 "ok": True,
-
                 "stockfish": stockfish,
-
                 "bot": runtime.status(),
-
-                "coachTimeMs":
-                    COACH_TIME_MS,
-
-                "mistakeThresholdCp":
-                    MISTAKE_THRESHOLD_CP,
+                "coachTimeMs": COACH_TIME_MS,
+                "mistakeThresholdCp": MISTAKE_THRESHOLD_CP,
 
                 "tts": {
+                    "provider": "elevenlabs",
                     "configured": bool(
                         ELEVENLABS_API_KEY
                         and ELEVENLABS_VOICE_ID
                     ),
-
-                    "englishVoiceConfigured":
-                        bool(
-                            ELEVENLABS_VOICE_ID
-                        ),
-
-                    "chineseVoiceConfigured":
-                        bool(
-                            ELEVENLABS_VOICE_ID_ZH
-                        ),
-
-                    "model":
-                        ELEVENLABS_MODEL_ID,
+                    "model": ELEVENLABS_MODEL_ID,
                 },
 
                 "warning": warning,

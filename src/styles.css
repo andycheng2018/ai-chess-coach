@@ -504,10 +504,6 @@ header {
   overscroll-behavior-x: contain;
 }
 
-/* Chess Buddy UI patch
-   Append this entire file to the END of your current src/styles.css. */
-
-/* ---------- Coach detail segmented control ---------- */
 
 .coach-detail-setting{
   margin-top:14px;
@@ -1134,5 +1130,377 @@ header {
   .puzzle-prompt {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+.report-reopen-button {
+  border-color: rgba(129, 182, 76, .34) !important;
+  background: rgba(129, 182, 76, .08) !important;
+  color: #c8e5aa !important;
+}
+
+.report-reopen-button:hover {
+  border-color: rgba(129, 182, 76, .58) !important;
+  background: rgba(129, 182, 76, .14) !important;
+}
+
+/* ---------- Game report ---------- */
+.game-over-backdrop {
+  padding: 18px;
+  background:
+    radial-gradient(circle at 50% 15%, rgba(129, 182, 76, .12), transparent 34%),
+    rgba(10, 10, 9, .78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.game-report-modal {
+  position: relative;
+  width: min(760px, calc(100vw - 28px));
+  max-height: min(92dvh, 900px);
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .025), transparent 28%),
+    #24221f;
+  box-shadow:
+    0 36px 110px rgba(0, 0, 0, .62),
+    0 0 0 1px rgba(0, 0, 0, .18);
+  text-align: left;
+}
+
+.game-report-modal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.game-report-modal::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .12);
+}
+
+.game-report-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+
+.game-report-topbar .eyebrow {
+  color: #9acb6c;
+}
+
+.report-close-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .035);
+  color: #aaa49d;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.report-close-button:hover {
+  background: rgba(255, 255, 255, .08);
+  color: #f1eee9;
+}
+
+.report-close-button:active {
+  transform: scale(.96);
+}
+
+.game-report-modal .game-over-score {
+  margin: 6px auto 0;
+  font-size: clamp(42px, 7vw, 62px);
+  line-height: 1;
+}
+
+.game-report-modal > h2 {
+  margin-top: 8px;
+  font-size: clamp(25px, 4vw, 34px);
+}
+
+.game-report-modal > p {
+  margin-top: 5px;
+  color: #9d9790;
+}
+
+.game-report-modal.win .game-over-score {
+  color: #a7d77d;
+}
+
+.game-report-modal.loss .game-over-score {
+  color: #d9a49e;
+}
+
+.game-report-modal.draw .game-over-score {
+  color: #c8c1b8;
+}
+
+.game-report-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 22px 0 18px;
+}
+
+.game-report-stats span {
+  min-width: 0;
+  padding: 12px 8px;
+  border: 1px solid rgba(255, 255, 255, .06);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, .13);
+  color: #918b84;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.game-report-stats b {
+  display: block;
+  margin-bottom: 4px;
+  color: #f1eee9;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-finishing {
+  margin: -3px 0 15px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(70, 145, 225, .08);
+  color: #9abce0;
+}
+
+.game-report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.report-card {
+  min-height: 150px;
+  padding: 16px;
+  border-radius: 14px;
+}
+
+.report-card.positive {
+  border-color: rgba(129, 182, 76, .23);
+  background:
+    linear-gradient(145deg, rgba(129, 182, 76, .10), rgba(129, 182, 76, .035));
+}
+
+.report-card.improve {
+  border-color: rgba(206, 166, 93, .22);
+  background:
+    linear-gradient(145deg, rgba(206, 166, 93, .08), rgba(206, 166, 93, .025));
+}
+
+.report-card-label {
+  margin-bottom: 12px;
+  font-size: 9px;
+  letter-spacing: .11em;
+}
+
+.report-card p {
+  align-items: flex-start;
+  margin-top: 10px;
+  color: #ddd8d2;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.report-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: rgba(129, 182, 76, .12);
+  font-size: 11px;
+}
+
+.report-card.improve .report-icon {
+  background: rgba(193, 164, 100, .12);
+}
+
+.report-takeaway {
+  margin-top: 10px;
+  padding: 15px 16px;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 13px;
+  background: rgba(0, 0, 0, .13);
+}
+
+.report-takeaway > span {
+  color: #9acb6c;
+  letter-spacing: .10em;
+}
+
+.report-takeaway p {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.practice-section {
+  margin-top: 22px;
+  padding-top: 19px;
+}
+
+.practice-heading strong {
+  font-size: 17px;
+}
+
+.practice-heading > b {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(129, 182, 76, .22);
+}
+
+.practice-list {
+  gap: 8px;
+}
+
+.practice-card {
+  min-height: 62px;
+  padding: 12px 13px;
+  border-radius: 12px;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.practice-card:hover {
+  transform: translateY(-1px);
+}
+
+.practice-number {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: rgba(129, 182, 76, .11);
+  color: #aed985;
+}
+
+.practice-copy strong {
+  color: #f2efeb;
+  font-size: 13px;
+}
+
+.practice-copy small {
+  margin-top: 1px;
+  color: #8f8982;
+  font-size: 10px;
+}
+
+.practice-play {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(129, 182, 76, .10);
+}
+
+.game-over-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.game-over-actions .primary {
+  grid-column: 1 / -1;
+  min-height: 44px;
+}
+
+.game-over-actions .full-width {
+  grid-column: 1 / -1;
+}
+
+/* ---------- Personalized puzzle ---------- */
+.puzzle-modal {
+  width: min(650px, calc(100vw - 28px));
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .025), transparent 30%),
+    #24221f;
+  box-shadow: 0 34px 100px rgba(0, 0, 0, .60);
+}
+
+.puzzle-prompt {
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, .06);
+  border-radius: 10px;
+}
+
+.puzzle-feedback {
+  border: 1px solid rgba(255, 255, 255, .06);
+  border-radius: 10px;
+}
+
+.puzzle-feedback.correct {
+  border-color: rgba(129, 182, 76, .28);
+}
+
+.puzzle-actions .primary,
+.puzzle-actions .ghost {
+  min-height: 40px;
+}
+
+@media (max-width: 680px) {
+  .game-over-backdrop {
+    align-items: flex-end;
+    padding: 8px;
+  }
+
+  .game-report-modal {
+    width: 100%;
+    max-height: 94dvh;
+    padding: 18px 14px calc(18px + env(safe-area-inset-bottom));
+    border-radius: 20px 20px 14px 14px;
+  }
+
+  .game-report-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .game-report-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-card {
+    min-height: auto;
+  }
+
+  .practice-play {
+    display: none;
+  }
+
+  .game-over-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .game-over-actions .primary,
+  .game-over-actions .full-width {
+    grid-column: auto;
+  }
+
+  .puzzle-modal {
+    width: 100%;
+    max-height: 94dvh;
+    padding: 16px 12px calc(16px + env(safe-area-inset-bottom));
+    border-radius: 18px;
   }
 }
