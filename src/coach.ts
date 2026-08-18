@@ -25,6 +25,16 @@ export type CoachResult = {
   arrows?: CoachArrow[];
   highlightsBefore?: string[];
   highlightsAfter?: string[];
+
+  // Extra deterministic facts used for better post-game filtering.
+  themeHint?: string;
+  bestLine?: string[];
+  refutationLine?: string[];
+
+  // Two-phase coaching: Stockfish returns immediately, then the LLM
+  // wording is fetched separately without blocking the move queue.
+  analysisId?: string;
+  explanationPending?: boolean;
 };
 
 export type CoachDetail = 'quick' | 'balanced' | 'deep';
@@ -33,17 +43,21 @@ export type CoachLanguage =
   | 'en'
   | 'zh-CN';
 
+export type CoachWording = {
+  title: string;
+  feedback: string;
+  lesson: string;
+  question: string;
+};
+
 const CONTROL_URL =
   import.meta.env.VITE_BOT_CONTROL_URL || 'http://127.0.0.1:8765';
 
 /**
- * Analyze a move with the selected coach-detail level.
+ * Fast move analysis.
  *
- * Backward compatible:
- *   analyzeMove(fen, move, signal)
- *
- * New:
- *   analyzeMove(fen, move, 'balanced', signal)
+ * This endpoint returns Stockfish truth immediately. For a mistake/blunder,
+ * analysisId is included so the slower LLM wording can be fetched separately.
  */
 export async function analyzeMove(
   fen: string,
@@ -83,4 +97,37 @@ export async function analyzeMove(
   }
 
   return data as CoachResult;
+}
+
+/**
+ * Fetch the conversational explanation for a move that Stockfish already
+ * analyzed. This does not re-run Stockfish; the backend reuses the cached
+ * deterministic analysis identified by analysisId.
+ */
+export async function explainMove(
+  analysisId: string,
+  detail: CoachDetail = 'balanced',
+  language: CoachLanguage = 'en',
+  signal?: AbortSignal,
+): Promise<CoachWording> {
+  const response = await fetch(`${CONTROL_URL}/api/coach/explain`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      analysisId,
+      detail,
+      language,
+    }),
+    signal,
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || `${response.status} ${response.statusText}`,
+    );
+  }
+
+  return data as CoachWording;
 }

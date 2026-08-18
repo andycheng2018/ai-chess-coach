@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+import uuid
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -36,7 +38,7 @@ PORT = int(
         os.environ.get("CHESS_SERVER_PORT", "8765")
     )
 )
-COACH_TIME_MS = int(os.environ.get("COACH_TIME_MS", "180"))
+COACH_TIME_MS = int(os.environ.get("COACH_TIME_MS", "110"))
 MISTAKE_THRESHOLD_CP = int(os.environ.get("COACH_MISTAKE_THRESHOLD_CP", "80"))
 MAX_BODY_BYTES = 64 * 1024
 
@@ -67,6 +69,33 @@ _llm_lock = threading.Lock()
 
 _tts_session = requests.Session()
 _tts_lock = threading.Lock()
+
+_analysis_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_analysis_cache_lock = threading.Lock()
+_ANALYSIS_CACHE_LIMIT = 128
+
+
+def cache_analysis(analysis: dict[str, Any]) -> str:
+    analysis_id = uuid.uuid4().hex
+
+    with _analysis_cache_lock:
+        _analysis_cache[analysis_id] = analysis
+        _analysis_cache.move_to_end(analysis_id)
+
+        while len(_analysis_cache) > _ANALYSIS_CACHE_LIMIT:
+            _analysis_cache.popitem(last=False)
+
+    return analysis_id
+
+
+def get_cached_analysis(analysis_id: str) -> dict[str, Any] | None:
+    with _analysis_cache_lock:
+        analysis = _analysis_cache.get(analysis_id)
+
+        if analysis is not None:
+            _analysis_cache.move_to_end(analysis_id)
+
+        return analysis
 
 
 def get_analyzer() -> StockfishAnalyzer:
@@ -385,6 +414,8 @@ def synthesize_speech(
     
 
 def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
+    """Fast phase: Stockfish truth first; do not wait for GPT wording."""
+
     fen = str(payload.get("fen", "")).strip()
     move_uci = str(payload.get("move", "")).strip().lower()
 
@@ -409,21 +440,39 @@ def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
         board = chess.Board(fen)
     except ValueError as exc:
         raise ValueError("Invalid FEN.") from exc
+
     try:
         move = chess.Move.from_uci(move_uci)
     except ValueError as exc:
         raise ValueError("Invalid UCI move.") from exc
+
     if move not in board.legal_moves:
-        raise ValueError("Move is not legal in the supplied position.")
+        raise ValueError(
+            "Move is not legal in the supplied position."
+        )
 
     with _analyzer_lock:
         try:
-            analysis = get_analyzer().analyze_move(board, move).to_dict()
-        except (chess.engine.EngineError, chess.engine.EngineTerminatedError, BrokenPipeError):
+            analysis = get_analyzer().analyze_move(
+                board,
+                move,
+            ).to_dict()
+        except (
+            chess.engine.EngineError,
+            chess.engine.EngineTerminatedError,
+            BrokenPipeError,
+        ):
             reset_analyzer()
-            analysis = get_analyzer().analyze_move(board, move).to_dict()
+            analysis = get_analyzer().analyze_move(
+                board,
+                move,
+            ).to_dict()
 
-    should_coach = int(analysis["centipawn_loss"]) >= MISTAKE_THRESHOLD_CP
+    should_coach = (
+        int(analysis["centipawn_loss"])
+        >= MISTAKE_THRESHOLD_CP
+    )
+
     result: dict[str, Any] = {
         "shouldCoach": should_coach,
         "moveNumber": analysis["move_number"],
@@ -438,112 +487,111 @@ def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
         "opponentReplyUci": analysis["opponent_reply_uci"],
         "fenBefore": analysis["fen_before"],
         "fenAfter": analysis["fen_after"],
+        "themeHint": analysis.get("theme_hint", ""),
+        "bestLine": analysis.get("best_line", [])[:6],
+        "refutationLine": analysis.get("refutation_line", [])[:6],
         "coachDetail": detail,
         "language": language,
     }
 
     if should_coach:
-        # Stockfish remains the source of truth for all chess facts.
-        # Build arrows/highlights deterministically from engine analysis.
+        # Arrows/highlights and the temporary fallback are deterministic and
+        # available immediately. GPT wording is fetched in a second request.
         coaching = fallback_coaching(
             analysis,
             language=language,
         )
-
-        # GPT is allowed to improve ONLY the wording.
-        llm_payload = coach_payload(
-            analysis,
-            detail=detail,
-            language=language,
-        )
-
-        for key in (
-            "title",
-            "feedback",
-            "lesson",
-            "question",
-        ):
-            value = llm_payload.get(key)
-
-            if isinstance(value, str) and value.strip():
-                coaching[key] = value.strip()
-
         result.update(coaching)
-    else:
-        cp_loss = int(analysis["centipawn_loss"])
-        played = str(analysis["played_move"])
-        best = str(analysis["best_move"])
-        played_uci = str(analysis["played_move_uci"])
-        best_uci = str(analysis["best_move_uci"])
 
-        # Exact Stockfish top choice.
-        if played_uci == best_uci:
-            result.update({
-                "title": (
-                    "漂亮！"
-                    if language == "zh-CN"
-                    else "Great move"
-                ),
-
-                "feedback": (
-                    f"漂亮！{played} 是最佳选择。"
-                    if language == "zh-CN"
-                    else f"Great move — {played} is the top choice."
-                ),
-                "lesson": "",
-                "question": "",
-                "arrows": [],
-                "highlightsBefore": [],
-                "highlightsAfter": [],
-            })
-
-        # Very close to best.
-        elif cp_loss < 35:
-            result.update({
-                "title": (
-                    "不错！"
-                    if language == "zh-CN"
-                    else "Good move"
-                ),
-
-                "feedback": (
-                    f"不错，{played} 是一步好棋。"
-                    if language == "zh-CN"
-                    else f"{played} looks good."
-                ),
-                "lesson": "",
-                "question": "",
-                "arrows": [],
-                "highlightsBefore": [],
-                "highlightsAfter": [],
-            })
-
-        # Small difference — useful, but not worth interrupting
-        # with full mistake coaching.
+        if os.environ.get("OPENAI_API_KEY", "").strip():
+            result["analysisId"] = cache_analysis(analysis)
+            result["explanationPending"] = True
         else:
-            result.update({
-                "title": (
-                    "可以更准确"
-                    if language == "zh-CN"
-                    else "Fine move"
-                ),
+            result["explanationPending"] = False
 
-                "feedback": (
-                    f"{played} 可以，但 {best} 会更准确一点。"
-                    if language == "zh-CN"
-                    else (
-                        f"{played} is fine. "
-                        f"{best} is slightly more precise."
-                    )
-                ),
-                "lesson": "",
-                "question": "",
-                "arrows": [],
-                "highlightsBefore": [],
-                "highlightsAfter": [],
-            })
+        return result
+
+    # Routine good moves are intentionally simple here. The frontend decides
+    # whether a good move is actually worth surfacing or speaking.
+    cp_loss = int(analysis["centipawn_loss"])
+    played = str(analysis["played_move"])
+
+    if language == "zh-CN":
+        if cp_loss < 20:
+            title = "稳"
+            feedback = "这步处理得很稳。"
+        elif cp_loss < 35:
+            title = "不错"
+            feedback = "这步很合理，继续下。"
+        else:
+            title = "继续"
+            feedback = "可以继续下，不需要停下来分析。"
+    else:
+        if cp_loss < 20:
+            title = "Solid"
+            feedback = "That was a steady choice."
+        elif cp_loss < 35:
+            title = "Good"
+            feedback = "That works well. Keep going."
+        else:
+            title = "Play on"
+            feedback = "That is playable; no need to stop here."
+
+    result.update({
+        "title": title,
+        "feedback": feedback,
+        "lesson": "",
+        "question": "",
+        "arrows": [],
+        "highlightsBefore": [],
+        "highlightsAfter": [],
+        "explanationPending": False,
+    })
+
     return result
 
+
+def explain_analysis(payload: dict[str, Any]) -> dict[str, Any]:
+    """Slow phase: improve wording only; Stockfish is NOT run again."""
+
+    analysis_id = str(
+        payload.get("analysisId", "")
+    ).strip()
+
+    if not analysis_id:
+        raise ValueError("analysisId is required")
+
+    analysis = get_cached_analysis(analysis_id)
+
+    if analysis is None:
+        raise ValueError(
+            "That coach analysis expired."
+        )
+
+    language = normalize_language(
+        payload.get("language", "en")
+    )
+
+    detail = str(
+        payload.get("detail", "balanced")
+    ).strip().lower()
+
+    if detail not in {"quick", "balanced", "deep"}:
+        detail = "balanced"
+
+    wording = coach_payload(
+        analysis,
+        detail=detail,
+        language=language,
+    )
+
+    return {
+        "title": str(wording.get("title", "")).strip(),
+        "feedback": str(wording.get("feedback", "")).strip(),
+        "lesson": str(wording.get("lesson", "")).strip(),
+        "question": str(wording.get("question", "")).strip(),
+        "explanationPending": False,
+    }
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "AIChessCoach/1.0"
@@ -765,6 +813,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(
                     200,
                     analyze_move(
+                        self._json_body()
+                    ),
+                )
+            elif self.path == "/api/coach/explain":
+                self._send(
+                    200,
+                    explain_analysis(
                         self._json_body()
                     ),
                 )

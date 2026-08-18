@@ -6,6 +6,7 @@ import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativ
 import { acceptBotChallenge, getBotStatus, getCachedGameState, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import {
   analyzeMove,
+  explainMove,
   type CoachLanguage,
   type CoachResult,
 } from './coach';
@@ -156,76 +157,266 @@ function classificationWeight(
   }
 }
 
+function puzzleThemeKey(note: CoachNote): string | null {
+  const text = [
+    note.themeHint,
+    note.title,
+    note.lesson,
+    note.feedback,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  const hasAny = (words: string[]) =>
+    words.some((word) => text.includes(word));
+
+  if (
+    hasAny([
+      'fork',
+      'pin',
+      'skewer',
+      'tactic',
+      'combination',
+      'hanging',
+      'loose piece',
+      'undefended',
+      'unprotected',
+      '双攻',
+      '牵制',
+      '串击',
+      '战术',
+      '组合',
+      '挂子',
+      '未保护',
+      '没有保护',
+    ])
+  ) {
+    return 'tactics';
+  }
+
+  if (
+    hasAny([
+      'mating threat',
+      'checkmate',
+      'king safety',
+      '王的安全',
+      '王安全',
+      '将杀',
+    ])
+  ) {
+    return 'king-safety';
+  }
+
+  if (
+    hasAny([
+      'threat',
+      'forcing',
+      'opponent',
+      '威胁',
+      '强制',
+      '对手',
+    ])
+  ) {
+    return 'opponent-threat';
+  }
+
+  if (
+    hasAny([
+      'endgame',
+      'promotion',
+      'king and pawn',
+      '残局',
+      '升变',
+      '兵残局',
+    ])
+  ) {
+    return 'endgame';
+  }
+
+  return null;
+}
+
+function isHighValuePuzzle(note: CoachNote): boolean {
+  if (
+    note.classification !== 'mistake' &&
+    note.classification !== 'blunder'
+  ) {
+    return false;
+  }
+
+  if (
+    !note.fenBefore ||
+    !note.bestMoveUci ||
+    note.bestMoveUci.length < 4
+  ) {
+    return false;
+  }
+
+  // Do not create promotion puzzles until the puzzle board has
+  // an explicit promotion-piece picker.
+  if (note.bestMoveUci.length > 4) {
+    return false;
+  }
+
+  // A puzzle needs to be a clearly meaningful miss, not a tiny
+  // Stockfish preference.
+  if (note.centipawnLoss < 150) {
+    return false;
+  }
+
+  const theme = puzzleThemeKey(note);
+  const reply = note.opponentReply || '';
+
+  // SAN markers give us a deterministic signal that the opponent's
+  // best reply is forcing: capture, check, or mate.
+  const hasForcingReply = /[x+#]/.test(reply);
+
+  const tacticalOrThreat =
+    theme === 'tactics' ||
+    theme === 'opponent-threat' ||
+    hasForcingReply;
+
+  const clearPositionalLesson =
+    (theme === 'king-safety' || theme === 'endgame') &&
+    note.centipawnLoss >= 200;
+
+  // Routine early-opening differences are poor personalized puzzles.
+  if (
+    note.moveNumber <= 8 &&
+    !tacticalOrThreat &&
+    theme !== 'king-safety'
+  ) {
+    return false;
+  }
+
+  return tacticalOrThreat || clearPositionalLesson;
+}
+
+function practicePuzzleScore(note: CoachNote): number {
+  const theme = puzzleThemeKey(note);
+  const reply = note.opponentReply || '';
+
+  let score =
+    classificationWeight(note.classification) +
+    note.centipawnLoss;
+
+  if (/[x+#]/.test(reply)) score += 180;
+  if (theme === 'tactics') score += 160;
+  if (theme === 'opponent-threat') score += 120;
+  if (theme === 'king-safety') score += 90;
+  if (theme === 'endgame') score += 70;
+
+  return score;
+}
+
 function selectPracticePuzzles(
   notes: CoachNote[],
   limit = 3,
 ): CoachNote[] {
   const ranked = [...notes]
-    .filter(
-      (note) =>
-        Boolean(note.fenBefore) &&
-        Boolean(note.bestMoveUci) &&
-        note.bestMoveUci.length >= 4,
-    )
-    .sort((a, b) => {
-      const scoreA =
-        classificationWeight(a.classification) +
-        a.centipawnLoss;
-
-      const scoreB =
-        classificationWeight(b.classification) +
-        b.centipawnLoss;
-
-      return scoreB - scoreA;
-    });
+    .filter(isHighValuePuzzle)
+    .sort(
+      (a, b) =>
+        practicePuzzleScore(b) -
+        practicePuzzleScore(a),
+    );
 
   const selected: CoachNote[] = [];
-  const usedThemes = new Set<string>();
 
-  // First pass: prefer different teaching themes.
   for (const note of ranked) {
-    const theme = (
-      note.lesson ||
-      note.title ||
-      ''
-    )
-      .trim()
-      .toLowerCase();
+    const theme = puzzleThemeKey(note);
 
-    if (theme && usedThemes.has(theme)) {
-      continue;
-    }
+    const isDuplicate = selected.some((existing) => {
+      const existingTheme = puzzleThemeKey(existing);
+      const plyDistance = Math.abs(existing.ply - note.ply);
+
+      // Same teaching idea from the same tactical sequence.
+      if (
+        theme &&
+        existingTheme === theme &&
+        plyDistance <= 6
+      ) {
+        return true;
+      }
+
+      // Same best move / refutation appearing again a few moves later.
+      if (
+        plyDistance <= 10 &&
+        (
+          existing.bestMoveUci === note.bestMoveUci ||
+          (
+            existing.opponentReplyUci &&
+            existing.opponentReplyUci === note.opponentReplyUci
+          )
+        )
+      ) {
+        return true;
+      }
+
+      return existing.fenBefore === note.fenBefore;
+    });
+
+    if (isDuplicate) continue;
 
     selected.push(note);
 
-    if (theme) {
-      usedThemes.add(theme);
-    }
-
-    if (selected.length >= limit) {
-      return selected;
-    }
+    if (selected.length >= limit) break;
   }
 
-  // Second pass: fill remaining spaces with strongest
-  // positions even if the lesson is similar.
-  for (const note of ranked) {
-    if (
-      selected.some(
-        (existing) => existing.ply === note.ply,
-      )
-    ) {
-      continue;
-    }
-
-    selected.push(note);
-
-    if (selected.length >= limit) {
-      break;
-    }
-  }
-
+  // Intentionally do NOT fill to three. One excellent puzzle is
+  // better than three mediocre ones.
   return selected;
+}
+
+type PraiseMoment = 'streak' | 'recovery';
+
+function personalityPraise(
+  result: CoachResult,
+  language: CoachLanguage,
+  moment: PraiseMoment,
+): Pick<CoachResult, 'title' | 'feedback'> {
+  const index = Math.abs(result.ply) % 4;
+
+  if (language === 'zh-CN') {
+    const recovery = [
+      ['稳住了', '很好，你马上重新稳住了节奏。'],
+      ['调整得不错', '不错，上一处问题之后你很快调整回来了。'],
+      ['重新找回节奏', '这步很稳。继续用刚才这种检查方式。'],
+      ['处理得很冷静', '很好，没有被前面的失误影响到这一手。'],
+    ] as const;
+
+    const streak = [
+      ['节奏不错', '你连续几步都处理得很稳，继续保持这个思考节奏。'],
+      ['思路很稳', '不错，你现在的落子很有耐心。'],
+      ['继续这样想', '这几步的判断都很稳，别急，保持这个过程。'],
+      ['状态不错', '你正在连续做出合理的决定。继续专注。'],
+    ] as const;
+
+    const [title, feedback] =
+      (moment === 'recovery' ? recovery : streak)[index];
+
+    return { title, feedback };
+  }
+
+  const recovery = [
+    ['Nice recovery', 'You reset quickly after that mistake. Keep that calm process.'],
+    ['Back on track', 'Good adjustment. You did not let the last mistake affect this move.'],
+    ['Good reset', 'That was a composed response. Keep checking the position this way.'],
+    ['Steady again', 'Nice recovery — you got right back to making solid decisions.'],
+  ] as const;
+
+  const streak = [
+    ['Good rhythm', 'You have put together several steady decisions. Keep that same process.'],
+    ['Settling in', 'Your last few moves have been patient and sensible. Keep going.'],
+    ['Nice process', 'You are making consistently solid choices right now. Stay focused.'],
+    ['Looking steady', 'A good run of decisions. Keep thinking before you commit.'],
+  ] as const;
+
+  const [title, feedback] =
+    (moment === 'recovery' ? recovery : streak)[index];
+
+  return { title, feedback };
 }
 
 type ReportTheme = {
@@ -1003,6 +1194,9 @@ export default function App() {
   const coachQueueRef = useRef<CoachJob[]>([]);
   const coachProcessingRef = useRef(false);
   const observedCoachPlyRef = useRef<number | null>(null);
+  const goodMoveRunRef = useRef(0);
+  const lastMistakePlyRef = useRef<number | null>(null);
+  const lastPraisePlyRef = useRef<number | null>(null);
   const reviewTouchStart = useRef<{ x: number; y: number } | null>(null);
   const [reviewDragX, setReviewDragX] = useState(0);
   const [reviewDragging, setReviewDragging] = useState(false);
@@ -1529,6 +1723,9 @@ export default function App() {
     coachQueueRef.current = [];
     coachProcessingRef.current = false;
     observedCoachPlyRef.current = null;
+    goodMoveRunRef.current = 0;
+    lastMistakePlyRef.current = null;
+    lastPraisePlyRef.current = null;
     setCoachResult(null);
     setCoachError('');
     setCoachThinking(false);
@@ -1614,6 +1811,8 @@ export default function App() {
             coachLanguage,
           );
 
+          const analysisGameId = gameId;
+
           setMoveEvaluations((current) => {
             const next = [
               ...current.filter(
@@ -1628,35 +1827,161 @@ export default function App() {
           });
 
           if (!result.shouldCoach) {
-            // Give lightweight feedback for normal moves,
-            // but do NOT add them to the Learning Log.
-            setCoachResult(result);
-            speak(result.feedback);
+            if (result.classification === 'good') {
+              goodMoveRunRef.current += 1;
+            } else {
+              goodMoveRunRef.current = 0;
+            }
+
+            const recentMistake =
+              lastMistakePlyRef.current != null &&
+              result.ply - lastMistakePlyRef.current <= 4;
+
+            const recovery =
+              recentMistake &&
+              result.classification === 'good' &&
+              result.centipawnLoss < 25;
+
+            const streak =
+              goodMoveRunRef.current >= 3 &&
+              goodMoveRunRef.current % 3 === 0;
+
+            const praiseIsSpacedOut =
+              lastPraisePlyRef.current == null ||
+              result.ply - lastPraisePlyRef.current >= 4;
+
+            // Routine good moves are intentionally silent. The coach speaks
+            // when the praise actually means something: a recovery or a run
+            // of consistently strong decisions.
+            if ((recovery || streak) && praiseIsSpacedOut) {
+              const praise = personalityPraise(
+                result,
+                coachLanguage,
+                recovery ? 'recovery' : 'streak',
+              );
+
+              const praisedResult: CoachResult = {
+                ...result,
+                ...praise,
+                lesson: '',
+                question: '',
+              };
+
+              lastPraisePlyRef.current = result.ply;
+              setCoachResult(praisedResult);
+              speak(praise.feedback);
+            }
+
             continue;
           }
 
-          // Always save the mistake even if the player
-          // has already played several more moves.
-          setCoachNotes((current) => {
-            const note: CoachNote = {
-              ...result,
-              gameId: gameId || '',
-              savedAt: Date.now(),
-              playerColor: myColor,
-              language: coachLanguage,
-            };
+          goodMoveRunRef.current = 0;
+          lastMistakePlyRef.current = result.ply;
 
-            return [
-              note,
-              ...current.filter((item) => item.ply !== note.ply),
-            ].slice(0, 16);
-          });
+          // The fast endpoint returns Stockfish truth immediately. Show the
+          // mistake and deterministic arrows now instead of waiting for GPT.
+          const fastResult: CoachResult = {
+            ...result,
+            title:
+              coachLanguage === 'zh-CN'
+                ? result.classification === 'blunder'
+                  ? '关键失误'
+                  : '值得看一看'
+                : result.classification === 'blunder'
+                  ? 'Critical miss'
+                  : 'Worth a look',
+            feedback:
+              coachLanguage === 'zh-CN'
+                ? '这里有一个重要的学习点，正在整理最关键的原因…'
+                : 'There is an important idea here. I’m checking the clearest reason…',
+            lesson: '',
+            question: '',
+          };
 
-          // Only replace the live coaching card if this is
-          // still useful to show.
-          setCoachResult(result);
+          const saveNote = (value: CoachResult) => {
+            setCoachNotes((current) => {
+              const note: CoachNote = {
+                ...value,
+                gameId: analysisGameId || '',
+                savedAt: Date.now(),
+                playerColor: myColor,
+                language: coachLanguage,
+              };
 
-          speak(result.feedback);
+              return [
+                note,
+                ...current.filter(
+                  (item) => item.ply !== note.ply,
+                ),
+              ].slice(0, 16);
+            });
+          };
+
+          saveNote(fastResult);
+          setCoachResult(fastResult);
+
+          // GPT wording happens in a second request and no longer blocks the
+          // move-analysis queue. Stockfish feedback/arrows are already on
+          // screen while this is running.
+          if (result.analysisId) {
+            void explainMove(
+              result.analysisId,
+              coachDetail,
+              coachLanguage,
+            )
+              .then((wording) => {
+                if (
+                  analysisGameId &&
+                  gameIdRef.current !== analysisGameId
+                ) {
+                  return;
+                }
+
+                const enriched: CoachResult = {
+                  ...result,
+                  ...wording,
+                  explanationPending: false,
+                };
+
+                setMoveEvaluations((current) =>
+                  current
+                    .map((item) =>
+                      item.ply === enriched.ply
+                        ? enriched
+                        : item,
+                    )
+                    .sort((a, b) => a.ply - b.ply),
+                );
+
+                saveNote(enriched);
+
+                setCoachResult((current) => {
+                  if (!current || current.ply !== enriched.ply) {
+                    return current;
+                  }
+
+                  return enriched;
+                });
+
+                // Voice waits for the useful explanation instead of reading
+                // the temporary "checking" message aloud.
+                speak(enriched.feedback);
+              })
+              .catch((error) => {
+                if (!isAbortError(error)) {
+                  console.warn(
+                    'Coach wording unavailable:',
+                    error,
+                  );
+                }
+              });
+          } else {
+            // Backward compatibility if the backend has not yet been updated
+            // to two-phase coaching.
+            saveNote(result);
+            setCoachResult(result);
+            speak(result.feedback);
+          }
         } catch (error) {
           if (!isAbortError(error)) {
             setCoachError(
