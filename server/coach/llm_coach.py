@@ -7,11 +7,13 @@ from typing import Any
 
 from openai import OpenAI
 
+
 PROMPT_PATH = (
     Path(__file__).resolve().parent
     / "prompts"
     / "kid_coach_prompt.txt"
 )
+
 
 COACH_RESPONSE_SCHEMA = {
     "type": "object",
@@ -39,64 +41,65 @@ COACH_RESPONSE_SCHEMA = {
 }
 
 
-COACH_DETAIL_CONFIG: dict[str, dict[str, Any]] = {
+COACH_DETAIL_CONFIG = {
     "quick": {
-    "target": "12-22 words",
-    "max_output_tokens": 120,
-    "instruction": """
+        "target": "8-15 words",
+        "max_output_tokens": 160,
+        "instruction": """
 COACH DETAIL LEVEL: QUICK
 
-Use only 1 or 2 short sentences.
+Give ONE short coaching sentence.
 
-Keep spoken feedback approximately 12-22 words.
+Only say the most important thing the student should notice.
 
-Explain only the single most important idea.
+Do not explain variations unless absolutely necessary.
 
-Do not give a full analysis.
-
-Do not repeat the move unless necessary.
-
-Sound like a friendly chess coach talking to a kid.
+Keep it fast and memorable.
 """.strip(),
-},
+    },
+
     "balanced": {
-        "target": "60-90 words",
-        "max_output_tokens": 320,
+        "target": "18-30 words",
+        "max_output_tokens": 220,
         "instruction": """
 COACH DETAIL LEVEL: BALANCED
 
-Keep the feedback approximately 60-90 words.
+Use at most TWO short sentences.
 
 Explain:
-- what went wrong
-- why it matters in this exact position
-- the opponent's strongest relevant idea, if supported
-- why the Stockfish best move is better
-- one reusable thinking habit
+- what mattered
+- why it mattered
 
-Prefer concrete chess language over generic advice.
+Give the student enough information to understand the idea
+without turning the response into a lecture.
+
+End with a useful thinking idea only when it adds value.
 """.strip(),
     },
+
     "deep": {
-        "target": "100-140 words",
-        "max_output_tokens": 520,
+        "target": "30-50 words",
+        "max_output_tokens": 300,
         "instruction": """
 COACH DETAIL LEVEL: DEEP
 
-Keep the feedback approximately 100-140 words.
+Use at most THREE concise sentences.
 
 Explain:
-- what went wrong
-- the tactical or positional reason
-- the opponent's strongest relevant reply, if supported
-- the important engine continuation when useful
-- why the Stockfish best move improves the position
-- one reusable lesson the student can apply later
+- the key mistake or idea
+- the concrete tactical or positional reason
+- the reusable lesson
 
-Be detailed but focused. Do not pad the answer or repeat the same point.
+A short concrete variation is allowed only when it genuinely
+helps the student understand the position.
+
+Deep means more insight, NOT more words.
+
+Never pad the explanation.
 """.strip(),
     },
 }
+
 
 LANGUAGE_INSTRUCTIONS = {
     "en": (
@@ -107,9 +110,10 @@ LANGUAGE_INSTRUCTIONS = {
         "'knight to f3' instead of only 'Nf3', "
         "'queen takes d5, check' instead of only 'Qxd5+', "
         "and 'castles kingside' instead of only 'O-O'. "
-        "You may include standard chess notation in parentheses when it helps teach notation, "
-        "for example 'knight takes g3 (Nxg3)'. "
-        "Make move explanations easy for a young chess student to understand when spoken aloud."
+        "You may include standard chess notation in parentheses when it helps "
+        "teach notation, for example 'knight takes g3 (Nxg3)'. "
+        "Make move explanations easy for a young chess student to understand "
+        "when spoken aloud."
     ),
 
     "zh-CN": (
@@ -127,6 +131,7 @@ LANGUAGE_INSTRUCTIONS = {
         "Do not mix unnecessary English explanations into the Chinese response."
     ),
 }
+
 
 class LLMCoach:
     """
@@ -171,12 +176,24 @@ class LLMCoach:
         It never changes Stockfish's chess conclusions.
         """
 
-        normalized_detail = str(detail).strip().lower()
+        # ------------------------------
+        # Normalize coach detail
+        # ------------------------------
 
-        detail_config = COACH_DETAIL_CONFIG.get(
-            normalized_detail,
-            COACH_DETAIL_CONFIG["balanced"],
-        )
+        normalized_detail = str(
+            detail
+        ).strip().lower()
+
+        if normalized_detail not in COACH_DETAIL_CONFIG:
+            normalized_detail = "balanced"
+
+        detail_config = COACH_DETAIL_CONFIG[
+            normalized_detail
+        ]
+
+        # ------------------------------
+        # Normalize coach language
+        # ------------------------------
 
         normalized_language = (
             "zh-CN"
@@ -184,25 +201,44 @@ class LLMCoach:
             in {
                 "zh",
                 "zh-cn",
+                "zh_cn",
                 "chinese",
                 "mandarin",
+                "simplified chinese",
             }
             else "en"
         )
 
+        # ------------------------------
+        # Give the LLM only facts that
+        # came from deterministic analysis
+        # ------------------------------
+
         payload = {
-            "fen_before": analysis.get("fen_before"),
-            "fen_after": analysis.get("fen_after"),
+            "fen_before": analysis.get(
+                "fen_before"
+            ),
+            "fen_after": analysis.get(
+                "fen_after"
+            ),
 
-            "move_number": analysis.get("move_number"),
-            "color": analysis.get("color"),
+            "move_number": analysis.get(
+                "move_number"
+            ),
+            "color": analysis.get(
+                "color"
+            ),
 
-            "played_move": analysis.get("played_move"),
+            "played_move": analysis.get(
+                "played_move"
+            ),
             "played_move_uci": analysis.get(
                 "played_move_uci"
             ),
 
-            "best_move": analysis.get("best_move"),
+            "best_move": analysis.get(
+                "best_move"
+            ),
             "best_move_uci": analysis.get(
                 "best_move_uci"
             ),
@@ -221,6 +257,9 @@ class LLMCoach:
                 "centipawn_loss"
             ),
 
+            # Keep engine lines short.
+            # The coach only needs enough context
+            # to explain the main idea.
             "best_line": analysis.get(
                 "best_line",
                 [],
@@ -235,21 +274,43 @@ class LLMCoach:
                 "theme_hint"
             ),
 
-            "coach_detail": normalized_detail
-            if normalized_detail in COACH_DETAIL_CONFIG
-            else "balanced",
+            "coach_detail": normalized_detail,
+            "feedback_target": detail_config[
+                "target"
+            ],
 
-            "feedback_target": detail_config["target"],
             "language": normalized_language,
         }
+
+        # ------------------------------
+        # Combine:
+        #
+        # 1. main Chess Buddy personality
+        # 2. language / spoken chess style
+        # 3. selected explanation depth
+        # ------------------------------
+
+        language_instruction = (
+            LANGUAGE_INSTRUCTIONS[
+                normalized_language
+            ]
+        )
 
         combined_instructions = (
             self.instructions
             + "\n\n"
-            + str(detail_config["instruction"])
+            + language_instruction
             + "\n\n"
-            + LANGUAGE_INSTRUCTIONS[normalized_language]
+            + str(
+                detail_config[
+                    "instruction"
+                ]
+            )
         )
+
+        # ------------------------------
+        # Generate structured coaching
+        # ------------------------------
 
         response = self.client.responses.create(
             model=self.model,
@@ -270,12 +331,25 @@ class LLMCoach:
                 },
             },
 
+            # This is intentionally larger
+            # than the requested feedback length.
+            #
+            # The model still follows the short
+            # word targets above, but needs room
+            # for title + feedback + lesson +
+            # question + JSON formatting.
             max_output_tokens=int(
-                detail_config["max_output_tokens"]
+                detail_config[
+                    "max_output_tokens"
+                ]
             ),
 
             store=False,
         )
+
+        # ------------------------------
+        # Parse response
+        # ------------------------------
 
         text = response.output_text.strip()
 
@@ -284,22 +358,39 @@ class LLMCoach:
                 "Coach returned an empty response."
             )
 
-        data = json.loads(text)
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                "Coach returned invalid JSON."
+            ) from error
 
         title = str(
-            data.get("title", "")
+            data.get(
+                "title",
+                "",
+            )
         ).strip()
 
         feedback = str(
-            data.get("feedback", "")
+            data.get(
+                "feedback",
+                "",
+            )
         ).strip()
 
         lesson = str(
-            data.get("lesson", "")
+            data.get(
+                "lesson",
+                "",
+            )
         ).strip()
 
         question = str(
-            data.get("question", "")
+            data.get(
+                "question",
+                "",
+            )
         ).strip()
 
         if not feedback:
@@ -307,12 +398,18 @@ class LLMCoach:
                 "Coach returned empty feedback."
             )
 
-        # Do not hard-cut feedback. The model already has
-        # a detail-specific word target and token budget.
-        # Character slicing can cut a sentence in half.
+        # Do not hard-cut responses here.
+        #
+        # Character slicing can cut English
+        # sentences or Chinese text in awkward
+        # places.
+        #
+        # The prompt controls the desired length,
+        # while the frontend can visually clamp
+        # text if necessary.
         return {
-            "title": title[:80],
+            "title": title,
             "feedback": feedback,
-            "lesson": lesson[:200],
-            "question": question[:220],
+            "lesson": lesson,
+            "question": question,
         }

@@ -234,7 +234,12 @@ type ReportTheme = {
   advice: string;
 };
 
-function reportThemeFor(note: CoachNote): ReportTheme {
+function reportThemeFor(
+  note: CoachNote,
+  language: CoachLanguage,
+): ReportTheme {
+  const isChinese = language === 'zh-CN';
+
   const text = [
     note.title,
     note.lesson,
@@ -245,142 +250,249 @@ function reportThemeFor(note: CoachNote): ReportTheme {
     .join(' ')
     .toLowerCase();
 
+  const includesAny = (words: string[]) =>
+    words.some((word) => text.includes(word));
+
   if (
-    text.includes('hanging') ||
-    text.includes('loose piece') ||
-    text.includes('undefended') ||
-    text.includes('unprotected')
+    includesAny([
+      'hanging',
+      'loose piece',
+      'undefended',
+      'unprotected',
+      '挂子',
+      '没保护',
+      '没有保护',
+      '未保护',
+      '保护不足',
+    ])
   ) {
     return {
       key: 'piece-safety',
-      label: 'Piece safety',
-      advice:
-        'Before you move, check whether any of your pieces will be left unprotected or easy to attack.',
+      label: isChinese
+        ? '棋子安全'
+        : 'Piece safety',
+      advice: isChinese
+        ? '落子前检查一下，有没有棋子会变成没有保护、容易被吃掉的目标。'
+        : 'Before you move, check whether any piece will be left unprotected or easy to attack.',
     };
   }
 
   if (
-    text.includes('fork') ||
-    text.includes('pin') ||
-    text.includes('skewer') ||
-    text.includes('tactic') ||
-    text.includes('combination')
+    includesAny([
+      'fork',
+      'pin',
+      'skewer',
+      'tactic',
+      'combination',
+      '双攻',
+      '牵制',
+      '串击',
+      '战术',
+      '组合',
+    ])
   ) {
     return {
       key: 'tactics',
-      label: 'Tactical awareness',
-      advice:
-        'In sharp positions, slow down and scan for checks, captures, and direct threats before choosing your move.',
+      label: isChinese
+        ? '战术观察'
+        : 'Tactical awareness',
+      advice: isChinese
+        ? '局面复杂时先慢一点，优先检查将军、吃子和直接威胁。'
+        : 'In sharp positions, slow down and scan for checks, captures, and direct threats.',
     };
   }
 
   if (
-    text.includes('king') ||
-    text.includes('castle') ||
-    text.includes('checkmate')
+    includesAny([
+      'king',
+      'castle',
+      'checkmate',
+      '王安全',
+      '王翼',
+      '易位',
+      '将杀',
+      '将军',
+    ])
   ) {
     return {
       key: 'king-safety',
-      label: 'King safety',
-      advice:
-        'Before starting an attack, make sure your king is safe and your opponent does not have an immediate way in.',
+      label: isChinese
+        ? '王的安全'
+        : 'King safety',
+      advice: isChinese
+        ? '准备进攻前，先确认自己的王安全，对手没有直接进攻的机会。'
+        : 'Before starting an attack, make sure your king is safe and your opponent has no immediate way in.',
     };
   }
 
   if (
-    text.includes('threat') ||
-    text.includes('forcing') ||
-    text.includes('opponent') ||
-    text.includes('check') ||
-    text.includes('capture')
+    includesAny([
+      'threat',
+      'forcing',
+      'opponent',
+      'check',
+      'capture',
+      '威胁',
+      '对手',
+      '强制',
+      '吃子',
+    ])
   ) {
     return {
       key: 'opponent-threats',
-      label: 'Opponent threats',
-      advice:
-        'Before every move, ask what your opponent is threatening and whether they have a check or capture you need to answer.',
+      label: isChinese
+        ? '观察对手意图'
+        : 'Opponent threats',
+      advice: isChinese
+        ? '每次落子前先问自己：对手下一步想做什么？有没有将军、吃子或直接威胁？'
+        : 'Before every move, ask what your opponent is threatening and whether they have a check or capture you need to answer.',
     };
   }
 
   if (
-    text.includes('opening') ||
-    text.includes('develop') ||
-    text.includes('development')
+    includesAny([
+      'opening',
+      'develop',
+      'development',
+      '开局',
+      '出子',
+      '发展',
+    ])
   ) {
     return {
       key: 'opening-habits',
-      label: 'Opening habits',
-      advice:
-        'In the opening, bring your pieces into the game, get your king safe, and avoid spending extra moves without a clear reason.',
+      label: isChinese
+        ? '开局习惯'
+        : 'Opening habits',
+      advice: isChinese
+        ? '开局优先把棋子发展出来、保护好王，不要没有明确目的地重复走同一个棋子。'
+        : 'In the opening, develop your pieces, get your king safe, and avoid spending extra moves without a clear reason.',
     };
   }
 
   if (
-    text.includes('endgame') ||
-    text.includes('king and pawn') ||
-    text.includes('promotion')
+    includesAny([
+      'endgame',
+      'promotion',
+      'king and pawn',
+      '残局',
+      '升变',
+      '兵残局',
+    ])
   ) {
     return {
       key: 'endgame',
-      label: 'Endgame technique',
-      advice:
-        'In simpler positions, take your time and improve your pieces before rushing into a final sequence.',
+      label: isChinese
+        ? '残局技巧'
+        : 'Endgame technique',
+      advice: isChinese
+        ? '棋子变少以后更要耐心，先改善棋子位置，再决定最后的行动。'
+        : 'In simpler positions, take your time and improve your pieces before rushing into a final sequence.',
     };
   }
 
   return {
     key: 'move-check',
-    label: 'Move-check routine',
-    advice:
-      'Before committing to a move, do one quick scan: what changed, what can be taken, and what is your opponent threatening?',
+    label: isChinese
+      ? '落子前检查'
+      : 'Move-check routine',
+    advice: isChinese
+      ? '落子前快速检查一次：局面发生了什么变化？哪些棋子能被吃？对手在威胁什么？'
+      : 'Before committing to a move, do one quick scan: what changed, what can be taken, and what is your opponent threatening?',
   };
 }
 
-function practicePuzzleTitle(note: CoachNote): string {
-  const theme = reportThemeFor(note);
+
+function practicePuzzleTitle(
+  note: CoachNote,
+  language: CoachLanguage,
+): string {
+  const theme = reportThemeFor(
+    note,
+    language,
+  );
+
+  const isChinese =
+    language === 'zh-CN';
 
   switch (theme.key) {
     case 'piece-safety':
-      return 'Keep your pieces safe';
+      return isChinese
+        ? '保护好你的棋子'
+        : 'Keep your pieces safe';
+
     case 'tactics':
-      return 'Find the tactical idea';
+      return isChinese
+        ? '找到战术机会'
+        : 'Find the tactical idea';
+
     case 'king-safety':
-      return 'Protect your king';
+      return isChinese
+        ? '保护你的王'
+        : 'Protect your king';
+
     case 'opponent-threats':
-      return 'Spot the threat';
+      return isChinese
+        ? '发现对手的威胁'
+        : 'Spot the threat';
+
     case 'opening-habits':
-      return 'Find the clean developing move';
+      return isChinese
+        ? '找到自然的开局走法'
+        : 'Find the clean developing move';
+
     case 'endgame':
-      return 'Find the best endgame plan';
+      return isChinese
+        ? '找到正确的残局计划'
+        : 'Find the best endgame plan';
+
     default:
-      return 'Find the better move';
+      return isChinese
+        ? '找到更好的走法'
+        : 'Find the better move';
   }
 }
+
 
 function buildGameReport(
   evaluations: CoachResult[],
   notes: CoachNote[],
+  language: CoachLanguage,
 ): GameReport {
+  const isChinese =
+    language === 'zh-CN';
+
   const ordered = [...evaluations].sort(
     (a, b) => a.ply - b.ply,
   );
 
-  const isStrong = (result: CoachResult) =>
+  const isStrong = (
+    result: CoachResult,
+  ) =>
     result.classification === 'good';
 
-  const isMajorMiss = (result: CoachResult) =>
+  const isMajorMiss = (
+    result: CoachResult,
+  ) =>
     result.classification === 'mistake' ||
     result.classification === 'blunder';
 
-  const phaseStats = (items: CoachResult[]) => ({
+  const phaseStats = (
+    items: CoachResult[],
+  ) => ({
     count: items.length,
     strong: items.filter(isStrong).length,
-    majorMisses: items.filter(isMajorMiss).length,
+    majorMisses:
+      items.filter(isMajorMiss).length,
   });
 
   const opening = phaseStats(
-    ordered.filter((result) => result.moveNumber <= 10),
+    ordered.filter(
+      (result) =>
+        result.moveNumber <= 10,
+    ),
   );
+
   const middlegame = phaseStats(
     ordered.filter(
       (result) =>
@@ -388,14 +500,23 @@ function buildGameReport(
         result.moveNumber <= 25,
     ),
   );
+
   const lateGame = phaseStats(
-    ordered.filter((result) => result.moveNumber > 25),
+    ordered.filter(
+      (result) =>
+        result.moveNumber > 25,
+    ),
   );
 
-  const goodMoves = ordered.filter(isStrong).length;
-  const blunders = ordered.filter(
-    (result) => result.classification === 'blunder',
-  ).length;
+  const goodMoves =
+    ordered.filter(isStrong).length;
+
+  const blunders =
+    ordered.filter(
+      (result) =>
+        result.classification ===
+        'blunder',
+    ).length;
 
   const strengths: string[] = [];
 
@@ -405,27 +526,37 @@ function buildGameReport(
     opening.strong / opening.count >= 0.5
   ) {
     strengths.push(
-      'You started the game in good shape and avoided giving your opponent easy chances early on.',
+      isChinese
+        ? '你的开局整体很稳，没有很早就给对手明显的机会。'
+        : 'You started the game in good shape and avoided giving your opponent easy chances early on.',
     );
   }
 
   if (
     middlegame.count >= 4 &&
     middlegame.majorMisses <= 1 &&
-    middlegame.strong / middlegame.count >= 0.5
+    middlegame.strong /
+      middlegame.count >=
+      0.5
   ) {
     strengths.push(
-      'You handled the middlegame steadily and made a lot of sensible decisions as the position became more complicated.',
+      isChinese
+        ? '进入中局以后，你大部分决定都很稳，局面复杂起来时也没有轻易乱掉。'
+        : 'You handled the middlegame steadily and made sensible decisions as the position became more complicated.',
     );
   }
 
   if (
     lateGame.count >= 3 &&
     lateGame.majorMisses <= 1 &&
-    lateGame.strong / lateGame.count >= 0.5
+    lateGame.strong /
+      lateGame.count >=
+      0.5
   ) {
     strengths.push(
-      'You stayed focused later in the game and kept finding useful moves instead of rushing.',
+      isChinese
+        ? '后半盘你保持了不错的专注，没有因为局面简化就急着走棋。'
+        : 'You stayed focused later in the game and kept finding useful moves instead of rushing.',
     );
   }
 
@@ -435,28 +566,45 @@ function buildGameReport(
     blunders === 0
   ) {
     strengths.push(
-      'You avoided any major one-move collapse, which kept the game playable and gave you chances throughout.',
+      isChinese
+        ? '这盘棋你没有出现特别严重的一步失误，所以一直保留着继续战斗的机会。'
+        : 'You avoided any major one-move collapse, which kept the game playable throughout.',
     );
   }
 
   if (
     strengths.length < 2 &&
-    goodMoves >= Math.max(3, Math.ceil(ordered.length * 0.55))
+    goodMoves >=
+      Math.max(
+        3,
+        Math.ceil(
+          ordered.length * 0.55,
+        ),
+      )
   ) {
     strengths.push(
-      'A lot of your decisions were solid. The main goal now is making that good decision-making more consistent.',
+      isChinese
+        ? '你有很多决定都很合理。下一步就是让这种稳定的思考方式保持得更久。'
+        : 'A lot of your decisions were solid. The next goal is making that good decision-making more consistent.',
     );
   }
 
-  if (!strengths.length && goodMoves > 0) {
+  if (
+    !strengths.length &&
+    goodMoves > 0
+  ) {
     strengths.push(
-      'You found several solid ideas during the game. There is a good base here to build on.',
+      isChinese
+        ? '这盘棋里你找到了不少不错的想法，已经有一个很好的基础可以继续提高。'
+        : 'You found several solid ideas during the game. There is a good base here to build on.',
     );
   }
 
   if (!strengths.length) {
     strengths.push(
-      'You created useful positions to learn from. Reviewing the key moments from this game will give you a clear next step.',
+      isChinese
+        ? '这盘棋留下了几个很值得学习的局面。把关键时刻重新看一遍，会比记住具体走法更有帮助。'
+        : 'You created useful positions to learn from. Reviewing the key moments will give you a clear next step.',
     );
   }
 
@@ -469,11 +617,18 @@ function buildGameReport(
   >();
 
   for (const note of notes) {
-    const theme = reportThemeFor(note);
+    const theme = reportThemeFor(
+      note,
+      language,
+    );
+
     const severity =
-      classificationWeight(note.classification) +
-      note.centipawnLoss;
-    const current = themes.get(theme.key);
+      classificationWeight(
+        note.classification,
+      ) + note.centipawnLoss;
+
+    const current =
+      themes.get(theme.key);
 
     if (current) {
       current.count += 1;
@@ -487,34 +642,47 @@ function buildGameReport(
     }
   }
 
-  const improvementThemes = [...themes.values()]
+  const improvementThemes = [
+    ...themes.values(),
+  ]
     .sort(
       (a, b) =>
-        b.count * 1000 + b.score -
-        (a.count * 1000 + a.score),
+        b.count * 1000 +
+        b.score -
+        (a.count * 1000 +
+          a.score),
     )
     .slice(0, 2);
 
-  const improvements = improvementThemes.map(
-    (theme) =>
-      `${theme.label}: ${theme.advice}`,
-  );
+  const improvements =
+    improvementThemes.map(
+      (theme) =>
+        `${theme.label}${isChinese ? '：' : ': '}${theme.advice}`,
+    );
 
   if (!improvements.length) {
     improvements.push(
-      'Keep using a quick move-check routine before you play: look at what changed and what your opponent can do next.',
+      isChinese
+        ? '继续保持落子前快速检查的习惯：看看局面发生了什么变化，以及对手下一步可能做什么。'
+        : 'Keep using a quick move-check routine: look at what changed and what your opponent can do next.',
     );
   }
 
-  const mainTheme = improvementThemes[0];
+  const mainTheme =
+    improvementThemes[0];
 
   const takeaway = mainTheme
-    ? `Your main focus next game is ${mainTheme.label.toLowerCase()}. Make that one habit automatic before worrying about anything more advanced.`
-    : 'Keep the same calm thinking process and try to make your solid decisions more consistent from move to move.';
+    ? isChinese
+      ? `下一盘棋先专注一个重点：${mainTheme.label}。先把这个习惯练成自然反应，再考虑更多东西。`
+      : `Your main focus next game is ${mainTheme.label.toLowerCase()}. Make that one habit automatic before worrying about anything more advanced.`
+    : isChinese
+      ? '继续保持冷静的思考方式，让好的决定从开局一直延续到最后。'
+      : 'Keep the same calm thinking process and make your solid decisions more consistent from move to move.';
 
   return {
     strengths: strengths.slice(0, 2),
-    improvements: improvements.slice(0, 2),
+    improvements:
+      improvements.slice(0, 2),
     takeaway,
   };
 }
@@ -704,20 +872,64 @@ function PlayerBar({ player, clock, active, side }: { player: Player; clock: num
   </div>;
 }
 
-function gameEndReason(status: string, winner: Winner, myColor: 'white' | 'black'): string {
+function gameEndReason(
+  status: string,
+  winner: Winner,
+  myColor: 'white' | 'black',
+  language: CoachLanguage,
+): string {
+  const isChinese = language === 'zh-CN';
+
   switch (status) {
-    case 'mate': return 'Checkmate';
-    case 'resign': return winner === myColor ? 'Your opponent resigned' : 'You resigned';
+    case 'mate':
+      return isChinese ? '将杀' : 'Checkmate';
+
+    case 'resign':
+      return winner === myColor
+        ? isChinese
+          ? '对手认输'
+          : 'Your opponent resigned'
+        : isChinese
+          ? '你已认输'
+          : 'You resigned';
+
     case 'timeout':
-    case 'outoftime': return winner === myColor ? 'Your opponent ran out of time' : 'You ran out of time';
-    case 'stalemate': return 'Stalemate';
-    case 'draw': return 'Draw agreed';
-    case 'insufficientMaterialClaim': return 'Draw by insufficient material';
-    case 'aborted': return 'Game aborted';
-    case 'noStart': return 'Game did not start';
-    case 'cheat': return 'Game ended by Lichess';
-    case 'variantEnd': return 'Game ended';
-    default: return 'Game finished';
+    case 'outoftime':
+      return winner === myColor
+        ? isChinese
+          ? '对手超时'
+          : 'Your opponent ran out of time'
+        : isChinese
+          ? '你已超时'
+          : 'You ran out of time';
+
+    case 'stalemate':
+      return isChinese ? '逼和' : 'Stalemate';
+
+    case 'draw':
+      return isChinese ? '双方同意和棋' : 'Draw agreed';
+
+    case 'insufficientMaterialClaim':
+      return isChinese
+        ? '子力不足和棋'
+        : 'Draw by insufficient material';
+
+    case 'aborted':
+      return isChinese ? '对局已取消' : 'Game aborted';
+
+    case 'noStart':
+      return isChinese ? '对局未开始' : 'Game did not start';
+
+    case 'cheat':
+      return isChinese
+        ? 'Lichess 结束了对局'
+        : 'Game ended by Lichess';
+
+    case 'variantEnd':
+      return isChinese ? '对局结束' : 'Game ended';
+
+    default:
+      return isChinese ? '对局结束' : 'Game finished';
   }
 }
 
@@ -773,7 +985,7 @@ export default function App() {
   const [puzzleIndex, setPuzzleIndex] = useState(0);
   const [puzzleFen, setPuzzleFen] = useState('');
   const [puzzleState, setPuzzleState] = useState<PuzzleState>('solving');
-  const [puzzleRollbackSignal, setPuzzleRollbackSignal,] = useState(0);
+  const [puzzleRollbackSignal, setPuzzleRollbackSignal] = useState(0);
   const [voiceEnabled, setVoiceEnabled] = useState(readVoiceEnabled);
   const [hintsEnabled, setHintsEnabled] = useState(true);
 
@@ -1959,7 +2171,97 @@ const gameReport =
   buildGameReport(
     moveEvaluations,
     coachNotes,
+    coachLanguage,
   );
+
+const isChinese = coachLanguage === 'zh-CN';
+
+const reportText = isChinese
+  ? {
+      report: '对局总结',
+      closeAria: '关闭对局总结',
+      reviewed: '已分析走法',
+      strong: '优秀决定',
+      moments: '学习时刻',
+      puzzles: '练习题',
+
+      whatWorked: '做得好的地方',
+      nextFocus: '下一步重点',
+      remember: '记住这一点',
+
+      personalized: '个性化练习',
+      practiceHeading: '练习这盘棋里的关键局面',
+      finishing: '正在完成最后一步分析…',
+
+      practice: '练习 →',
+      noPuzzles: '这盘棋没有发现值得专门练习的关键局面。',
+
+      close: '关闭总结',
+      review: '复盘失误',
+      practiceGame: '开始个性化练习',
+      newGame: '开始新对局',
+      viewReport: '查看对局总结',
+
+      puzzleEyebrow: '个性化练习',
+      puzzleWord: '练习题',
+      fromMove: '来自第',
+      moveSuffix: '回合',
+      tryAgain: '重新挑战这个局面',
+      closePuzzle: '关闭',
+      puzzlePrompt: '找到最佳走法。',
+      puzzlePromptDetail: '这个局面就来自你刚才的对局。',
+      yourMove: '轮到你走。',
+      incorrect:
+        '还差一点。再检查一下将军、吃子、直接威胁和没有保护的棋子。',
+      correctTitle: '很好，就是这一步！',
+      bestMove: '最佳走法',
+      showAnswer: '查看答案',
+      nextPuzzle: '下一题',
+      backToReport: '返回对局总结',
+    }
+  : {
+      report: 'GAME REPORT',
+      closeAria: 'Close game report',
+      reviewed: 'moves reviewed',
+      strong: 'strong decisions',
+      moments: 'learning moments',
+      puzzles: 'practice puzzles',
+
+      whatWorked: 'WHAT WORKED',
+      nextFocus: 'YOUR NEXT FOCUS',
+      remember: 'ONE THING TO REMEMBER',
+
+      personalized: 'PERSONALIZED PRACTICE',
+      practiceHeading: 'Practice the key moments from this game',
+      finishing: 'Finishing the last move analysis…',
+
+      practice: 'Practice →',
+      noPuzzles:
+        'No major practice positions were generated from this game.',
+
+      close: 'Close report',
+      review: 'Review mistakes',
+      practiceGame: 'Practice from this game',
+      newGame: 'New training game',
+      viewReport: 'View game report',
+
+      puzzleEyebrow: 'PERSONALIZED PUZZLE',
+      puzzleWord: 'Puzzle',
+      fromMove: 'From move',
+      moveSuffix: '',
+      tryAgain: 'Try the position again',
+      closePuzzle: 'Close',
+      puzzlePrompt: 'Find the best move.',
+      puzzlePromptDetail: 'This position came directly from your game.',
+      yourMove: 'Your move.',
+      incorrect:
+        'Not quite. Look again for checks, captures, threats, and loose pieces.',
+      correctTitle: "Nice — that's the move!",
+      bestMove: 'Best move',
+      showAnswer: 'Show answer',
+      nextPuzzle: 'Next puzzle',
+      backToReport: 'Back to game report',
+    };
 
 const activePuzzle =
   practicePuzzles[puzzleIndex] || null;
@@ -1998,11 +2300,44 @@ const puzzleMovableColor:
   const terminalGame = Boolean(gameId && !activeGame && gameStatus !== 'recovering' && gameStatus !== 'idle');
   const drawStatus = ['stalemate', 'draw', 'insufficientMaterialClaim'].includes(gameStatus);
   const gameOutcomeTitle = winner
-    ? winner === myColor ? 'You won!' : 'Game lost'
-    : drawStatus ? 'Draw' : 'Game ended';
-  const gameOutcomeClass = winner ? (winner === myColor ? 'win' : 'loss') : drawStatus ? 'draw' : 'ended';
-  const gameScore = winner === 'white' ? '1–0' : winner === 'black' ? '0–1' : drawStatus ? '½–½' : '—';
-  const gameReason = gameEndReason(gameStatus, winner, myColor);
+    ? winner === myColor
+      ? isChinese
+        ? '你赢了！'
+        : 'You won!'
+      : isChinese
+        ? '本局失利'
+        : 'Game lost'
+    : drawStatus
+      ? isChinese
+        ? '和棋'
+        : 'Draw'
+      : isChinese
+        ? '对局结束'
+        : 'Game ended';
+
+  const gameOutcomeClass = winner
+    ? winner === myColor
+      ? 'win'
+      : 'loss'
+    : drawStatus
+      ? 'draw'
+      : 'ended';
+
+  const gameScore =
+    winner === 'white'
+      ? '1–0'
+      : winner === 'black'
+        ? '0–1'
+        : drawStatus
+          ? '½–½'
+          : '—';
+
+  const gameReason = gameEndReason(
+    gameStatus,
+    winner,
+    myColor,
+    coachLanguage,
+  );
   const orderedCoachNotes = [...coachNotes].sort((a, b) => a.ply - b.ply);
 
   const reviewIndex = reviewTarget
@@ -2413,7 +2748,7 @@ function handlePuzzleMove(
                 className="ghost report-reopen-button"
                 onClick={() => setGameOverOpen(true)}
               >
-                View game report
+                {reportText.viewReport}
               </button>
             ) : null}
 
@@ -2790,416 +3125,402 @@ function handlePuzzleMove(
     </div>}
 
     {gameOverOpen && terminalGame && (
-  <div
-    className="modal-backdrop game-over-backdrop"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Game report"
-    onMouseDown={(event) => {
-      if (event.target === event.currentTarget) {
-        setGameOverOpen(false);
-      }
-    }}
-  >
-    <div
-      className={`game-over-modal game-report-modal ${gameOutcomeClass}`}
-    >
-      <div className="game-report-topbar">
-        <span className="eyebrow">GAME REPORT</span>
-        <button
-          type="button"
-          className="report-close-button"
-          aria-label="Close game report"
-          onClick={() => setGameOverOpen(false)}
+      <div
+        className="modal-backdrop game-over-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label={reportText.report}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            setGameOverOpen(false);
+          }
+        }}
+      >
+        <div
+          className={`game-over-modal game-report-modal ${gameOutcomeClass}`}
         >
-          ×
-        </button>
-      </div>
-
-      <div className="game-over-score">
-        {gameScore}
-      </div>
-
-      <h2>{gameOutcomeTitle}</h2>
-
-      <p>{gameReason}</p>
-
-      <div className="game-report-stats">
-        <span>
-          <b>{moveEvaluations.length}</b>
-          moves reviewed
-        </span>
-
-        <span>
-          <b>{goodMoves}</b>
-          strong decisions
-        </span>
-
-        <span>
-          <b>{coachingMoments}</b>
-          learning moments
-        </span>
-
-        <span>
-          <b>{practicePuzzles.length}</b>
-          practice puzzles
-        </span>
-      </div>
-
-      {coachThinking ? (
-        <div className="report-finishing">
-          Finishing the last move analysis…
-        </div>
-      ) : null}
-
-      <div className="game-report-grid">
-        <section className="report-card positive">
-          <span className="report-card-label">
-            WHAT WORKED
-          </span>
-
-          {gameReport.strengths.map(
-            (strength, index) => (
-              <p key={index}>
-                <span className="report-icon">
-                  ✓
-                </span>
-                {strength}
-              </p>
-            ),
-          )}
-        </section>
-
-        <section className="report-card improve">
-          <span className="report-card-label">
-            YOUR NEXT FOCUS
-          </span>
-
-          {gameReport.improvements.map(
-            (improvement, index) => (
-              <p key={index}>
-                <span className="report-icon">
-                  →
-                </span>
-                {improvement}
-              </p>
-            ),
-          )}
-        </section>
-      </div>
-
-      <div className="report-takeaway">
-        <span>ONE THING TO REMEMBER</span>
-        <p>{gameReport.takeaway}</p>
-      </div>
-
-      <div className="practice-section">
-        <div className="practice-heading">
-          <div>
+          <div className="game-report-topbar">
             <span className="eyebrow">
-              PERSONALIZED PRACTICE
+              {reportText.report}
             </span>
 
-            <strong>
-              Practice the key moments from this game
-            </strong>
+            <button
+              type="button"
+              className="report-close-button"
+              aria-label={reportText.closeAria}
+              onClick={() => setGameOverOpen(false)}
+            >
+              ×
+            </button>
           </div>
 
-          <b>
-            {practicePuzzles.length}
-          </b>
-        </div>
+          <div className="game-over-score">
+            {gameScore}
+          </div>
 
-        {practicePuzzles.length ? (
-          <div className="practice-list">
-            {practicePuzzles.map(
-              (puzzle, index) => (
-                <button
-                  key={puzzle.ply}
-                  className="practice-card"
-                  onClick={() =>
-                    openPuzzle(index)
-                  }
-                >
-                  <span className="practice-number">
-                    {index + 1}
-                  </span>
+          <h2>{gameOutcomeTitle}</h2>
+          <p>{gameReason}</p>
 
-                  <span className="practice-copy">
-                    <strong>
-                      {practicePuzzleTitle(puzzle)}
-                    </strong>
+          <div className="game-report-stats">
+            <span>
+              <b>{moveEvaluations.length}</b>
+              {reportText.reviewed}
+            </span>
 
-                    <small>
-                      From move {puzzle.moveNumber} ·
-                      Try the position again
-                    </small>
-                  </span>
+            <span>
+              <b>{goodMoves}</b>
+              {reportText.strong}
+            </span>
 
-                  <span className="practice-play">
-                    Practice →
-                  </span>
-                </button>
-              ),
+            <span>
+              <b>{coachingMoments}</b>
+              {reportText.moments}
+            </span>
+
+            <span>
+              <b>{practicePuzzles.length}</b>
+              {reportText.puzzles}
+            </span>
+          </div>
+
+          {coachThinking ? (
+            <div className="report-finishing">
+              {reportText.finishing}
+            </div>
+          ) : null}
+
+          <div className="game-report-grid">
+            <section className="report-card positive">
+              <span className="report-card-label">
+                {reportText.whatWorked}
+              </span>
+
+              {gameReport.strengths.map(
+                (strength, index) => (
+                  <p key={index}>
+                    <span className="report-icon">
+                      ✓
+                    </span>
+                    {strength}
+                  </p>
+                ),
+              )}
+            </section>
+
+            <section className="report-card improve">
+              <span className="report-card-label">
+                {reportText.nextFocus}
+              </span>
+
+              {gameReport.improvements.map(
+                (improvement, index) => (
+                  <p key={index}>
+                    <span className="report-icon">
+                      →
+                    </span>
+                    {improvement}
+                  </p>
+                ),
+              )}
+            </section>
+          </div>
+
+          <div className="report-takeaway">
+            <span>{reportText.remember}</span>
+            <p>{gameReport.takeaway}</p>
+          </div>
+
+          <div className="practice-section">
+            <div className="practice-heading">
+              <div>
+                <span className="eyebrow">
+                  {reportText.personalized}
+                </span>
+
+                <strong>
+                  {reportText.practiceHeading}
+                </strong>
+              </div>
+
+              <b>{practicePuzzles.length}</b>
+            </div>
+
+            {practicePuzzles.length ? (
+              <div className="practice-list">
+                {practicePuzzles.map(
+                  (puzzle, index) => (
+                    <button
+                      key={puzzle.ply}
+                      className="practice-card"
+                      onClick={() => openPuzzle(index)}
+                    >
+                      <span className="practice-number">
+                        {index + 1}
+                      </span>
+
+                      <span className="practice-copy">
+                        <strong>
+                          {practicePuzzleTitle(
+                            puzzle,
+                            coachLanguage,
+                          )}
+                        </strong>
+
+                        <small>
+                          {isChinese
+                            ? `${reportText.fromMove} ${puzzle.moveNumber} ${reportText.moveSuffix} · ${reportText.tryAgain}`
+                            : `${reportText.fromMove} ${puzzle.moveNumber} · ${reportText.tryAgain}`}
+                        </small>
+                      </span>
+
+                      <span className="practice-play">
+                        {reportText.practice}
+                      </span>
+                    </button>
+                  ),
+                )}
+              </div>
+            ) : (
+              <p className="practice-empty">
+                {reportText.noPuzzles}
+              </p>
             )}
           </div>
-        ) : (
-          <p className="practice-empty">
-            No major practice positions were
-            generated from this game.
-          </p>
-        )}
+
+          <div className="game-over-actions">
+            <button
+              className="ghost"
+              onClick={() => setGameOverOpen(false)}
+            >
+              {reportText.close}
+            </button>
+
+            <button
+              className="ghost"
+              disabled={!orderedCoachNotes.length}
+              onClick={() => {
+                const first = orderedCoachNotes[0];
+
+                if (!first) return;
+
+                setGameOverOpen(false);
+                setReviewTarget(first);
+                setReviewMode('better');
+              }}
+            >
+              {reportText.review}
+            </button>
+
+            {practicePuzzles.length ? (
+              <button
+                className="primary"
+                onClick={() => openPuzzle(0)}
+              >
+                {reportText.practiceGame}
+              </button>
+            ) : (
+              <button
+                className="primary"
+                onClick={resetFinishedGame}
+              >
+                {reportText.newGame}
+              </button>
+            )}
+
+            {practicePuzzles.length ? (
+              <button
+                className="ghost full-width"
+                onClick={resetFinishedGame}
+              >
+                {reportText.newGame}
+              </button>
+            ) : null}
+          </div>
+        </div>
       </div>
-
-      <div className="game-over-actions">
-        <button
-          className="ghost"
-          onClick={() =>
-            setGameOverOpen(false)
-          }
-        >
-          Close report
-        </button>
-
-        <button
-          className="ghost"
-          disabled={
-            !orderedCoachNotes.length
-          }
-          onClick={() => {
-            const first =
-              orderedCoachNotes[0];
-
-            if (!first) return;
-
-            setGameOverOpen(false);
-            setReviewTarget(first);
-            setReviewMode('better');
-          }}
-        >
-          Review mistakes
-        </button>
-
-        {practicePuzzles.length ? (
-          <button
-            className="primary"
-            onClick={() =>
-              openPuzzle(0)
-            }
-          >
-            Practice from this game
-          </button>
-        ) : (
-          <button
-            className="primary"
-            onClick={
-              resetFinishedGame
-            }
-          >
-            New training game
-          </button>
-        )}
-
-        {practicePuzzles.length ? (
-          <button
-            className="ghost full-width"
-            onClick={
-              resetFinishedGame
-            }
-          >
-            New training game
-          </button>
-        ) : null}
-      </div>
-    </div>
-  </div>
-)}
+    )}
 
 {puzzleOpen && activePuzzle && (
-  <div
-    className="modal-backdrop"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Personalized puzzle"
-  >
-    <div className="puzzle-modal">
-      <div className="puzzle-head">
-        <div>
-          <span className="eyebrow">
-            PERSONALIZED PUZZLE
-          </span>
+      <div
+        className="modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label={reportText.puzzleEyebrow}
+      >
+        <div className="puzzle-modal">
+          <div className="puzzle-head">
+            <div>
+              <span className="eyebrow">
+                {reportText.puzzleEyebrow}
+              </span>
 
-          <strong>
-            Puzzle {puzzleIndex + 1}
-            {' / '}
-            {practicePuzzles.length}
-          </strong>
+              <strong>
+                {reportText.puzzleWord} {puzzleIndex + 1}
+                {' / '}
+                {practicePuzzles.length}
+              </strong>
 
-          <small>
-            From move{' '}
-            {activePuzzle.moveNumber}
-          </small>
+              <small>
+                {isChinese
+                  ? `${reportText.fromMove} ${activePuzzle.moveNumber} ${reportText.moveSuffix}`
+                  : `${reportText.fromMove} ${activePuzzle.moveNumber}`}
+              </small>
+            </div>
+
+            <button
+              className="ghost"
+              onClick={closePuzzleToReport}
+            >
+              {reportText.closePuzzle}
+            </button>
+          </div>
+
+          <div className="puzzle-prompt">
+            <strong>
+              {reportText.puzzlePrompt}
+            </strong>
+
+            <span>
+              {reportText.puzzlePromptDetail}
+            </span>
+          </div>
+
+          <div className="review-board-wrap">
+            <ChessBoard
+              fen={
+                puzzleFen ||
+                activePuzzle.fenBefore
+              }
+              orientation={
+                activePuzzle.playerColor
+              }
+              movableColor={
+                puzzleState === 'correct' ||
+                puzzleState === 'revealed'
+                  ? undefined
+                  : puzzleMovableColor
+              }
+              destinations={
+                puzzleState === 'correct' ||
+                puzzleState === 'revealed'
+                  ? new Map()
+                  : puzzleDestinations
+              }
+              lastMove={undefined}
+              coachArrows={
+                puzzleState === 'revealed'
+                  ? [
+                      {
+                        from:
+                          activePuzzle.bestMoveUci.slice(
+                            0,
+                            2,
+                          ),
+                        to:
+                          activePuzzle.bestMoveUci.slice(
+                            2,
+                            4,
+                          ),
+                        kind: 'best',
+                      },
+                    ]
+                  : []
+              }
+              coachHighlights={[]}
+              rollbackSignal={
+                puzzleRollbackSignal
+              }
+              onMove={
+                handlePuzzleMove
+              }
+            />
+          </div>
+
+          {puzzleState === 'solving' ? (
+            <div className="puzzle-feedback neutral">
+              {reportText.yourMove}
+            </div>
+          ) : null}
+
+          {puzzleState === 'incorrect' ? (
+            <div className="puzzle-feedback wrong">
+              {reportText.incorrect}
+            </div>
+          ) : null}
+
+          {puzzleState === 'correct' ? (
+            <div className="puzzle-feedback correct">
+              <strong>
+                {reportText.correctTitle}
+              </strong>
+
+              <span>
+                {activePuzzle.lesson ||
+                  activePuzzle.feedback}
+              </span>
+            </div>
+          ) : null}
+
+          {puzzleState === 'revealed' ? (
+            <div className="puzzle-feedback revealed">
+              <strong>
+                {reportText.bestMove}:{' '}
+                {activePuzzle.bestMove}
+              </strong>
+
+              <span>
+                {activePuzzle.lesson ||
+                  activePuzzle.feedback}
+              </span>
+            </div>
+          ) : null}
+
+          <div className="puzzle-actions">
+            {puzzleState !== 'correct' &&
+            puzzleState !== 'revealed' ? (
+              <button
+                className="ghost"
+                onClick={
+                  revealPuzzleAnswer
+                }
+              >
+                {reportText.showAnswer}
+              </button>
+            ) : null}
+
+            {(puzzleState === 'correct' ||
+              puzzleState === 'revealed') &&
+            puzzleIndex <
+              practicePuzzles.length - 1 ? (
+              <button
+                className="primary"
+                onClick={() =>
+                  openPuzzle(
+                    puzzleIndex + 1,
+                  )
+                }
+              >
+                {reportText.nextPuzzle}
+              </button>
+            ) : null}
+
+            {(puzzleState === 'correct' ||
+              puzzleState === 'revealed') &&
+            puzzleIndex ===
+              practicePuzzles.length - 1 ? (
+              <button
+                className="primary"
+                onClick={
+                  closePuzzleToReport
+                }
+              >
+                {reportText.backToReport}
+              </button>
+            ) : null}
+          </div>
         </div>
-
-        <button
-          className="ghost"
-          onClick={
-            closePuzzleToReport
-          }
-        >
-          Close
-        </button>
       </div>
-
-      <div className="puzzle-prompt">
-        <strong>
-          Find the best move.
-        </strong>
-
-        <span>
-          This position came directly
-          from your game.
-        </span>
-      </div>
-
-      <div className="review-board-wrap">
-        <ChessBoard
-          fen={
-            puzzleFen ||
-            activePuzzle.fenBefore
-          }
-          orientation={
-            activePuzzle.playerColor
-          }
-          movableColor={
-            puzzleState === 'correct' ||
-            puzzleState === 'revealed'
-              ? undefined
-              : puzzleMovableColor
-          }
-          destinations={
-            puzzleState === 'correct' ||
-            puzzleState === 'revealed'
-              ? new Map()
-              : puzzleDestinations
-          }
-          lastMove={undefined}
-          coachArrows={
-            puzzleState === 'revealed'
-              ? [
-                  {
-                    from:
-                      activePuzzle.bestMoveUci.slice(
-                        0,
-                        2,
-                      ),
-                    to:
-                      activePuzzle.bestMoveUci.slice(
-                        2,
-                        4,
-                      ),
-                    kind: 'best',
-                  },
-                ]
-              : []
-          }
-          coachHighlights={[]}
-          rollbackSignal={
-            puzzleRollbackSignal
-          }
-          onMove={
-            handlePuzzleMove
-          }
-        />
-      </div>
-
-      {puzzleState === 'solving' ? (
-        <div className="puzzle-feedback neutral">
-          Your move.
-        </div>
-      ) : null}
-
-      {puzzleState === 'incorrect' ? (
-        <div className="puzzle-feedback wrong">
-          Not quite. Look again for
-          checks, captures, threats, and
-          loose pieces.
-        </div>
-      ) : null}
-
-      {puzzleState === 'correct' ? (
-        <div className="puzzle-feedback correct">
-          <strong>
-            Nice — that's the move!
-          </strong>
-
-          <span>
-            {activePuzzle.lesson ||
-              activePuzzle.feedback}
-          </span>
-        </div>
-      ) : null}
-
-      {puzzleState === 'revealed' ? (
-        <div className="puzzle-feedback revealed">
-          <strong>
-            Best move:{' '}
-            {activePuzzle.bestMove}
-          </strong>
-
-          <span>
-            {activePuzzle.lesson ||
-              activePuzzle.feedback}
-          </span>
-        </div>
-      ) : null}
-
-      <div className="puzzle-actions">
-        {puzzleState !== 'correct' &&
-        puzzleState !== 'revealed' ? (
-          <button
-            className="ghost"
-            onClick={
-              revealPuzzleAnswer
-            }
-          >
-            Show answer
-          </button>
-        ) : null}
-
-        {(puzzleState === 'correct' ||
-          puzzleState === 'revealed') &&
-        puzzleIndex <
-          practicePuzzles.length - 1 ? (
-          <button
-            className="primary"
-            onClick={() =>
-              openPuzzle(
-                puzzleIndex + 1,
-              )
-            }
-          >
-            Next puzzle
-          </button>
-        ) : null}
-
-        {(puzzleState === 'correct' ||
-          puzzleState === 'revealed') &&
-        puzzleIndex ===
-          practicePuzzles.length - 1 ? (
-          <button
-            className="primary"
-            onClick={
-              closePuzzleToReport
-            }
-          >
-            Back to game report
-          </button>
-        ) : null}
-      </div>
-    </div>
-  </div>
-)}
+    )}
 
     {endGameConfirm && gameId && activeGame && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm end game" onMouseDown={(event) => { if (event.target === event.currentTarget) setEndGameConfirm(false); }}>
       <div className="confirm-modal">
