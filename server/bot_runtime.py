@@ -123,50 +123,123 @@ class BotEngine:
         value = score.pov(perspective).score(mate_score=100_000)
         return int(value if value is not None else -100_000)
 
-    def choose_move(self, board: chess.Board, level: BotLevel) -> tuple[chess.Move, int]:
+    def choose_move(
+        self,
+        board: chess.Board,
+        level: BotLevel,
+    ) -> tuple[chess.Move, int]:
         legal = list(board.legal_moves)
+
         if not legal:
             raise RuntimeError("No legal bot move is available.")
 
         started = time.perf_counter()
+
+        def pick_with_engine(
+            engine: chess.engine.SimpleEngine,
+        ) -> chess.Move:
+            raw = engine.analyse(
+                board,
+                chess.engine.Limit(
+                    time=max(
+                        0.02,
+                        level.think_ms / 1000.0,
+                    )
+                ),
+                multipv=min(
+                    level.multipv,
+                    len(legal),
+                ),
+            )
+
+            infos = raw if isinstance(raw, list) else [raw]
+            candidates: list[tuple[chess.Move, int]] = []
+
+            for info in infos:
+                pv = info.get("pv") or []
+
+                if not pv:
+                    continue
+
+                candidate = pv[0]
+
+                if candidate in board.legal_moves:
+                    candidates.append(
+                        (
+                            candidate,
+                            self._score(
+                                info,
+                                board.turn,
+                            ),
+                        )
+                    )
+
+            if not candidates:
+                raise RuntimeError(
+                    "Stockfish returned no legal candidate moves."
+                )
+
+            best_score = max(
+                score for _, score in candidates
+            )
+
+            weights: list[float] = []
+
+            for _, score in candidates:
+                loss = min(
+                    1500,
+                    max(0, best_score - score),
+                )
+
+                weights.append(
+                    math.exp(
+                        -loss
+                        / max(
+                            1.0,
+                            level.temperature_cp,
+                        )
+                    )
+                )
+
+            return self._rng.choices(
+                [move for move, _ in candidates],
+                weights=weights,
+                k=1,
+            )[0]
+
         with self._lock:
             try:
-                engine = self._ensure_engine()
-                raw = engine.analyse(
-                    board,
-                    chess.engine.Limit(time=max(0.02, level.think_ms / 1000.0)),
-                    multipv=min(level.multipv, len(legal)),
+                move = pick_with_engine(
+                    self._ensure_engine()
                 )
-                infos = raw if isinstance(raw, list) else [raw]
-                candidates: list[tuple[chess.Move, int]] = []
-                for info in infos:
-                    pv = info.get("pv") or []
-                    if not pv:
-                        continue
-                    move = pv[0]
-                    if move in board.legal_moves:
-                        candidates.append((move, self._score(info, board.turn)))
-                if not candidates:
-                    raise RuntimeError("Stockfish returned no legal candidate moves.")
-
-                best_score = max(score for _, score in candidates)
-                weights: list[float] = []
-                for _, score in candidates:
-                    # Cap extreme mate/material swings so probabilities remain
-                    # stable while still strongly preferring sane moves.
-                    loss = min(1500, max(0, best_score - score))
-                    weights.append(math.exp(-loss / max(1.0, level.temperature_cp)))
-                move = self._rng.choices([candidate for candidate, _ in candidates], weights=weights, k=1)[0]
-            except Exception:
-                # A transient engine failure should not forfeit the game. Reset
-                # Stockfish and make one legal fallback move; the next turn will
-                # start a fresh engine process.
+            except Exception as first_error:
                 self._reset_after_failure()
-                move = self._rng.choice(legal)
 
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
+                print(
+                    "[BOT STOCKFISH] first search failed; retrying:",
+                    first_error,
+                    flush=True,
+                )
+
+                try:
+                    move = pick_with_engine(
+                        self._ensure_engine()
+                    )
+                except Exception as second_error:
+                    self._reset_after_failure()
+
+                    # Do not teach with a completely random fallback move.
+                    # The game stream will retry after the engine failure.
+                    raise RuntimeError(
+                        "Stockfish bot move failed twice; "
+                        "refusing to submit a random fallback move."
+                    ) from second_error
+
+        elapsed_ms = int(
+            (time.perf_counter() - started) * 1000
+        )
+
         return move, elapsed_ms
-
 
 class LichessBotRuntime:
     def __init__(self) -> None:

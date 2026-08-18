@@ -16,6 +16,28 @@ export type CoachResult = {
   bestMoveUci: string;
   opponentReply?: string;
   opponentReplyUci?: string;
+  evaluationBefore?: number;
+  evaluationAfter?: number;
+  engineDiagnostics?: {
+    budgetMs?: number;
+    bestSearch?: {
+      depth?: number;
+      seldepth?: number;
+      nodes?: number;
+      nps?: number;
+      timeMs?: number;
+      hashfull?: number;
+    };
+    playedSearch?: {
+      depth?: number;
+      seldepth?: number;
+      nodes?: number;
+      nps?: number;
+      timeMs?: number;
+      hashfull?: number;
+      reusedBestSearch?: boolean;
+    };
+  };
   fenBefore: string;
   fenAfter: string;
   feedback: string;

@@ -38,7 +38,7 @@ PORT = int(
         os.environ.get("CHESS_SERVER_PORT", "8765")
     )
 )
-COACH_TIME_MS = int(os.environ.get("COACH_TIME_MS", "110"))
+COACH_TIME_MS = max(200, int(os.environ.get("COACH_TIME_MS", "250")))
 MISTAKE_THRESHOLD_CP = int(os.environ.get("COACH_MISTAKE_THRESHOLD_CP", "80"))
 MAX_BODY_BYTES = 64 * 1024
 
@@ -413,17 +413,14 @@ def synthesize_speech(
     return response.content
     
 
-def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
-    """Fast phase: Stockfish truth first; do not wait for GPT wording."""
-
+def analyze_move(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
     fen = str(payload.get("fen", "")).strip()
     move_uci = str(payload.get("move", "")).strip().lower()
 
     language = normalize_language(
-        payload.get(
-            "language",
-            "en",
-        )
+        payload.get("language", "en")
     )
 
     detail = str(
@@ -453,20 +450,23 @@ def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
 
     with _analyzer_lock:
         try:
-            analysis = get_analyzer().analyze_move(
-                board,
-                move,
-            ).to_dict()
+            analysis = (
+                get_analyzer()
+                .analyze_move(board, move)
+                .to_dict()
+            )
         except (
             chess.engine.EngineError,
             chess.engine.EngineTerminatedError,
             BrokenPipeError,
         ):
             reset_analyzer()
-            analysis = get_analyzer().analyze_move(
-                board,
-                move,
-            ).to_dict()
+
+            analysis = (
+                get_analyzer()
+                .analyze_move(board, move)
+                .to_dict()
+            )
 
     should_coach = (
         int(analysis["centipawn_loss"])
@@ -487,111 +487,130 @@ def analyze_move(payload: dict[str, Any]) -> dict[str, Any]:
         "opponentReplyUci": analysis["opponent_reply_uci"],
         "fenBefore": analysis["fen_before"],
         "fenAfter": analysis["fen_after"],
+        "bestLine": analysis.get("best_line", []),
+        "refutationLine": analysis.get("refutation_line", []),
         "themeHint": analysis.get("theme_hint", ""),
-        "bestLine": analysis.get("best_line", [])[:6],
-        "refutationLine": analysis.get("refutation_line", [])[:6],
+        "evaluationBefore": analysis.get("evaluation_before", 0),
+        "evaluationAfter": analysis.get("evaluation_after", 0),
+        "engineDiagnostics": analysis.get("engine_diagnostics", {}),
         "coachDetail": detail,
         "language": language,
     }
 
     if should_coach:
-        # Arrows/highlights and the temporary fallback are deterministic and
-        # available immediately. GPT wording is fetched in a second request.
-        coaching = fallback_coaching(
-            analysis,
-            language=language,
+        # Return deterministic Stockfish facts immediately.
+        # The frontend requests LLM wording separately.
+        result.update(
+            fallback_coaching(
+                analysis,
+                language=language,
+            )
         )
-        result.update(coaching)
-
-        if os.environ.get("OPENAI_API_KEY", "").strip():
-            result["analysisId"] = cache_analysis(analysis)
-            result["explanationPending"] = True
-        else:
-            result["explanationPending"] = False
-
-        return result
-
-    # Routine good moves are intentionally simple here. The frontend decides
-    # whether a good move is actually worth surfacing or speaking.
-    cp_loss = int(analysis["centipawn_loss"])
-    played = str(analysis["played_move"])
-
-    if language == "zh-CN":
-        if cp_loss < 20:
-            title = "稳"
-            feedback = "这步处理得很稳。"
-        elif cp_loss < 35:
-            title = "不错"
-            feedback = "这步很合理，继续下。"
-        else:
-            title = "继续"
-            feedback = "可以继续下，不需要停下来分析。"
     else:
-        if cp_loss < 20:
-            title = "Solid"
-            feedback = "That was a steady choice."
-        elif cp_loss < 35:
-            title = "Good"
-            feedback = "That works well. Keep going."
-        else:
-            title = "Play on"
-            feedback = "That is playable; no need to stop here."
+        cp_loss = int(analysis["centipawn_loss"])
 
-    result.update({
-        "title": title,
-        "feedback": feedback,
-        "lesson": "",
-        "question": "",
-        "arrows": [],
-        "highlightsBefore": [],
-        "highlightsAfter": [],
-        "explanationPending": False,
-    })
+        if cp_loss < 35:
+            result.update({
+                "title": "稳健" if language == "zh-CN" else "Solid",
+                "feedback": "这步很稳。" if language == "zh-CN" else "Solid choice.",
+                "lesson": "",
+                "question": "",
+                "arrows": [],
+                "highlightsBefore": [],
+                "highlightsAfter": [],
+            })
+        else:
+            result.update({
+                "title": "再看一眼" if language == "zh-CN" else "Worth a look",
+                "feedback": (
+                    "这步可以走，不过还有更干净的选择。"
+                    if language == "zh-CN"
+                    else "Playable, but there was a cleaner choice."
+                ),
+                "lesson": "",
+                "question": "",
+                "arrows": [],
+                "highlightsBefore": [],
+                "highlightsAfter": [],
+            })
 
     return result
 
 
-def explain_analysis(payload: dict[str, Any]) -> dict[str, Any]:
-    """Slow phase: improve wording only; Stockfish is NOT run again."""
+def explain_move(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    raw = payload.get("analysis")
 
-    analysis_id = str(
-        payload.get("analysisId", "")
-    ).strip()
-
-    if not analysis_id:
-        raise ValueError("analysisId is required")
-
-    analysis = get_cached_analysis(analysis_id)
-
-    if analysis is None:
-        raise ValueError(
-            "That coach analysis expired."
-        )
+    if not isinstance(raw, dict):
+        raise ValueError("analysis must be an object")
 
     language = normalize_language(
-        payload.get("language", "en")
+        payload.get(
+            "language",
+            raw.get("language", "en"),
+        )
     )
 
     detail = str(
-        payload.get("detail", "balanced")
+        payload.get(
+            "detail",
+            raw.get("coachDetail", "balanced"),
+        )
     ).strip().lower()
 
     if detail not in {"quick", "balanced", "deep"}:
         detail = "balanced"
 
-    wording = coach_payload(
+    analysis = {
+        "move_number": raw.get("moveNumber"),
+        "ply": raw.get("ply"),
+        "played_move": raw.get("playedMove"),
+        "played_move_uci": raw.get("playedMoveUci"),
+        "classification": raw.get("classification"),
+        "centipawn_loss": raw.get("centipawnLoss"),
+        "best_move": raw.get("bestMove"),
+        "best_move_uci": raw.get("bestMoveUci"),
+        "opponent_reply": raw.get("opponentReply", ""),
+        "opponent_reply_uci": raw.get("opponentReplyUci", ""),
+        "fen_before": raw.get("fenBefore"),
+        "fen_after": raw.get("fenAfter"),
+        "best_line": raw.get("bestLine", []),
+        "refutation_line": raw.get("refutationLine", []),
+        "theme_hint": raw.get("themeHint", ""),
+        "evaluation_before": raw.get("evaluationBefore", 0),
+        "evaluation_after": raw.get("evaluationAfter", 0),
+    }
+
+    coaching = fallback_coaching(
+        analysis,
+        language=language,
+    )
+
+    llm_payload = coach_payload(
         analysis,
         detail=detail,
         language=language,
     )
 
+    for key in (
+        "title",
+        "feedback",
+        "lesson",
+        "question",
+    ):
+        value = llm_payload.get(key)
+
+        if isinstance(value, str) and value.strip():
+            coaching[key] = value.strip()
+
     return {
-        "title": str(wording.get("title", "")).strip(),
-        "feedback": str(wording.get("feedback", "")).strip(),
-        "lesson": str(wording.get("lesson", "")).strip(),
-        "question": str(wording.get("question", "")).strip(),
-        "explanationPending": False,
+        "title": coaching["title"],
+        "feedback": coaching["feedback"],
+        "lesson": coaching.get("lesson", ""),
+        "question": coaching.get("question", ""),
     }
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "AIChessCoach/1.0"
@@ -813,6 +832,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(
                     200,
                     analyze_move(
+                        self._json_body()
+                    ),
+                )
+            elif self.path == "/api/coach/explain":
+                self._send(
+                    200,
+                    explain_move(
                         self._json_body()
                     ),
                 )
