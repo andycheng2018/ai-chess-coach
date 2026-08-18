@@ -18,18 +18,10 @@ PROMPT_PATH = (
 COACH_RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "title": {
-            "type": "string",
-        },
-        "feedback": {
-            "type": "string",
-        },
-        "lesson": {
-            "type": "string",
-        },
-        "question": {
-            "type": "string",
-        },
+        "title": {"type": "string"},
+        "feedback": {"type": "string"},
+        "lesson": {"type": "string"},
+        "question": {"type": "string"},
     },
     "required": [
         "title",
@@ -43,59 +35,52 @@ COACH_RESPONSE_SCHEMA = {
 
 COACH_DETAIL_CONFIG = {
     "quick": {
-        "target": "8-15 words",
-        "max_output_tokens": 160,
+        "target": "15-25 words",
+        "max_output_tokens": 220,
         "instruction": """
 COACH DETAIL LEVEL: QUICK
 
-Give ONE short coaching sentence.
+Use 1-2 short sentences, roughly 15-25 words total.
 
-Only say the most important thing the student should notice.
-
-Do not explain variations unless absolutely necessary.
-
-Keep it fast and memorable.
+Give the concrete chess reason, not merely a verdict.
+If there is a forcing reply, name the important reply or consequence.
+Do not add a generic lesson just to fill space.
 """.strip(),
     },
 
     "balanced": {
-        "target": "18-30 words",
-        "max_output_tokens": 220,
+        "target": "35-55 words",
+        "max_output_tokens": 360,
         "instruction": """
 COACH DETAIL LEVEL: BALANCED
 
-Use at most TWO short sentences.
+Use 2-3 natural sentences, roughly 35-55 words total.
 
 Explain:
-- what mattered
-- why it mattered
+1. what specifically changed or became vulnerable after the student's move,
+2. how the opponent can exploit it or what opportunity was missed,
+3. why the recommended move handles the position better.
 
-Give the student enough information to understand the idea
-without turning the response into a lecture.
-
-End with a useful thinking idea only when it adds value.
+Include a reusable thinking habit only when it is specific to this position.
 """.strip(),
     },
 
     "deep": {
-        "target": "30-50 words",
-        "max_output_tokens": 300,
+        "target": "60-90 words",
+        "max_output_tokens": 520,
         "instruction": """
 COACH DETAIL LEVEL: DEEP
 
-Use at most THREE concise sentences.
+Use 3-5 concise sentences, roughly 60-90 words total.
 
-Explain:
-- the key mistake or idea
-- the concrete tactical or positional reason
-- the reusable lesson
+Explain the causal chess story:
+- what the student's move changed,
+- the concrete tactical or positional consequence,
+- the important engine continuation when it genuinely teaches the idea,
+- why the recommended move works,
+- one reusable lesson.
 
-A short concrete variation is allowed only when it genuinely
-helps the student understand the position.
-
-Deep means more insight, NOT more words.
-
-Never pad the explanation.
+Deep means more chess insight, not filler.
 """.strip(),
     },
 }
@@ -104,42 +89,33 @@ Never pad the explanation.
 LANGUAGE_INSTRUCTIONS = {
     "en": (
         "COACH LANGUAGE: English. "
-        "Use natural, encouraging language suitable for a child or student. "
-        "When explaining chess moves, prefer clear spoken chess language. "
-        "For example, say 'knight takes g3' instead of only 'Nxg3', "
-        "'knight to f3' instead of only 'Nf3', "
-        "'queen takes d5, check' instead of only 'Qxd5+', "
-        "and 'castles kingside' instead of only 'O-O'. "
-        "You may include standard chess notation in parentheses when it helps "
-        "teach notation, for example 'knight takes g3 (Nxg3)'. "
-        "Make move explanations easy for a young chess student to understand "
-        "when spoken aloud."
+        "Use natural, conversational English that sounds good aloud. "
+        "Prefer spoken chess language such as 'knight takes g3' rather than "
+        "only 'Nxg3', 'knight to f3' rather than only 'Nf3', "
+        "'queen takes d5, check' rather than only 'Qxd5+', and "
+        "'castles kingside' rather than only 'O-O'. "
+        "Standard notation may appear in parentheses when it genuinely helps."
     ),
 
     "zh-CN": (
         "COACH LANGUAGE: Simplified Chinese (简体中文). "
-        "Write every user-facing field in natural, friendly Mandarin "
-        "suitable for a child or student. "
-        "When explaining chess moves, prefer clear spoken Chinese. "
-        "For example, say '马吃 g3' instead of only 'Nxg3', "
-        "'马走到 f3' instead of only 'Nf3', "
-        "'后吃 d5，将军' instead of only 'Qxd5+', "
-        "and '王翼易位' instead of only 'O-O'. "
-        "You may include standard chess notation in parentheses when useful, "
-        "for example '马吃 g3（Nxg3）'. "
-        "Use short sentences that sound natural when spoken aloud. "
-        "Do not mix unnecessary English explanations into the Chinese response."
+        "Use natural, conversational Mandarin that sounds good aloud. "
+        "Prefer spoken chess language such as '马吃 g3' rather than only "
+        "'Nxg3', '马走到 f3' rather than only 'Nf3', "
+        "'后吃 d5，将军' rather than only 'Qxd5+', and "
+        "'王翼易位' rather than only 'O-O'. "
+        "Standard notation may appear in parentheses when useful. "
+        "Do not mix unnecessary English explanations into Chinese."
     ),
 }
 
 
 class LLMCoach:
     """
-    Turns deterministic Stockfish analysis into
-    student-friendly coaching.
+    Converts deterministic Stockfish facts into useful coaching language.
 
-    Stockfish remains the source of truth for chess facts.
-    The LLM is used only to explain those facts clearly.
+    Stockfish remains the authority for chess facts.
+    The LLM explains those facts and adds conversational teaching style.
     """
 
     def __init__(
@@ -167,19 +143,8 @@ class LLMCoach:
         analysis: dict[str, Any],
         detail: str = "balanced",
         language: str = "en",
+        recent_feedback: list[str] | None = None,
     ) -> dict[str, Any]:
-        """
-        Generate wording for an already-computed
-        Stockfish analysis.
-
-        The detail setting changes explanation depth only.
-        It never changes Stockfish's chess conclusions.
-        """
-
-        # ------------------------------
-        # Normalize coach detail
-        # ------------------------------
-
         normalized_detail = str(
             detail
         ).strip().lower()
@@ -190,10 +155,6 @@ class LLMCoach:
         detail_config = COACH_DETAIL_CONFIG[
             normalized_detail
         ]
-
-        # ------------------------------
-        # Normalize coach language
-        # ------------------------------
 
         normalized_language = (
             "zh-CN"
@@ -209,10 +170,11 @@ class LLMCoach:
             else "en"
         )
 
-        # ------------------------------
-        # Give the LLM only facts that
-        # came from deterministic analysis
-        # ------------------------------
+        recent = [
+            str(item).strip()
+            for item in (recent_feedback or [])
+            if str(item).strip()
+        ][-4:]
 
         payload = {
             "fen_before": analysis.get(
@@ -221,96 +183,92 @@ class LLMCoach:
             "fen_after": analysis.get(
                 "fen_after"
             ),
-
             "move_number": analysis.get(
                 "move_number"
             ),
             "color": analysis.get(
                 "color"
             ),
-
             "played_move": analysis.get(
                 "played_move"
             ),
             "played_move_uci": analysis.get(
                 "played_move_uci"
             ),
-
             "best_move": analysis.get(
                 "best_move"
             ),
             "best_move_uci": analysis.get(
                 "best_move_uci"
             ),
-
             "opponent_reply": analysis.get(
                 "opponent_reply"
             ),
             "opponent_reply_uci": analysis.get(
                 "opponent_reply_uci"
             ),
-
             "classification": analysis.get(
                 "classification"
             ),
             "centipawn_loss": analysis.get(
                 "centipawn_loss"
             ),
-
-            # Keep engine lines short.
-            # The coach only needs enough context
-            # to explain the main idea.
             "best_line": analysis.get(
                 "best_line",
                 [],
-            )[:6],
-
+            )[:8],
             "refutation_line": analysis.get(
                 "refutation_line",
                 [],
-            )[:6],
-
+            )[:8],
             "theme_hint": analysis.get(
                 "theme_hint"
             ),
-
             "coach_detail": normalized_detail,
             "feedback_target": detail_config[
                 "target"
             ],
-
             "language": normalized_language,
+
+            # Short-term memory is used only to avoid sounding repetitive.
+            "recent_feedback": recent,
         }
 
-        # ------------------------------
-        # Combine:
-        #
-        # 1. main Chess Buddy personality
-        # 2. language / spoken chess style
-        # 3. selected explanation depth
-        # ------------------------------
-
-        language_instruction = (
-            LANGUAGE_INSTRUCTIONS[
-                normalized_language
-            ]
-        )
+        if recent:
+            recent_instruction = (
+                "RECENT COACHING FROM THIS SAME GAME:\n"
+                + "\n".join(
+                    f"- {item}"
+                    for item in recent
+                )
+                + "\n\n"
+                "Do not reuse the same opener, catchphrase, lesson wording, "
+                "or sentence structure unless repetition is genuinely needed. "
+                "Continue the conversation naturally. If the same weakness "
+                "is recurring, you may briefly connect it to the earlier "
+                "pattern instead of repeating the old explanation."
+            )
+        else:
+            recent_instruction = (
+                "There is no recent coaching context yet. "
+                "Use a natural conversational opening."
+            )
 
         combined_instructions = (
             self.instructions
             + "\n\n"
-            + language_instruction
+            + LANGUAGE_INSTRUCTIONS[
+                normalized_language
+            ]
             + "\n\n"
             + str(
                 detail_config[
                     "instruction"
                 ]
             )
+            + "\n\n"
+            + recent_instruction
         )
-
-        # ------------------------------
-        # Generate structured coaching
-        # ------------------------------
 
         response = self.client.responses.create(
             model=self.model,
@@ -331,13 +289,6 @@ class LLMCoach:
                 },
             },
 
-            # This is intentionally larger
-            # than the requested feedback length.
-            #
-            # The model still follows the short
-            # word targets above, but needs room
-            # for title + feedback + lesson +
-            # question + JSON formatting.
             max_output_tokens=int(
                 detail_config[
                     "max_output_tokens"
@@ -346,10 +297,6 @@ class LLMCoach:
 
             store=False,
         )
-
-        # ------------------------------
-        # Parse response
-        # ------------------------------
 
         text = response.output_text.strip()
 
@@ -366,31 +313,19 @@ class LLMCoach:
             ) from error
 
         title = str(
-            data.get(
-                "title",
-                "",
-            )
+            data.get("title", "")
         ).strip()
 
         feedback = str(
-            data.get(
-                "feedback",
-                "",
-            )
+            data.get("feedback", "")
         ).strip()
 
         lesson = str(
-            data.get(
-                "lesson",
-                "",
-            )
+            data.get("lesson", "")
         ).strip()
 
         question = str(
-            data.get(
-                "question",
-                "",
-            )
+            data.get("question", "")
         ).strip()
 
         if not feedback:
@@ -398,15 +333,6 @@ class LLMCoach:
                 "Coach returned empty feedback."
             )
 
-        # Do not hard-cut responses here.
-        #
-        # Character slicing can cut English
-        # sentences or Chinese text in awkward
-        # places.
-        #
-        # The prompt controls the desired length,
-        # while the frontend can visually clamp
-        # text if necessary.
         return {
             "title": title,
             "feedback": feedback,

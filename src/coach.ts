@@ -18,6 +18,7 @@ export type CoachResult = {
   opponentReplyUci?: string;
   evaluationBefore?: number;
   evaluationAfter?: number;
+
   engineDiagnostics?: {
     budgetMs?: number;
     bestSearch?: {
@@ -38,28 +39,33 @@ export type CoachResult = {
       reusedBestSearch?: boolean;
     };
   };
+
   fenBefore: string;
   fenAfter: string;
+
   feedback: string;
   title: string;
   lesson?: string;
   question?: string;
+
   arrows?: CoachArrow[];
   highlightsBefore?: string[];
   highlightsAfter?: string[];
 
-  // Extra deterministic facts used for better post-game filtering.
   themeHint?: string;
   bestLine?: string[];
   refutationLine?: string[];
 
-  // Two-phase coaching: Stockfish returns immediately, then the LLM
-  // wording is fetched separately without blocking the move queue.
+  // Two-phase coaching:
+  // Stockfish returns immediately, then the LLM wording arrives separately.
   analysisId?: string;
   explanationPending?: boolean;
 };
 
-export type CoachDetail = 'quick' | 'balanced' | 'deep';
+export type CoachDetail =
+  | 'quick'
+  | 'balanced'
+  | 'deep';
 
 export type CoachLanguage =
   | 'en'
@@ -73,14 +79,10 @@ export type CoachWording = {
 };
 
 const CONTROL_URL =
-  import.meta.env.VITE_BOT_CONTROL_URL || 'http://127.0.0.1:8765';
+  import.meta.env.VITE_BOT_CONTROL_URL ||
+  'http://127.0.0.1:8765';
 
-/**
- * Fast move analysis.
- *
- * This endpoint returns Stockfish truth immediately. For a mistake/blunder,
- * analysisId is included so the slower LLM wording can be fetched separately.
- */
+
 export async function analyzeMove(
   fen: string,
   move: string,
@@ -98,56 +100,74 @@ export async function analyzeMove(
       ? maybeSignal
       : detailOrSignal;
 
-  const response = await fetch(`${CONTROL_URL}/api/coach/analyze`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      fen,
-      move,
-      detail,
-      language,
-    }),
-    signal,
-  });
+  const response = await fetch(
+    `${CONTROL_URL}/api/coach/analyze`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fen,
+        move,
+        detail,
+        language,
+      }),
+      signal,
+    },
+  );
 
-  const data = await response.json().catch(() => ({}));
+  const data = await response
+    .json()
+    .catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
-      data.message || `${response.status} ${response.statusText}`,
+      data.message ||
+      `${response.status} ${response.statusText}`,
     );
   }
 
   return data as CoachResult;
 }
 
+
 /**
- * Fetch the conversational explanation for a move that Stockfish already
- * analyzed. This does not re-run Stockfish; the backend reuses the cached
- * deterministic analysis identified by analysisId.
+ * Fetch conversational wording for a Stockfish analysis already cached
+ * by the backend. This request does not run Stockfish again.
  */
 export async function explainMove(
   analysisId: string,
   detail: CoachDetail = 'balanced',
   language: CoachLanguage = 'en',
+  recentFeedback: string[] = [],
   signal?: AbortSignal,
 ): Promise<CoachWording> {
-  const response = await fetch(`${CONTROL_URL}/api/coach/explain`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      analysisId,
-      detail,
-      language,
-    }),
-    signal,
-  });
+  const response = await fetch(
+    `${CONTROL_URL}/api/coach/explain`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        analysisId,
+        detail,
+        language,
+        recentFeedback,
+      }),
+      signal,
+    },
+  );
 
-  const data = await response.json().catch(() => ({}));
+  const data = await response
+    .json()
+    .catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
-      data.message || `${response.status} ${response.statusText}`,
+      data.message ||
+      `${response.status} ${response.statusText}`,
     );
   }
 

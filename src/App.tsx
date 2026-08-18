@@ -1197,6 +1197,10 @@ export default function App() {
   const goodMoveRunRef = useRef(0);
   const lastMistakePlyRef = useRef<number | null>(null);
   const lastPraisePlyRef = useRef<number | null>(null);
+
+  // Last few REAL LLM explanations from this game.
+  // Sent back to the next wording request only to reduce repetition.
+  const recentCoachFeedbackRef = useRef<string[]>([]);
   const reviewTouchStart = useRef<{ x: number; y: number } | null>(null);
   const [reviewDragX, setReviewDragX] = useState(0);
   const [reviewDragging, setReviewDragging] = useState(false);
@@ -1726,6 +1730,7 @@ export default function App() {
     goodMoveRunRef.current = 0;
     lastMistakePlyRef.current = null;
     lastPraisePlyRef.current = null;
+    recentCoachFeedbackRef.current = [];
     setCoachResult(null);
     setCoachError('');
     setCoachThinking(false);
@@ -1843,12 +1848,12 @@ export default function App() {
               result.centipawnLoss < 25;
 
             const streak =
-              goodMoveRunRef.current >= 3 &&
-              goodMoveRunRef.current % 3 === 0;
+              goodMoveRunRef.current >= 4 &&
+              goodMoveRunRef.current % 4 === 0;
 
             const praiseIsSpacedOut =
               lastPraisePlyRef.current == null ||
-              result.ply - lastPraisePlyRef.current >= 4;
+              result.ply - lastPraisePlyRef.current >= 8;
 
             // Routine good moves are intentionally silent. The coach speaks
             // when the praise actually means something: a recovery or a run
@@ -1924,10 +1929,15 @@ export default function App() {
           // move-analysis queue. Stockfish feedback/arrows are already on
           // screen while this is running.
           if (result.analysisId) {
+            const recentFeedback = [
+              ...recentCoachFeedbackRef.current,
+            ];
+
             void explainMove(
               result.analysisId,
               coachDetail,
               coachLanguage,
+              recentFeedback,
             )
               .then((wording) => {
                 if (
@@ -1963,24 +1973,82 @@ export default function App() {
                   return enriched;
                 });
 
-                // Voice waits for the useful explanation instead of reading
-                // the temporary "checking" message aloud.
+                const memoryEntry = [
+                  wording.feedback,
+                  wording.lesson,
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+                  .trim();
+
+                if (memoryEntry) {
+                  recentCoachFeedbackRef.current = [
+                    ...recentCoachFeedbackRef.current,
+                    memoryEntry,
+                  ].slice(-4);
+                }
+
+                // Voice waits for the real LLM explanation.
                 speak(enriched.feedback);
               })
               .catch((error) => {
-                if (!isAbortError(error)) {
-                  console.warn(
-                    'Coach wording unavailable:',
-                    error,
-                  );
+                if (isAbortError(error)) {
+                  return;
                 }
+
+                console.warn(
+                  'Coach wording unavailable:',
+                  error,
+                );
+
+                const unavailable: CoachResult = {
+                  ...fastResult,
+                  explanationPending: false,
+                  title:
+                    coachLanguage === 'zh-CN'
+                      ? '解释暂时不可用'
+                      : 'Explanation unavailable',
+                  feedback:
+                    coachLanguage === 'zh-CN'
+                      ? `棋局分析已经完成，建议走 ${result.bestMove}，但 AI 解释这次没有加载成功。`
+                      : `The chess analysis is ready and the suggested move is ${result.bestMove}, but the AI explanation did not load.`,
+                  lesson: '',
+                  question: '',
+                };
+
+                saveNote(unavailable);
+
+                setCoachResult((current) =>
+                  current?.ply === unavailable.ply
+                    ? unavailable
+                    : current,
+                );
+
+                // Deliberately do NOT speak a canned replacement.
               });
           } else {
-            // Backward compatibility if the backend has not yet been updated
-            // to two-phase coaching.
-            saveNote(result);
-            setCoachResult(result);
-            speak(result.feedback);
+            console.error(
+              'Coach backend returned a coaching moment without analysisId. ' +
+              'The frontend/backend versions are out of sync.',
+            );
+
+            const unavailable: CoachResult = {
+              ...fastResult,
+              explanationPending: false,
+              title:
+                coachLanguage === 'zh-CN'
+                  ? '解释连接错误'
+                  : 'Explanation connection error',
+              feedback:
+                coachLanguage === 'zh-CN'
+                  ? '棋局分析完成了，但 AI 解释接口没有正确连接。'
+                  : 'The chess analysis completed, but the AI explanation endpoint is not connected correctly.',
+              lesson: '',
+              question: '',
+            };
+
+            saveNote(unavailable);
+            setCoachResult(unavailable);
           }
         } catch (error) {
           if (!isAbortError(error)) {

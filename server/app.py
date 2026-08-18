@@ -279,38 +279,59 @@ def fallback_coaching(
     }
 
 
-def coach_payload(
+def generate_llm_coaching(
     analysis: dict[str, Any],
     detail: str = "balanced",
     language: str = "en",
+    recent_feedback: list[str] | None = None,
 ) -> dict[str, Any]:
+    """
+    Generate real LLM wording.
+
+    Important: this function never silently substitutes canned coaching.
+    If the LLM is unavailable, the caller receives an error and the
+    frontend can honestly show that the explanation did not load.
+    """
+
     if not os.environ.get(
         "OPENAI_API_KEY",
         "",
     ).strip():
-        return fallback_coaching(
-            analysis,
-            language=language,
+        raise RuntimeError(
+            "OPENAI_API_KEY is not configured."
         )
 
     try:
         with _llm_lock:
-            return get_llm_coach().create_feedback(
+            result = get_llm_coach().create_feedback(
                 analysis,
                 detail=detail,
                 language=language,
+                recent_feedback=recent_feedback or [],
             )
+
+        print(
+            "[COACH LLM] success "
+            f"move={analysis.get('played_move_uci', '')} "
+            f"detail={detail} "
+            f"language={normalize_language(language)}",
+            flush=True,
+        )
+
+        return result
 
     except Exception as exc:
         print(
-            "LLM coach unavailable; "
-            f"using deterministic fallback: {exc}"
+            "[COACH LLM] failed "
+            f"move={analysis.get('played_move_uci', '')}: "
+            f"{exc}",
+            flush=True,
         )
 
-        return fallback_coaching(
-            analysis,
-            language=language,
-        )
+        raise RuntimeError(
+            f"AI coach explanation failed: {exc}"
+        ) from exc
+
 
 def synthesize_speech(
     payload: dict[str, Any],
@@ -416,32 +437,61 @@ def synthesize_speech(
 def analyze_move(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    fen = str(payload.get("fen", "")).strip()
-    move_uci = str(payload.get("move", "")).strip().lower()
+    fen = str(
+        payload.get(
+            "fen",
+            "",
+        )
+    ).strip()
+
+    move_uci = str(
+        payload.get(
+            "move",
+            "",
+        )
+    ).strip().lower()
 
     language = normalize_language(
-        payload.get("language", "en")
+        payload.get(
+            "language",
+            "en",
+        )
     )
 
     detail = str(
-        payload.get("detail", "balanced")
+        payload.get(
+            "detail",
+            "balanced",
+        )
     ).strip().lower()
 
-    if detail not in {"quick", "balanced", "deep"}:
+    if detail not in {
+        "quick",
+        "balanced",
+        "deep",
+    }:
         detail = "balanced"
 
     if not fen or not move_uci:
-        raise ValueError("fen and move are required")
+        raise ValueError(
+            "fen and move are required"
+        )
 
     try:
         board = chess.Board(fen)
     except ValueError as exc:
-        raise ValueError("Invalid FEN.") from exc
+        raise ValueError(
+            "Invalid FEN."
+        ) from exc
 
     try:
-        move = chess.Move.from_uci(move_uci)
+        move = chess.Move.from_uci(
+            move_uci
+        )
     except ValueError as exc:
-        raise ValueError("Invalid UCI move.") from exc
+        raise ValueError(
+            "Invalid UCI move."
+        ) from exc
 
     if move not in board.legal_moves:
         raise ValueError(
@@ -452,9 +502,13 @@ def analyze_move(
         try:
             analysis = (
                 get_analyzer()
-                .analyze_move(board, move)
+                .analyze_move(
+                    board,
+                    move,
+                )
                 .to_dict()
             )
+
         except (
             chess.engine.EngineError,
             chess.engine.EngineTerminatedError,
@@ -464,152 +518,247 @@ def analyze_move(
 
             analysis = (
                 get_analyzer()
-                .analyze_move(board, move)
+                .analyze_move(
+                    board,
+                    move,
+                )
                 .to_dict()
             )
 
     should_coach = (
-        int(analysis["centipawn_loss"])
+        int(
+            analysis[
+                "centipawn_loss"
+            ]
+        )
         >= MISTAKE_THRESHOLD_CP
     )
 
     result: dict[str, Any] = {
         "shouldCoach": should_coach,
-        "moveNumber": analysis["move_number"],
-        "ply": analysis["ply"],
-        "playedMove": analysis["played_move"],
-        "playedMoveUci": analysis["played_move_uci"],
-        "classification": analysis["classification"],
-        "centipawnLoss": analysis["centipawn_loss"],
-        "bestMove": analysis["best_move"],
-        "bestMoveUci": analysis["best_move_uci"],
-        "opponentReply": analysis["opponent_reply"],
-        "opponentReplyUci": analysis["opponent_reply_uci"],
-        "fenBefore": analysis["fen_before"],
-        "fenAfter": analysis["fen_after"],
-        "bestLine": analysis.get("best_line", []),
-        "refutationLine": analysis.get("refutation_line", []),
-        "themeHint": analysis.get("theme_hint", ""),
-        "evaluationBefore": analysis.get("evaluation_before", 0),
-        "evaluationAfter": analysis.get("evaluation_after", 0),
-        "engineDiagnostics": analysis.get("engine_diagnostics", {}),
-        "coachDetail": detail,
-        "language": language,
+        "moveNumber": analysis[
+            "move_number"
+        ],
+        "ply": analysis[
+            "ply"
+        ],
+        "playedMove": analysis[
+            "played_move"
+        ],
+        "playedMoveUci": analysis[
+            "played_move_uci"
+        ],
+        "classification": analysis[
+            "classification"
+        ],
+        "centipawnLoss": analysis[
+            "centipawn_loss"
+        ],
+        "bestMove": analysis[
+            "best_move"
+        ],
+        "bestMoveUci": analysis[
+            "best_move_uci"
+        ],
+        "opponentReply": analysis[
+            "opponent_reply"
+        ],
+        "opponentReplyUci": analysis[
+            "opponent_reply_uci"
+        ],
+        "fenBefore": analysis[
+            "fen_before"
+        ],
+        "fenAfter": analysis[
+            "fen_after"
+        ],
+        "bestLine": analysis.get(
+            "best_line",
+            [],
+        ),
+        "refutationLine": analysis.get(
+            "refutation_line",
+            [],
+        ),
+        "themeHint": analysis.get(
+            "theme_hint",
+            "",
+        ),
+        "evaluationBefore": analysis.get(
+            "evaluation_before",
+            0,
+        ),
+        "evaluationAfter": analysis.get(
+            "evaluation_after",
+            0,
+        ),
+        "engineDiagnostics": analysis.get(
+            "engine_diagnostics",
+            {},
+        ),
     }
 
     if should_coach:
-        # Return deterministic Stockfish facts immediately.
-        # The frontend requests LLM wording separately.
-        result.update(
-            fallback_coaching(
-                analysis,
-                language=language,
-            )
+        # Cache the deterministic analysis on the server. The second,
+        # asynchronous request uses this ID to generate conversational wording.
+        analysis_id = cache_analysis(
+            analysis
         )
+
+        # Reuse fallback_coaching ONLY for deterministic visual arrows.
+        # Its canned text is deliberately not returned as the AI explanation.
+        visual = fallback_coaching(
+            analysis,
+            language=language,
+        )
+
+        result.update({
+            "analysisId": analysis_id,
+            "explanationPending": True,
+            "title": (
+                "关键失误"
+                if (
+                    language == "zh-CN"
+                    and analysis["classification"] == "blunder"
+                )
+                else "值得看一看"
+                if language == "zh-CN"
+                else "Critical miss"
+                if analysis["classification"] == "blunder"
+                else "Worth a look"
+            ),
+            "feedback": "",
+            "lesson": "",
+            "question": "",
+            "arrows": visual.get(
+                "arrows",
+                [],
+            ),
+            "highlightsBefore": visual.get(
+                "highlightsBefore",
+                [],
+            ),
+            "highlightsAfter": visual.get(
+                "highlightsAfter",
+                [],
+            ),
+        })
+
     else:
-        cp_loss = int(analysis["centipawn_loss"])
+        cp_loss = int(
+            analysis[
+                "centipawn_loss"
+            ]
+        )
 
         if cp_loss < 35:
             result.update({
-                "title": "稳健" if language == "zh-CN" else "Solid",
-                "feedback": "这步很稳。" if language == "zh-CN" else "Solid choice.",
+                "title": (
+                    "稳健"
+                    if language == "zh-CN"
+                    else "Solid"
+                ),
+                "feedback": "",
                 "lesson": "",
                 "question": "",
                 "arrows": [],
                 "highlightsBefore": [],
                 "highlightsAfter": [],
+                "explanationPending": False,
             })
+
         else:
             result.update({
-                "title": "再看一眼" if language == "zh-CN" else "Worth a look",
-                "feedback": (
-                    "这步可以走，不过还有更干净的选择。"
+                "title": (
+                    "再看一眼"
                     if language == "zh-CN"
-                    else "Playable, but there was a cleaner choice."
+                    else "Worth a look"
                 ),
+                "feedback": "",
                 "lesson": "",
                 "question": "",
                 "arrows": [],
                 "highlightsBefore": [],
                 "highlightsAfter": [],
+                "explanationPending": False,
             })
 
     return result
 
 
-def explain_move(
+def explain_analysis(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    raw = payload.get("analysis")
-
-    if not isinstance(raw, dict):
-        raise ValueError("analysis must be an object")
-
-    language = normalize_language(
+    analysis_id = str(
         payload.get(
-            "language",
-            raw.get("language", "en"),
+            "analysisId",
+            "",
         )
+    ).strip()
+
+    if not analysis_id:
+        raise ValueError(
+            "analysisId is required"
+        )
+
+    analysis = get_cached_analysis(
+        analysis_id
     )
+
+    if analysis is None:
+        raise ValueError(
+            "The cached coach analysis expired. "
+            "Please analyze the move again."
+        )
 
     detail = str(
         payload.get(
             "detail",
-            raw.get("coachDetail", "balanced"),
+            "balanced",
         )
     ).strip().lower()
 
-    if detail not in {"quick", "balanced", "deep"}:
+    if detail not in {
+        "quick",
+        "balanced",
+        "deep",
+    }:
         detail = "balanced"
 
-    analysis = {
-        "move_number": raw.get("moveNumber"),
-        "ply": raw.get("ply"),
-        "played_move": raw.get("playedMove"),
-        "played_move_uci": raw.get("playedMoveUci"),
-        "classification": raw.get("classification"),
-        "centipawn_loss": raw.get("centipawnLoss"),
-        "best_move": raw.get("bestMove"),
-        "best_move_uci": raw.get("bestMoveUci"),
-        "opponent_reply": raw.get("opponentReply", ""),
-        "opponent_reply_uci": raw.get("opponentReplyUci", ""),
-        "fen_before": raw.get("fenBefore"),
-        "fen_after": raw.get("fenAfter"),
-        "best_line": raw.get("bestLine", []),
-        "refutation_line": raw.get("refutationLine", []),
-        "theme_hint": raw.get("themeHint", ""),
-        "evaluation_before": raw.get("evaluationBefore", 0),
-        "evaluation_after": raw.get("evaluationAfter", 0),
-    }
-
-    coaching = fallback_coaching(
-        analysis,
-        language=language,
+    language = normalize_language(
+        payload.get(
+            "language",
+            "en",
+        )
     )
 
-    llm_payload = coach_payload(
+    raw_recent = payload.get(
+        "recentFeedback",
+        [],
+    )
+
+    recent_feedback: list[str] = []
+
+    if isinstance(
+        raw_recent,
+        list,
+    ):
+        for item in raw_recent[-4:]:
+            value = str(
+                item
+            ).strip()
+
+            if value:
+                recent_feedback.append(
+                    value[:600]
+                )
+
+    return generate_llm_coaching(
         analysis,
         detail=detail,
         language=language,
+        recent_feedback=recent_feedback,
     )
-
-    for key in (
-        "title",
-        "feedback",
-        "lesson",
-        "question",
-    ):
-        value = llm_payload.get(key)
-
-        if isinstance(value, str) and value.strip():
-            coaching[key] = value.strip()
-
-    return {
-        "title": coaching["title"],
-        "feedback": coaching["feedback"],
-        "lesson": coaching.get("lesson", ""),
-        "question": coaching.get("question", ""),
-    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -832,13 +981,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(
                     200,
                     analyze_move(
-                        self._json_body()
-                    ),
-                )
-            elif self.path == "/api/coach/explain":
-                self._send(
-                    200,
-                    explain_move(
                         self._json_body()
                     ),
                 )
