@@ -761,6 +761,167 @@ def explain_analysis(
     )
 
 
+
+def critical_position_question(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Optional pre-move coaching.
+
+    Stockfish decides whether the position is important enough to interrupt.
+    The LLM is only allowed to phrase ONE question and never chooses chess facts.
+    """
+    fen = str(
+        payload.get(
+            "fen",
+            "",
+        )
+    ).strip()
+
+    if not fen:
+        raise ValueError(
+            "fen is required"
+        )
+
+    try:
+        board = chess.Board(
+            fen
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Invalid FEN."
+        ) from exc
+
+    last_opponent_move = str(
+        payload.get(
+            "lastOpponentMove",
+            "",
+        )
+    ).strip()
+
+    last_opponent_move_uci = str(
+        payload.get(
+            "lastOpponentMoveUci",
+            "",
+        )
+    ).strip().lower()
+
+    language = normalize_language(
+        payload.get(
+            "language",
+            "en",
+        )
+    )
+
+    raw_recent = payload.get(
+        "recentQuestions",
+        [],
+    )
+
+    recent_questions: list[str] = []
+
+    if isinstance(
+        raw_recent,
+        list,
+    ):
+        for item in raw_recent[-4:]:
+            value = str(
+                item
+            ).strip()
+
+            if value:
+                recent_questions.append(
+                    value[:300]
+                )
+
+    with _analyzer_lock:
+        try:
+            position = (
+                get_analyzer()
+                .analyze_critical_position(
+                    board
+                )
+            )
+
+        except (
+            chess.engine.EngineError,
+            chess.engine.EngineTerminatedError,
+            BrokenPipeError,
+        ):
+            reset_analyzer()
+
+            position = (
+                get_analyzer()
+                .analyze_critical_position(
+                    board
+                )
+            )
+
+    if not position.get(
+        "is_critical"
+    ):
+        return {
+            "isCritical": False,
+        }
+
+    position[
+        "last_opponent_move"
+    ] = last_opponent_move
+
+    position[
+        "last_opponent_move_uci"
+    ] = last_opponent_move_uci
+
+    # This is an optional interaction. If the LLM question fails,
+    # silently skip the interruption instead of disturbing the game.
+    try:
+        with _llm_lock:
+            wording = (
+                get_llm_coach()
+                .create_critical_question(
+                    position,
+                    language=language,
+                    recent_questions=recent_questions,
+                )
+            )
+
+    except Exception as exc:
+        print(
+            "[COACH CRITICAL] question generation failed:",
+            exc,
+            flush=True,
+        )
+
+        return {
+            "isCritical": False,
+        }
+
+    print(
+        "[COACH CRITICAL] asking",
+        f"kind={position.get('kind')}",
+        f"last={last_opponent_move_uci or last_opponent_move or '-'}",
+        flush=True,
+    )
+
+    return {
+        "isCritical": True,
+        "kind": position.get(
+            "kind",
+            "decision",
+        ),
+        "title": wording.get(
+            "title",
+            "",
+        ),
+        "question": wording.get(
+            "question",
+            "",
+        ),
+    }
+
+
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AIChessCoach/1.0"
 
@@ -988,6 +1149,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(
                     200,
                     explain_analysis(
+                        self._json_body()
+                    ),
+                )
+            elif self.path == "/api/coach/critical-question":
+                self._send(
+                    200,
+                    critical_position_question(
                         self._json_body()
                     ),
                 )

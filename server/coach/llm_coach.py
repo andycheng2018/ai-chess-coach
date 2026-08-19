@@ -33,6 +33,25 @@ COACH_RESPONSE_SCHEMA = {
 }
 
 
+
+CRITICAL_QUESTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": "string",
+        },
+        "question": {
+            "type": "string",
+        },
+    },
+    "required": [
+        "title",
+        "question",
+    ],
+    "additionalProperties": False,
+}
+
+
 COACH_DETAIL_CONFIG = {
     "quick": {
         "target": "15-25 words",
@@ -337,5 +356,191 @@ class LLMCoach:
             "title": title,
             "feedback": feedback,
             "lesson": lesson,
+            "question": question,
+        }
+
+    def create_critical_question(
+        self,
+        position: dict[str, Any],
+        language: str = "en",
+        recent_questions: list[str] | None = None,
+    ) -> dict[str, str]:
+        """
+        Turn a Stockfish-confirmed critical position into one short
+        Socratic question WITHOUT revealing the answer.
+        """
+        normalized_language = (
+            "zh-CN"
+            if str(language).strip().lower()
+            in {
+                "zh",
+                "zh-cn",
+                "zh_cn",
+                "chinese",
+                "mandarin",
+                "simplified chinese",
+            }
+            else "en"
+        )
+
+        recent = [
+            str(item).strip()
+            for item in (
+                recent_questions or []
+            )
+            if str(item).strip()
+        ][-4:]
+
+        payload = {
+            "fen": position.get(
+                "fen"
+            ),
+            "kind": position.get(
+                "kind"
+            ),
+            "side_to_move": position.get(
+                "side_to_move"
+            ),
+            "last_opponent_move": position.get(
+                "last_opponent_move"
+            ),
+            "last_opponent_move_uci": position.get(
+                "last_opponent_move_uci"
+            ),
+
+            # These are private chess facts used to formulate a good
+            # question. The answer must NOT reveal them.
+            "best_move": position.get(
+                "best_move"
+            ),
+            "best_move_uci": position.get(
+                "best_move_uci"
+            ),
+            "best_line": position.get(
+                "best_line",
+                [],
+            )[:6],
+            "best_gap_cp": position.get(
+                "best_gap_cp"
+            ),
+            "in_check": position.get(
+                "in_check"
+            ),
+            "threat_move": position.get(
+                "threat_move"
+            ),
+            "threat_move_uci": position.get(
+                "threat_move_uci"
+            ),
+            "threat_line": position.get(
+                "threat_line",
+                [],
+            )[:5],
+            "recent_questions": recent,
+            "language": normalized_language,
+        }
+
+        instructions = """
+You are Chess Buddy during a live chess game.
+
+The opponent JUST moved and it is now the student's turn.
+
+Stockfish has already confirmed that this is an unusually important
+decision. Ask ONE short Socratic question that makes the student stop
+and inspect the position before moving.
+
+CRITICAL RULES:
+- Do NOT reveal the best move.
+- Do NOT tell the student the answer.
+- Do NOT give a best-move arrow or recommendation.
+- Do NOT quote the private engine line as the answer.
+- Ask about the concrete idea that matters in THIS position.
+- Keep the question roughly 7-18 words.
+- The title should be 2-5 words.
+- Sound curious and coach-like, not like a quiz generator.
+- Do not repeatedly say "checks, captures, and threats".
+- Use recent_questions to avoid repeating the same wording.
+
+Use the Stockfish-only facts supplied in the payload. Never invent
+a tactic, threat, hanging piece, mate, or plan.
+
+For kind="threat":
+prefer a question about what the opponent is threatening.
+
+For kind="opportunity":
+prefer a question like "What changed after that move?" or ask the
+student to find the newly available forcing idea, without naming it.
+
+For kind="check":
+ask the student to compare the available responses rather than merely
+saying that they are in check.
+
+For kind="decision":
+ask what feature of the position makes this choice especially important.
+
+Return JSON only:
+{
+  "title": "short title",
+  "question": "one question only"
+}
+""".strip()
+
+        response = self.client.responses.create(
+            model=self.model,
+            instructions=(
+                instructions
+                + "\n\n"
+                + LANGUAGE_INSTRUCTIONS[
+                    normalized_language
+                ]
+            ),
+            input=json.dumps(
+                payload,
+                ensure_ascii=False,
+            ),
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "critical_chess_question",
+                    "strict": True,
+                    "schema": CRITICAL_QUESTION_SCHEMA,
+                },
+            },
+            max_output_tokens=160,
+            store=False,
+        )
+
+        text = response.output_text.strip()
+
+        if not text:
+            raise ValueError(
+                "Critical-question coach returned an empty response."
+            )
+
+        data = json.loads(
+            text
+        )
+
+        title = str(
+            data.get(
+                "title",
+                "",
+            )
+        ).strip()
+
+        question = str(
+            data.get(
+                "question",
+                "",
+            )
+        ).strip()
+
+        if not question:
+            raise ValueError(
+                "Critical-question coach returned an empty question."
+            )
+
+        return {
+            "title": title,
             "question": question,
         }

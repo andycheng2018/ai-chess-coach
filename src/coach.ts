@@ -173,3 +173,51 @@ export async function explainMove(
 
   return data as CoachWording;
 }
+
+
+export type CriticalPositionPrompt = {
+  isCritical: boolean;
+  kind?: 'threat' | 'opportunity' | 'decision' | 'check';
+  title?: string;
+  question?: string;
+};
+
+export async function checkCriticalPosition(
+  fen: string,
+  lastOpponentMove: string,
+  lastOpponentMoveUci: string,
+  language: CoachLanguage = 'en',
+  recentQuestions: string[] = [],
+  signal?: AbortSignal,
+): Promise<CriticalPositionPrompt> {
+  const response = await fetch(
+    `${CONTROL_URL}/api/coach/critical-question`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fen,
+        lastOpponentMove,
+        lastOpponentMoveUci,
+        language,
+        recentQuestions,
+      }),
+      signal,
+    },
+  );
+
+  const data = await response
+    .json()
+    .catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message ||
+      `${response.status} ${response.statusText}`,
+    );
+  }
+
+  return data as CriticalPositionPrompt;
+}

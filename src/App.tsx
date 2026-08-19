@@ -6,6 +6,7 @@ import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativ
 import { acceptBotChallenge, getBotStatus, getCachedGameState, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import {
   analyzeMove,
+  checkCriticalPosition,
   explainMove,
   type CoachLanguage,
   type CoachResult,
@@ -74,6 +75,17 @@ type PuzzleState =
   | 'incorrect'
   | 'correct'
   | 'revealed';
+
+type CriticalPrompt = {
+  kind:
+    | 'threat'
+    | 'opportunity'
+    | 'decision'
+    | 'check';
+  title: string;
+  question: string;
+  ply: number;
+};
 
 const GAME_EVALUATION_STORAGE_KEY =
   'ai-chess-coach.game-evaluations.v1';
@@ -1168,6 +1180,7 @@ export default function App() {
   const [gameOverOpen, setGameOverOpen] = useState(false);
 
   const [coachResult, setCoachResult] = useState<CoachResult | null>(null);
+  const [criticalPrompt, setCriticalPrompt] = useState<CriticalPrompt | null>(null);
   const [coachThinking, setCoachThinking] = useState(false);
   const [coachError, setCoachError] = useState('');
   const [coachNotes, setCoachNotes] = useState<CoachNote[]>([]);
@@ -1201,6 +1214,14 @@ export default function App() {
   // Last few REAL LLM explanations from this game.
   // Sent back to the next wording request only to reduce repetition.
   const recentCoachFeedbackRef = useRef<string[]>([]);
+
+  // Pre-move Socratic questions are intentionally rare.
+  const criticalQuestionAbortRef = useRef<AbortController | null>(null);
+  const observedCriticalPlyRef = useRef<number | null>(null);
+  const criticalQuestionCountRef = useRef(0);
+  const lastCriticalQuestionPlyRef = useRef(-999);
+  const recentCriticalQuestionsRef = useRef<string[]>([]);
+  const criticalPromptRef = useRef<CriticalPrompt | null>(null);
   const reviewTouchStart = useRef<{ x: number; y: number } | null>(null);
   const [reviewDragX, setReviewDragX] = useState(0);
   const [reviewDragging, setReviewDragging] = useState(false);
@@ -1731,6 +1752,13 @@ export default function App() {
     lastMistakePlyRef.current = null;
     lastPraisePlyRef.current = null;
     recentCoachFeedbackRef.current = [];
+    criticalQuestionAbortRef.current?.abort();
+    observedCriticalPlyRef.current = null;
+    criticalQuestionCountRef.current = 0;
+    lastCriticalQuestionPlyRef.current = -999;
+    recentCriticalQuestionsRef.current = [];
+    criticalPromptRef.current = null;
+    setCriticalPrompt(null);
     setCoachResult(null);
     setCoachError('');
     setCoachThinking(false);
@@ -1988,8 +2016,10 @@ export default function App() {
                   ].slice(-4);
                 }
 
-                // Voice waits for the real LLM explanation.
-                speak(enriched.feedback);
+                // Do not talk over an active pre-move Socratic question.
+                if (!criticalPromptRef.current) {
+                  speak(enriched.feedback);
+                }
               })
               .catch((error) => {
                 if (isAbortError(error)) {
@@ -2068,6 +2098,191 @@ export default function App() {
     coachLanguage,
     gameId,
     myColor,
+    voiceEnabled,
+  ]);
+
+
+
+  useEffect(() => {
+    // Cancel any old pre-move question request as soon as the position changes.
+    criticalQuestionAbortRef.current?.abort();
+
+    if (
+      !gameId ||
+      !activeGame ||
+      !isCoachGame ||
+      !isMyTurn
+    ) {
+      setCriticalPrompt(null);
+      return;
+    }
+
+    const moves = movesText.trim()
+      ? movesText.trim().split(/\s+/)
+      : [];
+
+    const currentPly = moves.length;
+
+    // Avoid opening noise. Questions should feel special.
+    if (currentPly < 6) {
+      return;
+    }
+
+    const lastMoveIndex =
+      currentPly - 1;
+
+    if (lastMoveIndex < 0) {
+      return;
+    }
+
+    const lastMover:
+      | 'white'
+      | 'black' =
+      lastMoveIndex % 2 === 0
+        ? 'white'
+        : 'black';
+
+    // Only ask immediately after the OPPONENT moved.
+    if (lastMover === myColor) {
+      return;
+    }
+
+    // Never analyse the same waiting position twice.
+    if (
+      observedCriticalPlyRef.current ===
+      currentPly
+    ) {
+      return;
+    }
+
+    observedCriticalPlyRef.current =
+      currentPly;
+
+    // Cap at three Socratic interruptions per game.
+    if (
+      criticalQuestionCountRef.current >=
+      3
+    ) {
+      return;
+    }
+
+    // At least six plies between questions.
+    if (
+      currentPly -
+        lastCriticalQuestionPlyRef.current <
+      6
+    ) {
+      return;
+    }
+
+    const controller =
+      new AbortController();
+
+    criticalQuestionAbortRef.current =
+      controller;
+
+    const gameSnapshot = gameId;
+    const movesSnapshot =
+      movesText.trim();
+
+    const lastOpponentMoveUci =
+      moves.at(-1) || '';
+
+    const lastOpponentMove =
+      position.san.at(-1) || '';
+
+    const recentQuestions = [
+      ...recentCriticalQuestionsRef.current,
+    ];
+
+    void checkCriticalPosition(
+      position.chess.fen(),
+      lastOpponentMove,
+      lastOpponentMoveUci,
+      coachLanguage,
+      recentQuestions,
+      controller.signal,
+    )
+      .then((prompt) => {
+        if (
+          !prompt.isCritical ||
+          !prompt.question
+        ) {
+          return;
+        }
+
+        // The student may have already moved while Stockfish/GPT
+        // were deciding whether this was worth interrupting.
+        if (
+          gameIdRef.current !==
+            gameSnapshot ||
+          movesTextRef.current.trim() !==
+            movesSnapshot
+        ) {
+          return;
+        }
+
+        const nextPrompt: CriticalPrompt = {
+          kind:
+            prompt.kind ||
+            'decision',
+          title:
+            prompt.title ||
+            (
+              coachLanguage ===
+              'zh-CN'
+                ? '先想一想'
+                : 'Think first'
+            ),
+          question:
+            prompt.question,
+          ply: currentPly,
+        };
+
+        criticalPromptRef.current =
+          nextPrompt;
+
+        setCriticalPrompt(
+          nextPrompt
+        );
+
+        criticalQuestionCountRef.current +=
+          1;
+
+        lastCriticalQuestionPlyRef.current =
+          currentPly;
+
+        recentCriticalQuestionsRef.current =
+          [
+            ...recentCriticalQuestionsRef.current,
+            prompt.question,
+          ].slice(-4);
+
+        speak(
+          prompt.question
+        );
+      })
+      .catch((error) => {
+        if (!isAbortError(error)) {
+          console.warn(
+            'Critical-position question unavailable:',
+            error,
+          );
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    gameId,
+    activeGame,
+    isCoachGame,
+    isMyTurn,
+    movesText,
+    myColor,
+    position,
+    coachLanguage,
     voiceEnabled,
   ]);
 
@@ -2190,6 +2405,11 @@ const analyzeStudentMove = useCallback(
       return;
     }
     const uci = `${from}${to}${promotion || ''}`;
+
+    criticalPromptRef.current = null;
+    setCriticalPrompt(null);
+    criticalQuestionAbortRef.current?.abort();
+
     setPendingPromotion(null);
     pendingMoveRef.current = { uci, basePly };
     setMoveInFlight(true);
@@ -2494,6 +2714,9 @@ const analyzeStudentMove = useCallback(
 
   function resetFinishedGame() {
     coachAbortRef.current?.abort();
+    criticalQuestionAbortRef.current?.abort();
+    criticalPromptRef.current = null;
+    setCriticalPrompt(null);
     coachQueueRef.current = [];
     coachProcessingRef.current = false;
 
@@ -3165,7 +3388,34 @@ function handlePuzzleMove(
               : 'Live coach'}
           </div>
           <div className={`coach-bubble ${coachResult?.classification || ''}`}>
-            {coachThinking ? <div className="coach-thinking"><span className="spinner" />Analyzing your move…</div> : coachError ? <div className="inline-error">{coachError}</div> : coachResult ? <>
+            {criticalPrompt && isMyTurn ? <>
+              <div className="coach-heading">
+                <strong>{criticalPrompt.title}</strong>
+                <span className="quality-badge inaccuracy">
+                  {coachLanguage === 'zh-CN'
+                    ? '先想一想'
+                    : 'Think first'}
+                </span>
+              </div>
+
+              <div className="coach-question">
+                <span>
+                  {criticalPrompt.kind === 'opportunity'
+                    ? coachLanguage === 'zh-CN'
+                      ? '机会'
+                      : 'Opportunity'
+                    : criticalPrompt.kind === 'threat'
+                      ? coachLanguage === 'zh-CN'
+                        ? '对手意图'
+                        : 'Opponent idea'
+                      : coachLanguage === 'zh-CN'
+                        ? '关键局面'
+                        : 'Critical position'}
+                </span>
+
+                {criticalPrompt.question}
+              </div>
+            </> : coachThinking ? <div className="coach-thinking"><span className="spinner" />Analyzing your move…</div> : coachError ? <div className="inline-error">{coachError}</div> : coachResult ? <>
               <div className="coach-heading">
                 <strong>{coachResult.title}</strong>
                 {coachResult.shouldCoach ? (

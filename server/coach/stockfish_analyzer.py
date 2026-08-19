@@ -346,3 +346,327 @@ class StockfishAnalyzer:
             ),
             engine_diagnostics=diagnostics,
         )
+
+    def analyze_critical_position(
+        self,
+        board: chess.Board,
+    ) -> dict[str, Any]:
+        """
+        Decide whether the side to move is facing a genuinely useful
+        "stop and think" moment.
+
+        This is intentionally lighter than the full post-move analysis.
+        It is used only to decide whether Chess Buddy should ask a question
+        BEFORE the student moves.
+        """
+        legal = list(board.legal_moves)
+
+        if len(legal) < 2:
+            return {
+                "is_critical": False,
+            }
+
+        player = board.turn
+
+        # This feature must never slow the main coaching pipeline very much.
+        critical_ms = max(
+            120,
+            min(
+                180,
+                self.time_ms,
+            ),
+        )
+
+        limit = chess.engine.Limit(
+            time=critical_ms / 1000.0
+        )
+
+        raw = self.engine.analyse(
+            board,
+            limit,
+            multipv=min(
+                2,
+                len(legal),
+            ),
+        )
+
+        infos = (
+            raw
+            if isinstance(raw, list)
+            else [raw]
+        )
+
+        usable: list[
+            tuple[
+                dict[str, Any],
+                chess.Move,
+                int,
+                list[chess.Move],
+            ]
+        ] = []
+
+        for info in infos:
+            score = info.get("score")
+            pv = list(
+                info.get("pv") or []
+            )
+
+            if score is None or not pv:
+                continue
+
+            move = pv[0]
+
+            if move not in board.legal_moves:
+                continue
+
+            usable.append(
+                (
+                    info,
+                    move,
+                    score_cp(
+                        score,
+                        player,
+                    ),
+                    pv,
+                )
+            )
+
+        if not usable:
+            return {
+                "is_critical": False,
+            }
+
+        best_info, best_move, best_score, best_pv = (
+            usable[0]
+        )
+
+        second_score = (
+            usable[1][2]
+            if len(usable) > 1
+            else best_score
+        )
+
+        best_gap = max(
+            0,
+            best_score - second_score,
+        )
+
+        best_san = board.san(
+            best_move
+        )
+
+        best_is_capture = board.is_capture(
+            best_move
+        )
+
+        best_gives_check = board.gives_check(
+            best_move
+        )
+
+        best_is_promotion = (
+            best_move.promotion is not None
+        )
+
+        best_mate = None
+
+        best_score_object = best_info.get(
+            "score"
+        )
+
+        if best_score_object is not None:
+            try:
+                best_mate = (
+                    best_score_object
+                    .pov(player)
+                    .mate()
+                )
+            except Exception:
+                best_mate = None
+
+        # Estimate what the opponent would do if the student could
+        # "pass". This gives us a concrete opponent-intention signal.
+        #
+        # Skip this in check and when en-passant rights are active,
+        # because a null move would distort those special positions.
+        threat_move_uci = ""
+        threat_move_san = ""
+        threat_line: list[str] = []
+        threat_is_capture = False
+        threat_gives_check = False
+        threat_is_mate = False
+
+        if (
+            not board.is_check()
+            and board.ep_square is None
+        ):
+            null_board = board.copy(
+                stack=False
+            )
+
+            null_board.push(
+                chess.Move.null()
+            )
+
+            threat_limit = chess.engine.Limit(
+                time=max(
+                    90,
+                    min(
+                        120,
+                        critical_ms,
+                    ),
+                )
+                / 1000.0
+            )
+
+            try:
+                threat_info = self.engine.analyse(
+                    null_board,
+                    threat_limit,
+                )
+
+                threat_pv = list(
+                    threat_info.get(
+                        "pv"
+                    )
+                    or []
+                )
+
+                if threat_pv:
+                    threat_move = threat_pv[0]
+
+                    if (
+                        threat_move
+                        in null_board.legal_moves
+                    ):
+                        threat_move_uci = (
+                            threat_move.uci()
+                        )
+
+                        threat_move_san = (
+                            null_board.san(
+                                threat_move
+                            )
+                        )
+
+                        threat_line = pv_to_san(
+                            null_board,
+                            threat_pv,
+                            5,
+                        )
+
+                        threat_is_capture = (
+                            null_board.is_capture(
+                                threat_move
+                            )
+                        )
+
+                        threat_gives_check = (
+                            null_board.gives_check(
+                                threat_move
+                            )
+                        )
+
+                        threat_is_mate = (
+                            "#" in threat_move_san
+                        )
+
+            except (
+                chess.engine.EngineError,
+                chess.engine.EngineTerminatedError,
+                BrokenPipeError,
+            ):
+                # The threat probe is optional. Never fail the whole
+                # coaching request because this extra probe failed.
+                pass
+
+        in_check = board.is_check()
+
+        has_forcing_opportunity = (
+            best_is_capture
+            or best_gives_check
+            or best_is_promotion
+            or best_mate is not None
+        ) and (
+            best_gap >= 90
+            or best_mate is not None
+        )
+
+        has_forcing_threat = (
+            threat_is_capture
+            or threat_gives_check
+            or threat_is_mate
+        ) and best_gap >= 90
+
+        has_clear_only_move_feel = (
+            best_gap >= 180
+        )
+
+        is_critical = (
+            in_check
+            or has_forcing_opportunity
+            or has_forcing_threat
+            or has_clear_only_move_feel
+        )
+
+        if not is_critical:
+            return {
+                "is_critical": False,
+            }
+
+        if in_check:
+            kind = "check"
+        elif has_forcing_opportunity:
+            kind = "opportunity"
+        elif has_forcing_threat:
+            kind = "threat"
+        else:
+            kind = "decision"
+
+        result = {
+            "is_critical": True,
+            "kind": kind,
+            "fen": board.fen(),
+            "side_to_move": (
+                "white"
+                if player == chess.WHITE
+                else "black"
+            ),
+            "in_check": in_check,
+            "best_move": best_san,
+            "best_move_uci": best_move.uci(),
+            "best_line": pv_to_san(
+                board,
+                best_pv,
+                6,
+            ),
+            "best_gap_cp": best_gap,
+            "best_is_capture": best_is_capture,
+            "best_gives_check": best_gives_check,
+            "best_is_promotion": best_is_promotion,
+            "best_mate": best_mate,
+            "threat_move": threat_move_san,
+            "threat_move_uci": threat_move_uci,
+            "threat_line": threat_line,
+            "threat_is_capture": threat_is_capture,
+            "threat_gives_check": threat_gives_check,
+            "threat_is_mate": threat_is_mate,
+            "diagnostics": {
+                "budgetMs": critical_ms,
+                "bestGapCp": best_gap,
+                "search": info_diagnostics(
+                    best_info
+                ),
+            },
+        }
+
+        if self.debug:
+            print(
+                "[COACH CRITICAL]",
+                f"kind={kind}",
+                f"best={best_move.uci()}",
+                f"gap={best_gap}",
+                f"threat={threat_move_uci or '-'}",
+                flush=True,
+            )
+
+        return result
