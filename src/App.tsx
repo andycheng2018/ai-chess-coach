@@ -2161,7 +2161,7 @@ export default function App() {
     // Cap at three Socratic interruptions per game.
     if (
       criticalQuestionCountRef.current >=
-      3
+      4
     ) {
       return;
     }
@@ -2170,7 +2170,7 @@ export default function App() {
     if (
       currentPly -
         lastCriticalQuestionPlyRef.current <
-      6
+      4
     ) {
       return;
     }

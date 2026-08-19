@@ -587,7 +587,7 @@ class StockfishAnalyzer:
             or best_is_promotion
             or best_mate is not None
         ) and (
-            best_gap >= 90
+            best_gap >= 50
             or best_mate is not None
         )
 
@@ -595,10 +595,10 @@ class StockfishAnalyzer:
             threat_is_capture
             or threat_gives_check
             or threat_is_mate
-        ) and best_gap >= 90
+        ) and best_gap >= 50
 
         has_clear_only_move_feel = (
-            best_gap >= 180
+            best_gap >= 100
         )
 
         is_critical = (
