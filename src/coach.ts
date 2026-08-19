@@ -184,6 +184,7 @@ export type CriticalPositionPrompt = {
 
 export async function checkCriticalPosition(
   fen: string,
+  fenBeforeOpponent: string,
   lastOpponentMove: string,
   lastOpponentMoveUci: string,
   language: CoachLanguage = 'en',
@@ -199,6 +200,7 @@ export async function checkCriticalPosition(
       },
       body: JSON.stringify({
         fen,
+        fenBeforeOpponent,
         lastOpponentMove,
         lastOpponentMoveUci,
         language,

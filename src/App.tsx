@@ -169,9 +169,60 @@ function classificationWeight(
   }
 }
 
-function puzzleThemeKey(note: CoachNote): string | null {
+type PracticePuzzleMode =
+  | 'find-better'
+  | 'punish-mistake';
+
+type PracticePuzzle =
+  CoachNote & {
+    puzzleMode: PracticePuzzleMode;
+    sourcePly: number;
+  };
+
+function forcingMoveStrength(
+  fen: string,
+  uci: string | undefined,
+  san: string | undefined,
+): number {
+  if (!uci || !san) return 0;
+
+  if (san.includes('#')) return 10;
+  if (san.includes('+')) return 6;
+  if (/=([QRBN])/.test(san)) return 7;
+
+  if (!san.includes('x')) return 0;
+
+  try {
+    const chess = new Chess(fen);
+    const target =
+      chess.get(
+        uci.slice(2, 4) as Square,
+      );
+
+    if (!target) return 1;
+
+    switch (target.type) {
+      case 'q':
+        return 9;
+      case 'r':
+        return 5;
+      case 'b':
+      case 'n':
+        return 3;
+      case 'p':
+        return 1;
+      default:
+        return 0;
+    }
+  } catch {
+    return 0;
+  }
+}
+
+function puzzleThemeKey(
+  note: CoachNote,
+): string | null {
   const text = [
-    note.themeHint,
     note.title,
     note.lesson,
     note.feedback,
@@ -222,19 +273,6 @@ function puzzleThemeKey(note: CoachNote): string | null {
 
   if (
     hasAny([
-      'threat',
-      'forcing',
-      'opponent',
-      '威胁',
-      '强制',
-      '对手',
-    ])
-  ) {
-    return 'opponent-threat';
-  }
-
-  if (
-    hasAny([
       'endgame',
       'promotion',
       'king and pawn',
@@ -249,75 +287,132 @@ function puzzleThemeKey(note: CoachNote): string | null {
   return null;
 }
 
-function isHighValuePuzzle(note: CoachNote): boolean {
-  if (
-    note.classification !== 'mistake' &&
-    note.classification !== 'blunder'
-  ) {
-    return false;
-  }
-
+function buildPracticePuzzle(
+  note: CoachNote,
+): PracticePuzzle | null {
   if (
     !note.fenBefore ||
+    !note.fenAfter ||
     !note.bestMoveUci ||
     note.bestMoveUci.length < 4
   ) {
-    return false;
+    return null;
   }
 
-  // Do not create promotion puzzles until the puzzle board has
-  // an explicit promotion-piece picker.
   if (note.bestMoveUci.length > 4) {
-    return false;
+    return null;
   }
 
-  // A puzzle needs to be a clearly meaningful miss, not a tiny
-  // Stockfish preference.
-  if (note.centipawnLoss < 150) {
-    return false;
-  }
+  const severeEnough =
+    note.classification === 'mistake' ||
+    note.classification === 'blunder' ||
+    note.centipawnLoss >= 120;
 
-  const theme = puzzleThemeKey(note);
-  const reply = note.opponentReply || '';
+  if (!severeEnough) return null;
 
-  // SAN markers give us a deterministic signal that the opponent's
-  // best reply is forcing: capture, check, or mate.
-  const hasForcingReply = /[x+#]/.test(reply);
+  const replyStrength =
+    forcingMoveStrength(
+      note.fenAfter,
+      note.opponentReplyUci,
+      note.opponentReply,
+    );
 
-  const tacticalOrThreat =
-    theme === 'tactics' ||
-    theme === 'opponent-threat' ||
-    hasForcingReply;
+  const bestStrength =
+    forcingMoveStrength(
+      note.fenBefore,
+      note.bestMoveUci,
+      note.bestMove,
+    );
+
+  const theme =
+    puzzleThemeKey(note);
 
   const clearPositionalLesson =
-    (theme === 'king-safety' || theme === 'endgame') &&
-    note.centipawnLoss >= 200;
+    note.moveNumber > 8 &&
+    note.centipawnLoss >= 250 &&
+    (
+      theme === 'king-safety' ||
+      theme === 'endgame'
+    );
 
-  // Routine early-opening differences are poor personalized puzzles.
+  // Strong preference: if the student's move allowed a clear tactical
+  // punishment, make them PLAY that punishment from the opponent side.
   if (
-    note.moveNumber <= 8 &&
-    !tacticalOrThreat &&
-    theme !== 'king-safety'
+    replyStrength >= 3 &&
+    note.opponentReply &&
+    note.opponentReplyUci &&
+    note.opponentReplyUci.length === 4
   ) {
-    return false;
+    return {
+      ...note,
+      puzzleMode:
+        'punish-mistake',
+      sourcePly:
+        note.ply,
+      fenBefore:
+        note.fenAfter,
+      bestMove:
+        note.opponentReply,
+      bestMoveUci:
+        note.opponentReplyUci,
+    };
   }
 
-  return tacticalOrThreat || clearPositionalLesson;
+  // Otherwise only accept an original-position puzzle when there is
+  // a forcing answer or a very large, clearly themed positional miss.
+  if (
+    bestStrength >= 3 ||
+    clearPositionalLesson
+  ) {
+    return {
+      ...note,
+      puzzleMode:
+        'find-better',
+      sourcePly:
+        note.ply,
+    };
+  }
+
+  return null;
 }
 
-function practicePuzzleScore(note: CoachNote): number {
-  const theme = puzzleThemeKey(note);
-  const reply = note.opponentReply || '';
-
+function practicePuzzleScore(
+  puzzle: PracticePuzzle,
+): number {
   let score =
-    classificationWeight(note.classification) +
-    note.centipawnLoss;
+    classificationWeight(
+      puzzle.classification,
+    ) +
+    puzzle.centipawnLoss;
 
-  if (/[x+#]/.test(reply)) score += 180;
-  if (theme === 'tactics') score += 160;
-  if (theme === 'opponent-threat') score += 120;
-  if (theme === 'king-safety') score += 90;
-  if (theme === 'endgame') score += 70;
+  if (
+    puzzle.puzzleMode ===
+    'punish-mistake'
+  ) {
+    score += 280;
+  }
+
+  score +=
+    forcingMoveStrength(
+      puzzle.fenBefore,
+      puzzle.bestMoveUci,
+      puzzle.bestMove,
+    ) * 25;
+
+  const theme =
+    puzzleThemeKey(puzzle);
+
+  if (theme === 'tactics') {
+    score += 120;
+  }
+
+  if (theme === 'king-safety') {
+    score += 90;
+  }
+
+  if (theme === 'endgame') {
+    score += 70;
+  }
 
   return score;
 }
@@ -325,61 +420,66 @@ function practicePuzzleScore(note: CoachNote): number {
 function selectPracticePuzzles(
   notes: CoachNote[],
   limit = 3,
-): CoachNote[] {
-  const ranked = [...notes]
-    .filter(isHighValuePuzzle)
-    .sort(
-      (a, b) =>
-        practicePuzzleScore(b) -
-        practicePuzzleScore(a),
-    );
-
-  const selected: CoachNote[] = [];
-
-  for (const note of ranked) {
-    const theme = puzzleThemeKey(note);
-
-    const isDuplicate = selected.some((existing) => {
-      const existingTheme = puzzleThemeKey(existing);
-      const plyDistance = Math.abs(existing.ply - note.ply);
-
-      // Same teaching idea from the same tactical sequence.
-      if (
-        theme &&
-        existingTheme === theme &&
-        plyDistance <= 6
-      ) {
-        return true;
-      }
-
-      // Same best move / refutation appearing again a few moves later.
-      if (
-        plyDistance <= 10 &&
+): PracticePuzzle[] {
+  const ranked =
+    notes
+      .map(buildPracticePuzzle)
+      .filter(
         (
-          existing.bestMoveUci === note.bestMoveUci ||
-          (
-            existing.opponentReplyUci &&
-            existing.opponentReplyUci === note.opponentReplyUci
-          )
-        )
-      ) {
-        return true;
-      }
+          value,
+        ): value is PracticePuzzle =>
+          Boolean(value),
+      )
+      .sort(
+        (a, b) =>
+          practicePuzzleScore(b) -
+          practicePuzzleScore(a),
+      );
 
-      return existing.fenBefore === note.fenBefore;
-    });
+  const selected:
+    PracticePuzzle[] = [];
 
-    if (isDuplicate) continue;
+  for (const puzzle of ranked) {
+    const duplicate =
+      selected.some(
+        (existing) => {
+          const sameSource =
+            existing.sourcePly ===
+            puzzle.sourcePly;
 
-    selected.push(note);
+          const samePosition =
+            existing.fenBefore ===
+            puzzle.fenBefore;
 
-    if (selected.length >= limit) break;
+          const nearbySameAnswer =
+            Math.abs(
+              existing.sourcePly -
+              puzzle.sourcePly,
+            ) <= 8 &&
+            existing.bestMoveUci ===
+            puzzle.bestMoveUci;
+
+          return (
+            sameSource ||
+            samePosition ||
+            nearbySameAnswer
+          );
+        },
+      );
+
+    if (duplicate) continue;
+
+    selected.push(puzzle);
+
+    if (selected.length >= limit) {
+      break;
+    }
   }
 
-  // Intentionally do NOT fill to three. One excellent puzzle is
-  // better than three mediocre ones.
+  // Never pad to three.
   return selected;
 }
+
 
 type PraiseMoment = 'streak' | 'recovery';
 
@@ -607,16 +707,25 @@ function reportThemeFor(
 
 
 function practicePuzzleTitle(
-  note: CoachNote,
+  note: PracticePuzzle,
   language: CoachLanguage,
 ): string {
+  const isChinese =
+    language === 'zh-CN';
+
+  if (
+    note.puzzleMode ===
+    'punish-mistake'
+  ) {
+    return isChinese
+      ? '看清你漏掉的战术'
+      : 'See the tactic you allowed';
+  }
+
   const theme = reportThemeFor(
     note,
     language,
   );
-
-  const isChinese =
-    language === 'zh-CN';
 
   switch (theme.key) {
     case 'piece-safety':
@@ -1182,6 +1291,8 @@ export default function App() {
   const [coachResult, setCoachResult] = useState<CoachResult | null>(null);
   const [criticalPrompt, setCriticalPrompt] = useState<CriticalPrompt | null>(null);
   const [coachThinking, setCoachThinking] = useState(false);
+  const [coachExplanationPending, setCoachExplanationPending] = useState(false);
+  const [playerMoveAnalysisPending, setPlayerMoveAnalysisPending] = useState(false);
   const [coachError, setCoachError] = useState('');
   const [coachNotes, setCoachNotes] = useState<CoachNote[]>([]);
   const [moveEvaluations, setMoveEvaluations] = useState<CoachResult[]>([]);
@@ -1336,6 +1447,56 @@ export default function App() {
     } catch {
       // no-op
     }
+  }, [voiceEnabled]);
+
+  useEffect(() => {
+    if (!voiceEnabled) return;
+
+    const unlock = () => {
+      void unlockCoachAudio();
+    };
+
+    const onVisibility = () => {
+      if (
+        document.visibilityState === 'visible'
+      ) {
+        void unlockCoachAudio();
+      }
+    };
+
+    window.addEventListener(
+      'pointerdown',
+      unlock,
+      { passive: true },
+    );
+
+    window.addEventListener(
+      'touchend',
+      unlock,
+      { passive: true },
+    );
+
+    document.addEventListener(
+      'visibilitychange',
+      onVisibility,
+    );
+
+    return () => {
+      window.removeEventListener(
+        'pointerdown',
+        unlock,
+      );
+
+      window.removeEventListener(
+        'touchend',
+        unlock,
+      );
+
+      document.removeEventListener(
+        'visibilitychange',
+        onVisibility,
+      );
+    };
   }, [voiceEnabled]);
 
   useEffect(() => {
@@ -1539,7 +1700,12 @@ export default function App() {
         pendingMoveRef.current = null;
         setMoveInFlight(false);
         setEndGameConfirm(false);
-        setGameOverOpen(true);
+        setGameOverOpen(false);
+
+        criticalQuestionAbortRef.current?.abort();
+        criticalPromptRef.current = null;
+        setCriticalPrompt(null);
+
         setStatus(`Training game finished · ${nextStatus}.`);
         controller.abort();
       }
@@ -1762,6 +1928,8 @@ export default function App() {
     setCoachResult(null);
     setCoachError('');
     setCoachThinking(false);
+    setCoachExplanationPending(false);
+    setPlayerMoveAnalysisPending(false);
     setPendingPromotion(null);
     pendingMoveRef.current = null;
     setMoveInFlight(false);
@@ -1784,6 +1952,43 @@ export default function App() {
     }
     setRollbackSignal((value) => value + 1);
   }, [gameId]);
+
+  useEffect(() => {
+    const terminal =
+      Boolean(
+        gameId &&
+        gameStatus !== 'started' &&
+        gameStatus !== 'created' &&
+        gameStatus !== 'recovering' &&
+        gameStatus !== 'idle'
+      );
+
+    if (!terminal) return;
+
+    if (
+      coachThinking ||
+      coachExplanationPending ||
+      playerMoveAnalysisPending
+    ) {
+      return;
+    }
+
+    const timer =
+      window.setTimeout(
+        () => setGameOverOpen(true),
+        450,
+      );
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    gameId,
+    gameStatus,
+    coachThinking,
+    coachExplanationPending,
+    playerMoveAnalysisPending,
+  ]);
 
   useEffect(() => {
     if (!gameId || !coachNotes.length) return;
@@ -1860,6 +2065,8 @@ export default function App() {
           });
 
           if (!result.shouldCoach) {
+            setPlayerMoveAnalysisPending(false);
+            setCoachExplanationPending(false);
             if (result.classification === 'good') {
               goodMoveRunRef.current += 1;
             } else {
@@ -1903,6 +2110,8 @@ export default function App() {
               lastPraisePlyRef.current = result.ply;
               setCoachResult(praisedResult);
               speak(praise.feedback);
+            } else {
+              setCoachResult(null);
             }
 
             continue;
@@ -1910,6 +2119,13 @@ export default function App() {
 
           goodMoveRunRef.current = 0;
           lastMistakePlyRef.current = result.ply;
+
+          setPlayerMoveAnalysisPending(false);
+          setCoachExplanationPending(true);
+
+          criticalQuestionAbortRef.current?.abort();
+          criticalPromptRef.current = null;
+          setCriticalPrompt(null);
 
           // The fast endpoint returns Stockfish truth immediately. Show the
           // mistake and deterministic arrows now instead of waiting for GPT.
@@ -2016,15 +2232,15 @@ export default function App() {
                   ].slice(-4);
                 }
 
-                // Do not talk over an active pre-move Socratic question.
-                if (!criticalPromptRef.current) {
-                  speak(enriched.feedback);
-                }
+                setCoachExplanationPending(false);
+                speak(enriched.feedback);
               })
               .catch((error) => {
                 if (isAbortError(error)) {
                   return;
                 }
+
+                setCoachExplanationPending(false);
 
                 console.warn(
                   'Coach wording unavailable:',
@@ -2077,10 +2293,14 @@ export default function App() {
               question: '',
             };
 
+            setCoachExplanationPending(false);
             saveNote(unavailable);
             setCoachResult(unavailable);
           }
         } catch (error) {
+          setPlayerMoveAnalysisPending(false);
+          setCoachExplanationPending(false);
+
           if (!isAbortError(error)) {
             setCoachError(
               `Coach analysis unavailable: ${String(error)}`,
@@ -2113,7 +2333,15 @@ export default function App() {
       !isCoachGame ||
       !isMyTurn
     ) {
+      criticalPromptRef.current = null;
       setCriticalPrompt(null);
+      return;
+    }
+
+    if (
+      coachExplanationPending ||
+      playerMoveAnalysisPending
+    ) {
       return;
     }
 
@@ -2191,12 +2419,19 @@ export default function App() {
     const lastOpponentMove =
       position.san.at(-1) || '';
 
+    const beforeOpponentPosition =
+      replay(
+        initialFen,
+        moves.slice(0, -1).join(' '),
+      );
+
     const recentQuestions = [
       ...recentCriticalQuestionsRef.current,
     ];
 
     void checkCriticalPosition(
       position.chess.fen(),
+      beforeOpponentPosition.chess.fen(),
       lastOpponentMove,
       lastOpponentMoveUci,
       coachLanguage,
@@ -2282,14 +2517,25 @@ export default function App() {
     movesText,
     myColor,
     position,
+    initialFen,
     coachLanguage,
     voiceEnabled,
+    coachExplanationPending,
+    playerMoveAnalysisPending,
   ]);
 
 
 const analyzeStudentMove = useCallback(
   (fenBefore: string, uci: string) => {
     if (!isCoachGame) return;
+
+    setPlayerMoveAnalysisPending(true);
+    setCoachError('');
+    setCoachResult(null);
+
+    criticalQuestionAbortRef.current?.abort();
+    criticalPromptRef.current = null;
+    setCriticalPrompt(null);
 
     coachQueueRef.current.push({
       fenBefore,
@@ -2406,6 +2652,8 @@ const analyzeStudentMove = useCallback(
     }
     const uci = `${from}${to}${promotion || ''}`;
 
+    setPlayerMoveAnalysisPending(true);
+
     criticalPromptRef.current = null;
     setCriticalPrompt(null);
     criticalQuestionAbortRef.current?.abort();
@@ -2431,6 +2679,7 @@ const analyzeStudentMove = useCallback(
         pendingMoveRef.current = null;
         setMoveInFlight(false);
       }
+      setPlayerMoveAnalysisPending(false);
       setRollbackSignal((value) => value + 1);
       setStatus(`Move failed: ${String(error)}`);
     }
@@ -2746,6 +2995,8 @@ const analyzeStudentMove = useCallback(
     setCoachResult(null);
     setCoachNotes([]);
     setCoachError('');
+    setCoachExplanationPending(false);
+    setPlayerMoveAnalysisPending(false);
     setPendingPromotion(null);
     pendingMoveRef.current = null;
     setMoveInFlight(false);
@@ -2780,8 +3031,31 @@ const analyzeStudentMove = useCallback(
       result.classification === 'good',
   ).length;
 
+const puzzleSourceNotes: CoachNote[] = [
+  ...coachNotes,
+  ...moveEvaluations
+    .filter(
+      (evaluation) =>
+        !coachNotes.some(
+          (note) =>
+            note.ply === evaluation.ply,
+        ),
+    )
+    .map(
+      (evaluation) => ({
+        ...evaluation,
+        gameId: gameId || '',
+        savedAt: 0,
+        playerColor: myColor,
+        language: coachLanguage,
+      }),
+    ),
+];
+
 const practicePuzzles =
-  selectPracticePuzzles(coachNotes);
+  selectPracticePuzzles(
+    puzzleSourceNotes,
+  );
 
 const gameReport =
   buildGameReport(
@@ -2826,6 +3100,8 @@ const reportText = isChinese
       closePuzzle: '关闭',
       puzzlePrompt: '找到最佳走法。',
       puzzlePromptDetail: '这个局面就来自你刚才的对局。',
+      punishPrompt: '站在对手角度，找到最强的惩罚手段。',
+      punishPromptDetail: '这是你刚才那步棋给对手留下的战术机会。',
       yourMove: '轮到你走。',
       incorrect:
         '还差一点。再检查一下将军、吃子、直接威胁和没有保护的棋子。',
@@ -2869,6 +3145,8 @@ const reportText = isChinese
       closePuzzle: 'Close',
       puzzlePrompt: 'Find the best move.',
       puzzlePromptDetail: 'This position came directly from your game.',
+      punishPrompt: "Play your opponent's strongest reply.",
+      punishPromptDetail: 'This is the tactical idea your move allowed.',
       yourMove: 'Your move.',
       incorrect:
         'Not quite. Look again for checks, captures, threats, and loose pieces.',
@@ -3447,8 +3725,16 @@ function handlePuzzleMove(
             ) : null}
               {coachResult.shouldCoach ? <button className="coach-review-button" onClick={() => { setReviewTarget(coachResult); setReviewMode('better'); }}>Review this position</button> : null}
             </> : <>
-              <strong>Ready to coach</strong>
-              <div>After each move, I’ll quickly check it. Bigger mistakes get a concrete explanation, best-move arrow, and the opponent’s threat when it matters.</div>
+              <strong>
+                {coachLanguage === 'zh-CN'
+                  ? '准备好了'
+                  : 'Ready to coach'}
+              </strong>
+              <div>
+                {coachLanguage === 'zh-CN'
+                  ? '继续下棋。没有重要内容时我会保持安静，关键时刻再提醒你。'
+                  : 'Keep playing. I’ll stay quiet when there is nothing important to add and step in when a position is worth discussing.'}
+              </div>
             </>}
           </div>
           <div className="coach-detail-setting">
@@ -3893,7 +4179,7 @@ function handlePuzzleMove(
                 {practicePuzzles.map(
                   (puzzle, index) => (
                     <button
-                      key={puzzle.ply}
+                      key={`${puzzle.sourcePly}-${puzzle.puzzleMode}`}
                       className="practice-card"
                       onClick={() => openPuzzle(index)}
                     >
@@ -4020,11 +4306,15 @@ function handlePuzzleMove(
 
           <div className="puzzle-prompt">
             <strong>
-              {reportText.puzzlePrompt}
+              {activePuzzle.puzzleMode === 'punish-mistake'
+                ? reportText.punishPrompt
+                : reportText.puzzlePrompt}
             </strong>
 
             <span>
-              {reportText.puzzlePromptDetail}
+              {activePuzzle.puzzleMode === 'punish-mistake'
+                ? reportText.punishPromptDetail
+                : reportText.puzzlePromptDetail}
             </span>
           </div>
 

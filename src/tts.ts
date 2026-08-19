@@ -289,136 +289,224 @@ function makeSpeechFriendly(
   );
 }
 
-function browserSpeak(
-  text: string,
-  language: CoachLanguage,
-) {
-  if (!('speechSynthesis' in window)) {
-    return;
-  }
+type SpeechJob = {
+  text: string;
+  language: CoachLanguage;
+  resolve: () => void;
+};
 
-  window.speechSynthesis.cancel();
+let speechQueue: SpeechJob[] = [];
+let speechProcessing = false;
+let speechGeneration = 0;
 
-  const utterance =
-    new SpeechSynthesisUtterance(text);
-
-  utterance.lang =
-    language === 'zh-CN'
-      ? 'zh-CN'
-      : 'en-US';
-
-  utterance.rate =
-    language === 'zh-CN'
-      ? 0.96
-      : 1.0;
-
-  const voices =
-    window.speechSynthesis.getVoices();
-
-  const preferredVoice =
-    voices.find((voice) =>
-      language === 'zh-CN'
-        ? voice.lang
-            .toLowerCase()
-            .startsWith('zh')
-        : voice.lang
-            .toLowerCase()
-            .startsWith('en'),
-    );
-
-  if (preferredVoice) {
-    utterance.voice = preferredVoice;
-  }
-
-  console.warn(
-    '[TTS] Using browser fallback voice.',
-  );
-
-  window.speechSynthesis.speak(
-    utterance,
-  );
-}
-
-export function stopCoachSpeech() {
-  activeRequest?.abort();
-  activeRequest = null;
-
-  if (activeSource) {
-    try {
-      activeSource.stop();
-    } catch {
-      // Already stopped.
-    }
-
-    activeSource.disconnect();
-    activeSource = null;
-  }
-
-  if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-  }
-}
-
-export async function speakCoach(
+async function browserSpeak(
   text: string,
   language: CoachLanguage,
 ): Promise<void> {
-    const cleanText = text.trim();
+  if (!('speechSynthesis' in window)) return;
 
-    if (!cleanText) return;
+  await new Promise<void>((resolve) => {
+    const utterance =
+      new SpeechSynthesisUtterance(text);
 
-    const spokenText =
-    makeSpeechFriendly(
-        cleanText,
-        language,
+    utterance.lang =
+      language === 'zh-CN'
+        ? 'zh-CN'
+        : 'en-US';
+
+    utterance.rate =
+      language === 'zh-CN'
+        ? 0.96
+        : 1.0;
+
+    const voices =
+      window.speechSynthesis.getVoices();
+
+    const preferredVoice =
+      voices.find((voice) =>
+        language === 'zh-CN'
+          ? voice.lang.toLowerCase().startsWith('zh')
+          : voice.lang.toLowerCase().startsWith('en'),
+      );
+
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+    }
+
+    let finished = false;
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      resolve();
+    };
+
+    utterance.onend = finish;
+    utterance.onerror = finish;
+
+    console.warn(
+      '[TTS] Using browser fallback voice.',
     );
 
-    stopCoachSpeech();
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(
+      utterance,
+    );
+
+    window.setTimeout(
+      finish,
+      Math.min(
+        15_000,
+        Math.max(
+          3_000,
+          text.length * 85,
+        ),
+      ),
+    );
+  });
+}
+
+async function ensureAudioReady(): Promise<AudioContext> {
+  if (
+    !audioContext ||
+    audioContext.state === 'closed'
+  ) {
+    audioContext =
+      new AudioContext();
+  }
+
+  if (
+    audioContext.state === 'suspended'
+  ) {
+    await audioContext.resume();
+  }
+
+  return audioContext;
+}
+
+async function playWebAudio(
+  audioBytes: ArrayBuffer,
+  generation: number,
+): Promise<void> {
+  const context =
+    await ensureAudioReady();
+
+  if (
+    generation !==
+    speechGeneration
+  ) {
+    return;
+  }
+
+  const decoded =
+    await context.decodeAudioData(
+      audioBytes.slice(0),
+    );
+
+  if (
+    generation !==
+    speechGeneration
+  ) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const source =
+      context.createBufferSource();
+
+    source.buffer = decoded;
+    source.connect(
+      context.destination,
+    );
+
+    activeSource = source;
+
+    let finished = false;
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+
+      if (
+        activeSource === source
+      ) {
+        activeSource = null;
+      }
+
+      try {
+        source.disconnect();
+      } catch {
+        // no-op
+      }
+
+      resolve();
+    };
+
+    source.onended = finish;
+    source.start();
+
+    window.setTimeout(
+      finish,
+      Math.ceil(
+        decoded.duration * 1000,
+      ) + 1500,
+    );
+  });
+}
+
+async function playSpeechJob(
+  job: SpeechJob,
+  generation: number,
+): Promise<void> {
+  const cleanText =
+    job.text.trim();
+
+  if (!cleanText) return;
+
+  const spokenText =
+    makeSpeechFriendly(
+      cleanText,
+      job.language,
+    );
 
   const controller =
     new AbortController();
 
   activeRequest = controller;
 
-  const startedAt =
-    performance.now();
-
   try {
-    console.log(
-      '[TTS] Requesting ElevenLabs:',
-      {
-        language,
-        text: cleanText,
-      },
-    );
-
-    const response = await fetch(
-      `${CONTROL_URL}/api/tts`,
-      {
-        method: 'POST',
-
-        headers: {
-          'Content-Type':
-            'application/json',
+    const response =
+      await fetch(
+        `${CONTROL_URL}/api/tts`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+          body: JSON.stringify({
+            text: spokenText,
+            language:
+              job.language,
+          }),
+          signal:
+            controller.signal,
         },
+      );
 
-        body: JSON.stringify({
-          text: spokenText,
-          language,
-        }),
+    if (
+      activeRequest ===
+      controller
+    ) {
+      activeRequest = null;
+    }
 
-        signal: controller.signal,
-      },
-    );
-
-    const responseAt =
-      performance.now();
-
-    console.log(
-      `[TTS] Backend responded in ${Math.round(
-        responseAt - startedAt,
-      )} ms`,
-    );
+    if (
+      generation !==
+      speechGeneration
+    ) {
+      return;
+    }
 
     if (!response.ok) {
       const message =
@@ -434,64 +522,19 @@ export async function speakCoach(
     const audioBytes =
       await response.arrayBuffer();
 
-    console.log(
-      '[TTS] Received audio bytes:',
-      audioBytes.byteLength,
-    );
-
-    activeRequest = null;
-
-    /*
-     * Use WebAudio rather than creating a new HTMLAudioElement
-     * for every message.
-     *
-     * This is more reliable after iOS audio has been unlocked
-     * by the Voice checkbox.
-     */
-    if (!audioContext) {
-      audioContext =
-        new AudioContext();
-    }
-
     if (
-      audioContext.state ===
-      'suspended'
+      !audioBytes.byteLength
     ) {
-      await audioContext.resume();
+      throw new Error(
+        'TTS backend returned empty audio.',
+      );
     }
 
-    const decoded =
-      await audioContext.decodeAudioData(
-        audioBytes.slice(0),
-      );
-
-    const source =
-      audioContext.createBufferSource();
-
-    source.buffer = decoded;
-
-    source.connect(
-      audioContext.destination,
+    await playWebAudio(
+      audioBytes,
+      generation,
     );
 
-    activeSource = source;
-
-    source.onended = () => {
-      if (activeSource === source) {
-        activeSource = null;
-      }
-
-      source.disconnect();
-    };
-
-    console.log(
-      `[TTS] Playing ElevenLabs after ${Math.round(
-        performance.now() -
-          startedAt,
-      )} ms`,
-    );
-
-    source.start();
   } catch (error) {
     if (
       error instanceof DOMException &&
@@ -500,16 +543,149 @@ export async function speakCoach(
       return;
     }
 
-    activeRequest = null;
-
     console.error(
-      '[TTS] ElevenLabs failed:',
+      '[TTS] ElevenLabs/WebAudio failed:',
       error,
     );
 
-    browserSpeak(
-      spokenText,
-      language,
-    );
+    if (
+      generation ===
+      speechGeneration
+    ) {
+      await browserSpeak(
+        spokenText,
+        job.language,
+      );
+    }
+
+  } finally {
+    if (
+      activeRequest ===
+      controller
+    ) {
+      activeRequest = null;
+    }
   }
+}
+
+async function drainSpeechQueue(): Promise<void> {
+  if (speechProcessing) return;
+
+  speechProcessing = true;
+
+  try {
+    while (
+      speechQueue.length > 0
+    ) {
+      const generation =
+        speechGeneration;
+
+      const job =
+        speechQueue.shift();
+
+      if (!job) continue;
+
+      try {
+        await playSpeechJob(
+          job,
+          generation,
+        );
+      } finally {
+        job.resolve();
+      }
+    }
+
+  } finally {
+    speechProcessing = false;
+
+    if (
+      speechQueue.length > 0
+    ) {
+      void drainSpeechQueue();
+    }
+  }
+}
+
+export function stopCoachSpeech() {
+  speechGeneration += 1;
+
+  activeRequest?.abort();
+  activeRequest = null;
+
+  if (activeSource) {
+    try {
+      activeSource.stop();
+    } catch {
+      // no-op
+    }
+
+    try {
+      activeSource.disconnect();
+    } catch {
+      // no-op
+    }
+
+    activeSource = null;
+  }
+
+  if (
+    'speechSynthesis'
+    in window
+  ) {
+    window.speechSynthesis.cancel();
+  }
+
+  const queued =
+    speechQueue.splice(0);
+
+  for (
+    const job of queued
+  ) {
+    job.resolve();
+  }
+}
+
+export async function speakCoach(
+  text: string,
+  language: CoachLanguage,
+): Promise<void> {
+  const cleanText =
+    text.trim();
+
+  if (!cleanText) return;
+
+  const lastQueued =
+    speechQueue.at(-1);
+
+  if (
+    lastQueued &&
+    lastQueued.text ===
+      cleanText &&
+    lastQueued.language ===
+      language
+  ) {
+    return;
+  }
+
+  await new Promise<void>(
+    (resolve) => {
+      speechQueue.push({
+        text:
+          cleanText,
+        language,
+        resolve,
+      });
+
+      while (
+        speechQueue.length > 3
+      ) {
+        const dropped =
+          speechQueue.shift();
+
+        dropped?.resolve();
+      }
+
+      void drainSpeechQueue();
+    },
+  );
 }

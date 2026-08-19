@@ -765,15 +765,16 @@ def explain_analysis(
 def critical_position_question(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Optional pre-move coaching.
-
-    Stockfish decides whether the position is important enough to interrupt.
-    The LLM is only allowed to phrase ONE question and never chooses chess facts.
-    """
     fen = str(
         payload.get(
             "fen",
+            "",
+        )
+    ).strip()
+
+    fen_before_opponent = str(
+        payload.get(
+            "fenBeforeOpponent",
             "",
         )
     ).strip()
@@ -784,13 +785,23 @@ def critical_position_question(
         )
 
     try:
-        board = chess.Board(
-            fen
-        )
+        board = chess.Board(fen)
     except ValueError as exc:
         raise ValueError(
             "Invalid FEN."
         ) from exc
+
+    before_board = None
+
+    if fen_before_opponent:
+        try:
+            before_board = (
+                chess.Board(
+                    fen_before_opponent
+                )
+            )
+        except ValueError:
+            before_board = None
 
     last_opponent_move = str(
         payload.get(
@@ -813,21 +824,19 @@ def critical_position_question(
         )
     )
 
+    recent_questions: list[str] = []
+
     raw_recent = payload.get(
         "recentQuestions",
         [],
     )
-
-    recent_questions: list[str] = []
 
     if isinstance(
         raw_recent,
         list,
     ):
         for item in raw_recent[-4:]:
-            value = str(
-                item
-            ).strip()
+            value = str(item).strip()
 
             if value:
                 recent_questions.append(
@@ -842,7 +851,6 @@ def critical_position_question(
                     board
                 )
             )
-
         except (
             chess.engine.EngineError,
             chess.engine.EngineTerminatedError,
@@ -857,12 +865,126 @@ def critical_position_question(
                 )
             )
 
-    if not position.get(
-        "is_critical"
+    moved_piece_name = ""
+    newly_pinned_squares: list[str] = []
+    attacked_targets: list[str] = []
+
+    if (
+        before_board is not None
+        and last_opponent_move_uci
     ):
+        try:
+            last_move = (
+                chess.Move.from_uci(
+                    last_opponent_move_uci
+                )
+            )
+
+            moved_piece = (
+                before_board.piece_at(
+                    last_move.from_square
+                )
+            )
+
+            if moved_piece is not None:
+                moved_piece_name = (
+                    chess.piece_name(
+                        moved_piece.piece_type
+                    )
+                )
+
+            student_color = board.turn
+
+            for square in chess.SQUARES:
+                piece = board.piece_at(
+                    square
+                )
+
+                if (
+                    piece is None
+                    or piece.color != student_color
+                    or piece.piece_type == chess.KING
+                ):
+                    continue
+
+                now_pinned = (
+                    board.is_pinned(
+                        student_color,
+                        square,
+                    )
+                )
+
+                was_pinned = (
+                    before_board.is_pinned(
+                        student_color,
+                        square,
+                    )
+                    if before_board.piece_at(
+                        square
+                    )
+                    else False
+                )
+
+                if (
+                    now_pinned
+                    and not was_pinned
+                ):
+                    newly_pinned_squares.append(
+                        chess.square_name(
+                            square
+                        )
+                    )
+
+            moved_piece_after = (
+                board.piece_at(
+                    last_move.to_square
+                )
+            )
+
+            if (
+                moved_piece_after is not None
+                and moved_piece_after.color != student_color
+            ):
+                for target_square in board.attacks(
+                    last_move.to_square
+                ):
+                    target = board.piece_at(
+                        target_square
+                    )
+
+                    if (
+                        target is not None
+                        and target.color == student_color
+                    ):
+                        attacked_targets.append(
+                            (
+                                f"{chess.piece_name(target.piece_type)} "
+                                f"on {chess.square_name(target_square)}"
+                            )
+                        )
+
+        except ValueError:
+            pass
+
+    opponent_intent_evidence = (
+        bool(newly_pinned_squares)
+        or bool(position.get("in_check"))
+        or bool(position.get("threat_is_mate"))
+        or bool(position.get("threat_gives_check"))
+        or bool(position.get("threat_is_capture"))
+    )
+
+    if not opponent_intent_evidence:
         return {
             "isCritical": False,
         }
+
+    position["is_critical"] = True
+    position["kind"] = (
+        "check"
+        if position.get("in_check")
+        else "threat"
+    )
 
     position[
         "last_opponent_move"
@@ -872,8 +994,18 @@ def critical_position_question(
         "last_opponent_move_uci"
     ] = last_opponent_move_uci
 
-    # This is an optional interaction. If the LLM question fails,
-    # silently skip the interruption instead of disturbing the game.
+    position[
+        "opponent_moved_piece"
+    ] = moved_piece_name
+
+    position[
+        "newly_pinned_squares"
+    ] = newly_pinned_squares
+
+    position[
+        "attacked_targets"
+    ] = attacked_targets[:4]
+
     try:
         with _llm_lock:
             wording = (
@@ -884,7 +1016,6 @@ def critical_position_question(
                     recent_questions=recent_questions,
                 )
             )
-
     except Exception as exc:
         print(
             "[COACH CRITICAL] question generation failed:",
@@ -896,18 +1027,11 @@ def critical_position_question(
             "isCritical": False,
         }
 
-    print(
-        "[COACH CRITICAL] asking",
-        f"kind={position.get('kind')}",
-        f"last={last_opponent_move_uci or last_opponent_move or '-'}",
-        flush=True,
-    )
-
     return {
         "isCritical": True,
         "kind": position.get(
             "kind",
-            "decision",
+            "threat",
         ),
         "title": wording.get(
             "title",
@@ -918,9 +1042,6 @@ def critical_position_question(
             "",
         ),
     }
-
-
-
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "AIChessCoach/1.0"

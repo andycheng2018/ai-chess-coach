@@ -407,6 +407,17 @@ class LLMCoach:
             "last_opponent_move_uci": position.get(
                 "last_opponent_move_uci"
             ),
+            "opponent_moved_piece": position.get(
+                "opponent_moved_piece"
+            ),
+            "newly_pinned_squares": position.get(
+                "newly_pinned_squares",
+                [],
+            ),
+            "attacked_targets": position.get(
+                "attacked_targets",
+                [],
+            ),
 
             # These are private chess facts used to formulate a good
             # question. The answer must NOT reveal them.
@@ -445,43 +456,47 @@ You are Chess Buddy during a live chess game.
 
 The opponent JUST moved and it is now the student's turn.
 
-Stockfish has already confirmed that this is an unusually important
-decision. Ask ONE short Socratic question that makes the student stop
-and inspect the position before moving.
+Ask ONE short Socratic question about what the OPPONENT is trying
+to accomplish with their last move.
 
-CRITICAL RULES:
-- Do NOT reveal the best move.
-- Do NOT tell the student the answer.
-- Do NOT give a best-move arrow or recommendation.
-- Do NOT quote the private engine line as the answer.
-- Ask about the concrete idea that matters in THIS position.
-- Keep the question roughly 7-18 words.
-- The title should be 2-5 words.
-- Sound curious and coach-like, not like a quiz generator.
-- Do not repeatedly say "checks, captures, and threats".
-- Use recent_questions to avoid repeating the same wording.
+ABSOLUTE RULES:
+- Ask about the opponent's intention, target, threat, line, pin, or setup.
+- Do NOT ask what move the student should play.
+- Do NOT ask the student to find the best move.
+- Do NOT ask for a forcing move.
+- Do NOT hint at Stockfish's recommended response.
+- Do NOT reveal best_move or best_line.
+- Do NOT ask a vague "What changed?" by itself.
+- Keep the question roughly 7-20 words.
+- Sound like a human coach.
+- Use recent_questions to avoid repetitive wording.
 
-Use the Stockfish-only facts supplied in the payload. Never invent
-a tactic, threat, hanging piece, mate, or plan.
+Good examples:
+- "What do you think their rook is trying to accomplish on that file?"
+- "Which piece did that bishop just pin, and why does that matter?"
+- "What target did their queen just create pressure against?"
+- "If you ignore that move, what is your opponent preparing next?"
 
-For kind="threat":
-prefer a question about what the opponent is threatening.
+Use ONLY supplied facts:
+- last_opponent_move
+- opponent_moved_piece
+- newly_pinned_squares
+- attacked_targets
+- threat_move / threat_line
+- in_check
+- FEN
 
-For kind="opportunity":
-prefer a question like "What changed after that move?" or ask the
-student to find the newly available forcing idea, without naming it.
+Never invent a pin, target, threat, or plan.
 
-For kind="check":
-ask the student to compare the available responses rather than merely
-saying that they are in check.
-
-For kind="decision":
-ask what feature of the position makes this choice especially important.
+If newly_pinned_squares is non-empty, prefer asking about the new pin.
+If the opponent just gave check, ask what their checking move is trying
+to gain or force.
+Otherwise ask about the concrete opponent threat or target.
 
 Return JSON only:
 {
-  "title": "short title",
-  "question": "one question only"
+  "title": "short opponent-focused title",
+  "question": "one opponent-intention question"
 }
 """.strip()
 
