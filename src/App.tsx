@@ -15,6 +15,7 @@ import {
   checkTtsStatus,
   markCoachVoiceIdle,
   speakCoach,
+  speakCoachLatest,
   stopCoachSpeech,
   subscribeTtsStatus,
   type TtsStatus,
@@ -1372,6 +1373,7 @@ export default function App() {
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
   const [historyPly, setHistoryPly] = useState<number | null>(null);
   type CoachJob = {
+    id: number;
     fenBefore: string;
     uci: string;
     detail: CoachDetail;
@@ -1380,6 +1382,7 @@ export default function App() {
 
   const coachAbortRef = useRef<AbortController | null>(null);
   const coachQueueRef = useRef<CoachJob[]>([]);
+  const latestCoachJobIdRef = useRef(0);
   const coachProcessingRef = useRef(false);
   const observedCoachPlyRef = useRef<number | null>(null);
   const goodMoveRunRef = useRef(0);
@@ -1983,6 +1986,7 @@ export default function App() {
   useEffect(() => {
     coachAbortRef.current?.abort();
     coachQueueRef.current = [];
+    latestCoachJobIdRef.current += 1;
     coachProcessingRef.current = false;
     observedCoachPlyRef.current = null;
     goodMoveRunRef.current = 0;
@@ -2091,7 +2095,7 @@ export default function App() {
   ) {
     if (!voiceEnabled) return;
 
-    void speakCoach(
+    void speakCoachLatest(
       text,
       language,
     );
@@ -2160,6 +2164,12 @@ export default function App() {
             controller.signal,
             job.language,
           );
+
+          // A newer board position arrived while this Stockfish request was
+          // running. Do not display or speak analysis for the old position.
+          if (job.id !== latestCoachJobIdRef.current) {
+            continue;
+          }
 
           const analysisGameId = gameId;
 
@@ -2315,6 +2325,10 @@ export default function App() {
               recentFeedback,
             )
               .then((wording) => {
+                if (job.id !== latestCoachJobIdRef.current) {
+                  return;
+                }
+
                 if (
                   analysisGameId &&
                   gameIdRef.current !== analysisGameId
@@ -2367,6 +2381,10 @@ export default function App() {
                 speak(enriched.feedback, job.language);
               })
               .catch((error) => {
+                if (job.id !== latestCoachJobIdRef.current) {
+                  return;
+                }
+
                 if (isAbortError(error)) {
                   return;
                 }
@@ -2424,6 +2442,10 @@ export default function App() {
             speak(unavailable.feedback, job.language);
           }
         } catch (error) {
+          if (job.id !== latestCoachJobIdRef.current) {
+            continue;
+          }
+
           setPlayerMoveAnalysisPending(false);
           setCoachExplanationPending(false);
 
@@ -2654,6 +2676,7 @@ const analyzeStudentMove = useCallback(
     if (!isCoachGame) return;
 
     setPlayerMoveAnalysisPending(true);
+    setCoachExplanationPending(false);
     setCoachError('');
     setCoachResult(null);
 
@@ -2661,12 +2684,21 @@ const analyzeStudentMove = useCallback(
     criticalPromptRef.current = null;
     setCriticalPrompt(null);
 
-    coachQueueRef.current.push({
+    // The player has moved on, so old spoken commentary is no longer useful.
+    stopCoachSpeech();
+
+    const jobId = latestCoachJobIdRef.current + 1;
+    latestCoachJobIdRef.current = jobId;
+
+    // Keep the running analysis, if any, but coalesce every waiting request to
+    // the newest position. This bounds lag to at most one obsolete search.
+    coachQueueRef.current = [{
+      id: jobId,
       fenBefore,
       uci,
       detail: coachDetail,
       language: coachLanguage,
-    });
+    }];
 
     void processCoachQueue();
   },
@@ -3098,6 +3130,7 @@ const analyzeStudentMove = useCallback(
     criticalPromptRef.current = null;
     setCriticalPrompt(null);
     coachQueueRef.current = [];
+    latestCoachJobIdRef.current += 1;
     coachProcessingRef.current = false;
 
     forgetStoredGame();

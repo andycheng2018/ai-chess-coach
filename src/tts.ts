@@ -1032,3 +1032,16 @@ export async function speakCoach(
     },
   );
 }
+
+/**
+ * Live chess commentary must follow the current board, not finish a backlog.
+ * Cancel any request/playback/queued speech from an older position, then speak
+ * only the newest message.
+ */
+export async function speakCoachLatest(
+  text: string,
+  language: CoachLanguage,
+): Promise<void> {
+  stopCoachSpeech();
+  await speakCoach(text, language);
+}
