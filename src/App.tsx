@@ -1317,6 +1317,35 @@ const COACH_LANGUAGE_STORAGE_KEY =
 const VOICE_ENABLED_STORAGE_KEY =
   'ai-chess-coach.voice-enabled.v1';
 
+const VOICE_INTRO_GAME_STORAGE_KEY =
+  'ai-chess-coach.voice-intro-game.v1';
+
+const VOICE_ENDING_GAME_STORAGE_KEY =
+  'ai-chess-coach.voice-ending-game.v1';
+
+function claimGameVoiceMoment(
+  storageKey: string,
+  gameId: string,
+): boolean {
+  try {
+    if (
+      window.localStorage.getItem(storageKey) ===
+      gameId
+    ) {
+      return false;
+    }
+
+    window.localStorage.setItem(
+      storageKey,
+      gameId,
+    );
+  } catch {
+    // The in-memory guards still prevent duplicates when storage is blocked.
+  }
+
+  return true;
+}
+
 function readVoiceEnabled(): boolean {
   try {
     const stored = window.localStorage.getItem(
@@ -1536,6 +1565,111 @@ function gameEndReason(
   }
 }
 
+function gameVoiceIntroduction(
+  myColor: 'white' | 'black',
+  language: CoachLanguage,
+): string {
+  if (language === 'zh-CN') {
+    const color =
+      myColor === 'white'
+        ? '白方'
+        : '黑方';
+
+    return (
+      '你好，我是你的国际象棋教练。' +
+      '我会帮你留意战术和关键时刻。' +
+      `你执${color}，慢慢想，我们开始吧。`
+    );
+  }
+
+  const color =
+    myColor === 'white'
+      ? 'White'
+      : 'Black';
+
+  return (
+    "Hey, I'm Chess Buddy. " +
+    "I'll watch for tactics and important moments while you play. " +
+    `You're ${color}. Take your time, and let's have a good game.`
+  );
+}
+
+function gameVoiceEnding(
+  status: string,
+  winner: Winner,
+  myColor: 'white' | 'black',
+  language: CoachLanguage,
+): string | null {
+  if (
+    status === 'aborted' ||
+    status === 'noStart'
+  ) {
+    return null;
+  }
+
+  const draw = [
+    'stalemate',
+    'draw',
+    'insufficientMaterialClaim',
+  ].includes(status);
+
+  if (language === 'zh-CN') {
+    if (winner === myColor) {
+      return (
+        '对局结束，赢得漂亮！' +
+        '你抓住了自己的机会。' +
+        '准备好后，我们一起复盘关键时刻。'
+      );
+    }
+
+    if (winner) {
+      return (
+        '对局结束。没关系，这盘棋里有很多值得学习的地方。' +
+        '我们一起看看转折点，再把它们变成练习。'
+      );
+    }
+
+    if (draw) {
+      return (
+        '对局结束，和棋。下得很顽强！' +
+        '我们一起复盘关键时刻，看看还能怎样提高。'
+      );
+    }
+
+    return (
+      '对局结束。辛苦了！' +
+      '准备好后，我们一起复盘这盘棋。'
+    );
+  }
+
+  if (winner === myColor) {
+    return (
+      "That's the game—well played! " +
+      'You made your chances count. ' +
+      "When you're ready, let's review the key moments together."
+    );
+  }
+
+  if (winner) {
+    return (
+      "That's the game. No worries—there are useful lessons here. " +
+      "Let's review the turning points and turn them into practice."
+    );
+  }
+
+  if (draw) {
+    return (
+      "That's the game—a draw. Nice fight! " +
+      "Let's review the key moments and see what we can sharpen."
+    );
+  }
+
+  return (
+    "That's the game. Good work staying with it. " +
+    "When you're ready, let's review the important moments."
+  );
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
@@ -1631,6 +1765,8 @@ export default function App() {
   const lastCriticalQuestionPlyRef = useRef(-999);
   const recentCriticalQuestionsRef = useRef<string[]>([]);
   const criticalPromptRef = useRef<CriticalPrompt | null>(null);
+  const spokenIntroGameRef = useRef<string | null>(null);
+  const spokenEndingGameRef = useRef<string | null>(null);
   const reviewTouchStart = useRef<{ x: number; y: number } | null>(null);
   const [reviewDragX, setReviewDragX] = useState(0);
   const [reviewDragging, setReviewDragging] = useState(false);
@@ -1713,6 +1849,71 @@ export default function App() {
   useEffect(() => {
     movesTextRef.current = movesText;
   }, [movesText]);
+
+  useEffect(() => {
+    if (
+      !voiceEnabled ||
+      !gameId ||
+      !activeGame ||
+      !isCoachGame
+    ) {
+      return;
+    }
+
+    if (spokenIntroGameRef.current === gameId) {
+      return;
+    }
+
+    // Do not greet in the middle of a recovered game. A newly connected game
+    // can already be at ply one when the bot has White and moves immediately.
+    if (position.plyCount > 1) {
+      spokenIntroGameRef.current = gameId;
+      claimGameVoiceMoment(
+        VOICE_INTRO_GAME_STORAGE_KEY,
+        gameId,
+      );
+      return;
+    }
+
+    spokenIntroGameRef.current = gameId;
+
+    if (
+      !claimGameVoiceMoment(
+        VOICE_INTRO_GAME_STORAGE_KEY,
+        gameId,
+      )
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (
+        gameIdRef.current !== gameId ||
+        !voiceEnabled
+      ) {
+        return;
+      }
+
+      void speakCoachLatest(
+        gameVoiceIntroduction(
+          myColor,
+          coachLanguage,
+        ),
+        coachLanguage,
+      );
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    voiceEnabled,
+    gameId,
+    activeGame,
+    isCoachGame,
+    myColor,
+    coachLanguage,
+  ]);
 
   useEffect(() => {
     try {
@@ -2281,7 +2482,45 @@ export default function App() {
 
     const timer =
       window.setTimeout(
-        () => setGameOverOpen(true),
+        () => {
+          setGameOverOpen(true);
+
+          if (
+            !voiceEnabled ||
+            !isCoachGame ||
+            !gameId ||
+            spokenEndingGameRef.current === gameId
+          ) {
+            return;
+          }
+
+          spokenEndingGameRef.current = gameId;
+
+          if (
+            !claimGameVoiceMoment(
+              VOICE_ENDING_GAME_STORAGE_KEY,
+              gameId,
+            )
+          ) {
+            return;
+          }
+
+          const ending = gameVoiceEnding(
+            gameStatus,
+            winner,
+            myColor,
+            coachLanguage,
+          );
+
+          if (ending) {
+            // Preserve any final-move explanation already playing. The
+            // sign-off is lower priority and belongs behind that lesson.
+            void speakCoach(
+              ending,
+              coachLanguage,
+            );
+          }
+        },
         450,
       );
 
@@ -2294,6 +2533,11 @@ export default function App() {
     coachThinking,
     coachExplanationPending,
     playerMoveAnalysisPending,
+    voiceEnabled,
+    isCoachGame,
+    winner,
+    myColor,
+    coachLanguage,
   ]);
 
   useEffect(() => {
