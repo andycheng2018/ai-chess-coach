@@ -8,6 +8,7 @@ import {
   analyzeMove,
   checkCriticalPosition,
   explainMove,
+  type ChessTheme,
   type CoachLanguage,
   type CoachResult,
 } from './coach';
@@ -227,6 +228,50 @@ function forcingMoveStrength(
 function puzzleThemeKey(
   note: CoachNote,
 ): string | null {
+  const namedThemes =
+    note.themes || [];
+
+  if (
+    namedThemes.some((theme) =>
+      [
+        'Mating Net',
+        'Smothered Mate',
+        'Support Mate',
+        'Checkmate Pattern',
+        'Mate in One',
+        'Mate in Two',
+        'Mate in Three or More',
+        'Forced Mate',
+        'Back-Rank Mate',
+        'Attacking the Castled King',
+        'Vulnerable King',
+        'King Safety',
+      ].includes(theme),
+    )
+  ) {
+    return 'king-safety';
+  }
+
+  if (
+    namedThemes.some((theme) =>
+      [
+        'Promotion',
+        'Underpromotion',
+        'Stalemate',
+        'Zugzwang',
+        'Endgame Tactic',
+        'Passed Pawn',
+        'Opposition',
+      ].includes(theme),
+    )
+  ) {
+    return 'endgame';
+  }
+
+  if (namedThemes.length) {
+    return 'tactics';
+  }
+
   const text = [
     note.title,
     note.lesson,
@@ -593,10 +638,177 @@ type ReportTheme = {
   advice: string;
 };
 
+const CHINESE_THEME_LABELS: Record<
+  ChessTheme,
+  string
+> = {
+  'Fork / Double Attack': '叉攻 / 双攻',
+  Pin: '牵制',
+  Skewer: '串击',
+  'Discovered Attack': '闪击',
+  'Discovered Check': '闪将',
+  'Double Check': '双将',
+  'X-Ray Attack': 'X 射线攻击',
+  Defense: '防守',
+  'Back-Rank Weakness': '后排弱点',
+  'Back-Rank Mate': '后排将杀',
+  Deflection: '引离',
+  Decoy: '诱离',
+  'Removal of the Defender': '消除防守子',
+  Overloading: '过载',
+  Interference: '干扰',
+  Clearance: '腾挪',
+  'Clearance Sacrifice': '腾挪弃子',
+  Sacrifice: '弃子',
+  'Exchange Sacrifice': '弃质量',
+  'Queen Sacrifice': '弃后',
+  Zwischenzug: '中间着',
+  Desperado: '亡命攻击',
+  'Hanging Piece': '悬子',
+  'Trapped Piece': '困子',
+  'Mating Net': '将杀网',
+  'Smothered Mate': '闷杀',
+  'Support Mate': '保护式将杀',
+  'Checkmate Pattern': '基本将杀型',
+  'Mate in One': '一步将杀',
+  'Mate in Two': '两步将杀',
+  'Mate in Three or More': '三步以上将杀',
+  'Forced Mate': '强制将杀',
+  'Perpetual Check': '长将',
+  Windmill: '风车战术',
+  'Attack on f7 / f2': '攻击 f7 / f2',
+  'Attacking the Castled King': '进攻易位后的王',
+  'Vulnerable King': '王位脆弱',
+  'King Safety': '王的安全',
+  Simplification: '简化局面',
+  Promotion: '升变',
+  Underpromotion: '低级升变',
+  'En Passant': '吃过路兵',
+  Stalemate: '逼和',
+  Zugzwang: '无着可动',
+  'Endgame Tactic': '残局战术',
+  'Passed Pawn': '通路兵',
+  Opposition: '对王',
+  'Open File': '开放线',
+  'Weak Square': '弱格',
+};
+
+function themeLabel(
+  theme: ChessTheme,
+  language: CoachLanguage,
+): string {
+  return language === 'zh-CN'
+    ? CHINESE_THEME_LABELS[theme]
+    : theme;
+}
+
+function namedThemeReport(
+  theme: ChessTheme,
+  language: CoachLanguage,
+): ReportTheme {
+  const isChinese = language === 'zh-CN';
+  const label = themeLabel(theme, language);
+
+  const adviceGroups: Array<{
+    themes: ChessTheme[];
+    en: string;
+    zh: string;
+  }> = [
+    {
+      themes: ['Fork / Double Attack', 'Double Check'],
+      en: 'Watch for one move attacking two targets at once, especially with checks.',
+      zh: '留意一步同时攻击两个目标的机会，尤其是带将军的双攻。',
+    },
+    {
+      themes: ['Pin', 'Skewer', 'X-Ray Attack'],
+      en: 'Scan every rank, file, and diagonal for pieces lined up behind one another.',
+      zh: '沿横线、直线和斜线检查棋子是否前后排成一线。',
+    },
+    {
+      themes: ['Discovered Attack', 'Discovered Check', 'Windmill'],
+      en: 'Before moving a piece, check whether it uncovers an attack from behind it.',
+      zh: '移动棋子前，检查它是否会为后方棋子打开攻击线路。',
+    },
+    {
+      themes: ['Hanging Piece', 'Trapped Piece'],
+      en: 'Check loose pieces and escape squares before committing to your move.',
+      zh: '落子前检查没有保护的棋子，以及受攻棋子是否还有退路。',
+    },
+    {
+      themes: ['Deflection', 'Decoy', 'Removal of the Defender', 'Overloading', 'Interference'],
+      en: 'Identify the key defender, then look for a forcing way to distract or remove it.',
+      zh: '先找出关键防守子，再寻找强制手段将它引开或消除。',
+    },
+    {
+      themes: ['Back-Rank Weakness', 'Back-Rank Mate', 'Mating Net', 'Smothered Mate', 'Support Mate', 'Checkmate Pattern', 'Mate in One', 'Mate in Two', 'Mate in Three or More', 'Forced Mate'],
+      en: 'When the king has limited escape squares, calculate every check before choosing another move.',
+      zh: '当王缺少逃跑格时，先算清所有将军，再考虑其他走法。',
+    },
+    {
+      themes: ['Sacrifice', 'Exchange Sacrifice', 'Queen Sacrifice', 'Clearance Sacrifice', 'Clearance', 'Desperado'],
+      en: 'Do not judge the material immediately; calculate the forcing payoff and resulting position.',
+      zh: '不要只看眼前子力，要算清强制收益和弃子后的局面。',
+    },
+    {
+      themes: ['Zwischenzug', 'Perpetual Check'],
+      en: 'Before an automatic recapture, look for an in-between check, capture, or forcing threat.',
+      zh: '自动回吃前，先找中间将军、吃子或其他强制威胁。',
+    },
+    {
+      themes: ['Attack on f7 / f2', 'Attacking the Castled King', 'Vulnerable King', 'King Safety'],
+      en: 'Count attackers, defenders, and escape squares before opening lines around either king.',
+      zh: '打开王周围线路前，数清进攻子、防守子和逃跑格。',
+    },
+    {
+      themes: ['Defense', 'Simplification'],
+      en: 'When under pressure, neutralize the concrete threat and consider favorable exchanges.',
+      zh: '受到压力时，先化解具体威胁，再考虑有利的交换和简化。',
+    },
+    {
+      themes: ['Open File', 'Weak Square'],
+      en: 'Notice which files and squares cannot be protected by a pawn, then improve the piece that can use them.',
+      zh: '留意兵无法保护的开放线和弱格，再改善能够利用它们的棋子。',
+    },
+    {
+      themes: ['En Passant'],
+      en: 'After a two-square pawn move, check the en passant option before the one-move window closes.',
+      zh: '对方兵走两格后，立刻检查是否能吃过路兵，因为机会只有一回合。',
+    },
+    {
+      themes: ['Promotion', 'Underpromotion', 'Passed Pawn', 'Opposition', 'Zugzwang', 'Stalemate', 'Endgame Tactic'],
+      en: 'In the endgame, calculate pawn races, king access, and every forcing move precisely.',
+      zh: '残局中要精确计算兵的竞速、王的路线和所有强制着。',
+    },
+  ];
+
+  const group = adviceGroups.find(
+    (entry) => entry.themes.includes(theme),
+  );
+
+  return {
+    key: `named:${theme}`,
+    label,
+    advice: group
+      ? isChinese
+        ? group.zh
+        : group.en
+      : isChinese
+        ? `留意“${label}”这个主题，并用引擎变化图确认具体走法。`
+        : `Watch for ${label.toLowerCase()} and verify the concrete idea in the engine line.`,
+  };
+}
+
 function reportThemeFor(
   note: CoachNote,
   language: CoachLanguage,
 ): ReportTheme {
+  if (note.themes?.length) {
+    return namedThemeReport(
+      note.themes[0],
+      language,
+    );
+  }
+
   const isChinese = language === 'zh-CN';
 
   const text = [
@@ -782,6 +994,12 @@ function practicePuzzleTitle(
     note,
     language,
   );
+
+  if (note.themes?.length) {
+    return isChinese
+      ? `练习：${theme.label}`
+      : `Practice: ${theme.label}`;
+  }
 
   switch (theme.key) {
     case 'piece-safety':
@@ -985,28 +1203,34 @@ function buildGameReport(
   >();
 
   for (const note of notes) {
-    const theme = reportThemeFor(
-      note,
-      language,
-    );
-
     const severity =
       classificationWeight(
         note.classification,
       ) + note.centipawnLoss;
 
-    const current =
-      themes.get(theme.key);
+    const noteThemes = note.themes?.length
+      ? note.themes.map((theme) =>
+          namedThemeReport(
+            theme,
+            language,
+          ),
+        )
+      : [reportThemeFor(note, language)];
 
-    if (current) {
-      current.count += 1;
-      current.score += severity;
-    } else {
-      themes.set(theme.key, {
-        ...theme,
-        count: 1,
-        score: severity,
-      });
+    for (const theme of noteThemes) {
+      const current =
+        themes.get(theme.key);
+
+      if (current) {
+        current.count += 1;
+        current.score += severity;
+      } else {
+        themes.set(theme.key, {
+          ...theme,
+          count: 1,
+          score: severity,
+        });
+      }
     }
   }
 
@@ -3895,6 +4119,23 @@ function handlePuzzleMove(
                 ) : null}
               </div>
               <div>{coachResult.feedback}</div>
+              {coachResult.themes?.length ? (
+                <div
+                  className="coach-theme-tags"
+                  aria-label={coachLanguage === 'zh-CN'
+                    ? '棋局主题'
+                    : 'Chess themes'}
+                >
+                  {coachResult.themes.map((theme) => (
+                    <span
+                      className="coach-theme-tag"
+                      key={theme}
+                    >
+                      {themeLabel(theme, coachLanguage)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {coachResult.question ? (
                 <div className="coach-question">
                   <span>
@@ -4230,6 +4471,24 @@ function handlePuzzleMove(
           </div>
 
           <p>{reviewTarget.feedback}</p>
+
+          {reviewTarget.themes?.length ? (
+            <div
+              className="coach-theme-tags"
+              aria-label={coachLanguage === 'zh-CN'
+                ? '棋局主题'
+                : 'Chess themes'}
+            >
+              {reviewTarget.themes.map((theme) => (
+                <span
+                  className="coach-theme-tag"
+                  key={theme}
+                >
+                  {themeLabel(theme, coachLanguage)}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           <div className="review-analysis-moves">
             <span>

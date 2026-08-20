@@ -55,6 +55,7 @@ export type CoachResult = {
   highlightsAfter?: string[];
 
   themeHint?: string;
+  themes?: ChessTheme[];
   bestLine?: string[];
   refutationLine?: string[];
 
@@ -69,6 +70,57 @@ export type CoachDetail =
   | 'balanced'
   | 'deep';
 
+export type ChessTheme =
+  | 'Fork / Double Attack'
+  | 'Pin'
+  | 'Skewer'
+  | 'Discovered Attack'
+  | 'Discovered Check'
+  | 'Double Check'
+  | 'X-Ray Attack'
+  | 'Defense'
+  | 'Back-Rank Weakness'
+  | 'Back-Rank Mate'
+  | 'Deflection'
+  | 'Decoy'
+  | 'Removal of the Defender'
+  | 'Overloading'
+  | 'Interference'
+  | 'Clearance'
+  | 'Clearance Sacrifice'
+  | 'Sacrifice'
+  | 'Exchange Sacrifice'
+  | 'Queen Sacrifice'
+  | 'Zwischenzug'
+  | 'Desperado'
+  | 'Hanging Piece'
+  | 'Trapped Piece'
+  | 'Mating Net'
+  | 'Smothered Mate'
+  | 'Support Mate'
+  | 'Checkmate Pattern'
+  | 'Mate in One'
+  | 'Mate in Two'
+  | 'Mate in Three or More'
+  | 'Forced Mate'
+  | 'Perpetual Check'
+  | 'Windmill'
+  | 'Attack on f7 / f2'
+  | 'Attacking the Castled King'
+  | 'Vulnerable King'
+  | 'King Safety'
+  | 'Simplification'
+  | 'Promotion'
+  | 'Underpromotion'
+  | 'En Passant'
+  | 'Stalemate'
+  | 'Zugzwang'
+  | 'Endgame Tactic'
+  | 'Passed Pawn'
+  | 'Opposition'
+  | 'Open File'
+  | 'Weak Square';
+
 export type CoachLanguage =
   | 'en'
   | 'zh-CN';
@@ -78,6 +130,7 @@ export type CoachWording = {
   feedback: string;
   lesson: string;
   question: string;
+  themes: ChessTheme[];
 };
 
 const CONTROL_URL =

@@ -93,6 +93,30 @@ Prefer one strong lesson over a list of weak observations.
 
 For tactical mistakes, explain the concrete tactic or forcing continuation if supported.
 
+CHESS TERMINOLOGY
+
+When a standard chess pattern is clearly demonstrated by the supplied FEN and
+engine line, explicitly name it. For example, say "This is a fork" rather than
+only saying that one knight attacks two pieces. Naming the pattern helps the
+student recognize it next time.
+
+Use only canonical terms allowed by the themes field, including ideas such as:
+- Fork / Double Attack, Pin, Skewer
+- Discovered Attack, Discovered Check, Double Check, X-Ray Attack
+- Deflection, Decoy, Removal of the Defender, Overloading, Interference
+- Clearance, Sacrifice, Exchange Sacrifice, Queen Sacrifice
+- Zwischenzug, Desperado, Hanging Piece, Trapped Piece
+- Back-Rank Weakness, Mating Net, Smothered Mate, Perpetual Check
+- Checkmate Pattern, Mate in One, Mate in Two, Mate in Three or More
+- Promotion, Underpromotion, Stalemate, Zugzwang, Endgame Tactic
+- King Safety, Vulnerable King, Open File, Weak Square, Passed Pawn, Opposition
+
+Put zero to three supported canonical names in themes. Use an empty array when
+no standard term is clearly supported. Never force a label or guess from the
+centipawn loss alone. If themes is nonempty, naturally name the most important
+term in feedback; do not merely attach a label without explaining the concrete
+line or position.
+
 For positional mistakes, explain the specific piece, square, weakness, king-safety issue, or plan involved. Do not hide behind vague words like "positionally better."
 
 If the recommended move is strong because it prevents something, say what it prevents when the engine data supports that.
@@ -133,7 +157,8 @@ Return valid JSON only:
   "title": "short natural headline",
   "feedback": "the main coaching explanation",
   "lesson": "one specific reusable habit, or empty string",
-  "question": "one useful position-specific question, or empty string"
+  "question": "one useful position-specific question, or empty string",
+  "themes": ["zero to three supported canonical chess terms"]
 }
 
 Do not repeat the same idea across feedback, lesson, and question.

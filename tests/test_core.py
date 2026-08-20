@@ -13,11 +13,26 @@ if str(SERVER) not in sys.path:
     sys.path.insert(0, str(SERVER))
 
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
+from coach.llm_coach import normalize_chess_themes  # noqa: E402
 from coach.stockfish_analyzer import classify_move, configure_supported_options, pv_to_san  # noqa: E402
 from app import COACH_ANALYSIS_PROFILES, analyze_move, fallback_coaching  # noqa: E402
 
 
 class CoreTests(unittest.TestCase):
+    def test_chess_themes_are_validated_deduplicated_and_limited(self) -> None:
+        self.assertEqual(
+            normalize_chess_themes([
+                "Fork / Double Attack",
+                "Made Up Tactic",
+                "Pin",
+                "Pin",
+                "Skewer",
+                "X-Ray Attack",
+            ]),
+            ["Fork / Double Attack", "Pin", "Skewer"],
+        )
+        self.assertEqual(normalize_chess_themes("Pin"), [])
+
     def test_coach_detail_profiles_increase_engine_strength(self) -> None:
         quick = COACH_ANALYSIS_PROFILES["quick"]
         balanced = COACH_ANALYSIS_PROFILES["balanced"]

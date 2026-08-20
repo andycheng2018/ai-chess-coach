@@ -15,6 +15,78 @@ PROMPT_PATH = (
 )
 
 
+CHESS_THEME_TERMS = (
+    "Fork / Double Attack",
+    "Pin",
+    "Skewer",
+    "Discovered Attack",
+    "Discovered Check",
+    "Double Check",
+    "X-Ray Attack",
+    "Defense",
+    "Back-Rank Weakness",
+    "Back-Rank Mate",
+    "Deflection",
+    "Decoy",
+    "Removal of the Defender",
+    "Overloading",
+    "Interference",
+    "Clearance",
+    "Clearance Sacrifice",
+    "Sacrifice",
+    "Exchange Sacrifice",
+    "Queen Sacrifice",
+    "Zwischenzug",
+    "Desperado",
+    "Hanging Piece",
+    "Trapped Piece",
+    "Mating Net",
+    "Smothered Mate",
+    "Support Mate",
+    "Checkmate Pattern",
+    "Mate in One",
+    "Mate in Two",
+    "Mate in Three or More",
+    "Forced Mate",
+    "Perpetual Check",
+    "Windmill",
+    "Attack on f7 / f2",
+    "Attacking the Castled King",
+    "Vulnerable King",
+    "King Safety",
+    "Simplification",
+    "Promotion",
+    "Underpromotion",
+    "En Passant",
+    "Stalemate",
+    "Zugzwang",
+    "Endgame Tactic",
+    "Passed Pawn",
+    "Opposition",
+    "Open File",
+    "Weak Square",
+)
+
+
+def normalize_chess_themes(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+
+    allowed = set(CHESS_THEME_TERMS)
+    result: list[str] = []
+
+    for item in raw:
+        value = str(item).strip()
+
+        if value in allowed and value not in result:
+            result.append(value)
+
+        if len(result) >= 3:
+            break
+
+    return result
+
+
 COACH_RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -22,12 +94,21 @@ COACH_RESPONSE_SCHEMA = {
         "feedback": {"type": "string"},
         "lesson": {"type": "string"},
         "question": {"type": "string"},
+        "themes": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": list(CHESS_THEME_TERMS),
+            },
+            "maxItems": 3,
+        },
     },
     "required": [
         "title",
         "feedback",
         "lesson",
         "question",
+        "themes",
     ],
     "additionalProperties": False,
 }
@@ -349,6 +430,10 @@ class LLMCoach:
             data.get("question", "")
         ).strip()
 
+        themes = normalize_chess_themes(
+            data.get("themes", [])
+        )
+
         if not feedback:
             raise ValueError(
                 "Coach returned empty feedback."
@@ -359,6 +444,7 @@ class LLMCoach:
             "feedback": feedback,
             "lesson": lesson,
             "question": question,
+            "themes": themes,
         }
 
     def create_critical_question(
