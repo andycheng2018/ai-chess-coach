@@ -9,11 +9,23 @@ let activeRequest: AbortController | null = null;
 let audioContext: AudioContext | null = null;
 let activeSource: AudioBufferSourceNode | null = null;
 let activeAudio: HTMLAudioElement | null = null;
+let unlockedAudio: HTMLAudioElement | null = null;
+let htmlAudioUnlocked = false;
+let htmlAudioUnlocking = false;
 let activeObjectUrl: string | null = null;
 let activeAudioFinish: (() => void) | null = null;
 let activeUtterance: SpeechSynthesisUtterance | null = null;
 
-const TTS_REQUEST_TIMEOUT_MS = 20_000;
+// Render can need well over 20 seconds to wake a sleeping service. A short
+// timeout made a healthy ElevenLabs response look like a provider failure and
+// immediately switched the user to the system/browser voice.
+const TTS_REQUEST_TIMEOUT_MS = 60_000;
+
+// A tiny valid WAV used only while the user is tapping the Voice control. It
+// unlocks one reusable HTMLAudioElement for iOS/WKWebView; creating a brand-new
+// element after an async TTS request can be rejected as autoplay.
+const SILENT_WAV_DATA_URL =
+  'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQIAAACAgA==';
 
 /**
  * iOS/WKWebView usually wants audio to be unlocked
@@ -27,7 +39,9 @@ export async function unlockCoachAudio(): Promise<void> {
       audioContext = new AudioContext();
     }
 
-    if (audioContext.state === 'suspended') {
+    // iOS also uses a non-standard `interrupted` state after the app returns
+    // from the background. resume() is safe for every non-running state.
+    if (audioContext.state !== 'running') {
       await audioContext.resume();
     }
 
@@ -39,6 +53,33 @@ export async function unlockCoachAudio(): Promise<void> {
       silentSource.buffer = silentBuffer;
       silentSource.connect(audioContext.destination);
       silentSource.start();
+    }
+
+    if (!unlockedAudio) {
+      unlockedAudio = new Audio();
+      unlockedAudio.preload = 'auto';
+      unlockedAudio.setAttribute('playsinline', 'true');
+    }
+
+    if (
+      !htmlAudioUnlocked &&
+      !htmlAudioUnlocking &&
+      activeAudio !== unlockedAudio
+    ) {
+      const audio = unlockedAudio;
+      htmlAudioUnlocking = true;
+      audio.muted = true;
+      audio.src = SILENT_WAV_DATA_URL;
+
+      try {
+        await audio.play();
+        audio.pause();
+        audio.currentTime = 0;
+        htmlAudioUnlocked = true;
+      } finally {
+        audio.muted = false;
+        htmlAudioUnlocking = false;
+      }
     }
 
     console.log(
@@ -412,9 +453,7 @@ async function ensureAudioReady(): Promise<AudioContext> {
       new AudioContext();
   }
 
-  if (
-    audioContext.state === 'suspended'
-  ) {
+  if (audioContext.state !== 'running') {
     await audioContext.resume();
   }
 
@@ -437,8 +476,12 @@ async function playHtmlAudio(
     new Blob([audioBytes], { type: 'audio/mpeg' }),
   );
 
-  const audio = new Audio(objectUrl);
+  const audio = unlockedAudio || new Audio();
+  unlockedAudio = audio;
+  audio.src = objectUrl;
   audio.preload = 'auto';
+  audio.muted = false;
+  audio.setAttribute('playsinline', 'true');
   activeAudio = audio;
   activeObjectUrl = objectUrl;
 
@@ -451,6 +494,8 @@ async function playHtmlAudio(
       if (activeAudio === audio) activeAudio = null;
       if (activeObjectUrl === objectUrl) activeObjectUrl = null;
       if (activeAudioFinish === finish) activeAudioFinish = null;
+      audio.onended = null;
+      audio.onerror = null;
       URL.revokeObjectURL(objectUrl);
     };
 
@@ -464,6 +509,7 @@ async function playHtmlAudio(
     const fail = () => {
       if (finished) return;
       finished = true;
+      htmlAudioUnlocked = false;
       cleanup();
       reject(new Error('HTML audio playback failed.'));
     };
