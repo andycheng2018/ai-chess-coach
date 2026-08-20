@@ -416,6 +416,14 @@ class LLMCoach:
                 "opponent_reply_context",
                 {},
             ),
+            "best_move_verified_themes": analysis.get(
+                "best_move_verified_themes",
+                [],
+            ),
+            "opponent_reply_verified_themes": analysis.get(
+                "opponent_reply_verified_themes",
+                [],
+            ),
             "classification": analysis.get(
                 "classification"
             ),
@@ -537,9 +545,21 @@ class LLMCoach:
             data.get("question", "")
         ).strip()
 
-        themes = normalize_chess_themes(
-            data.get("themes", [])
-        )
+        themes = normalize_chess_themes([
+            *normalize_chess_themes(
+                analysis.get(
+                    "opponent_reply_verified_themes"
+                )
+            ),
+            *normalize_chess_themes(
+                data.get("themes")
+            ),
+            *normalize_chess_themes(
+                analysis.get(
+                    "best_move_verified_themes"
+                )
+            ),
+        ])
 
         feedback = ensure_primary_theme_named(
             feedback,

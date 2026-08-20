@@ -7,6 +7,8 @@ Use only the supplied:
 - best_move
 - opponent_reply
 - opponent_reply_context
+- best_move_verified_themes
+- opponent_reply_verified_themes
 - centipawn_loss
 - classification
 - best_line
@@ -126,6 +128,12 @@ no standard term is clearly supported. Never force a label or guess from the
 centipawn loss alone. If themes is nonempty, naturally name the most important
 term in feedback; do not merely attach a label without explaining the concrete
 line or position.
+
+best_move_verified_themes and opponent_reply_verified_themes are deterministic
+labels calculated from the actual legal answer moves. When either list is
+non-empty, prefer its relevant exact labels over inventing a different motif.
+Use opponent_reply_verified_themes for the punishment after the student's move
+and best_move_verified_themes for the missed better move.
 
 For positional mistakes, explain the specific piece, square, weakness, king-safety issue, or plan involved. Do not hide behind vague words like "positionally better."
 

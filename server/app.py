@@ -633,6 +633,14 @@ def analyze_move(
         "opponentReplyUci": analysis[
             "opponent_reply_uci"
         ],
+        "bestMoveVerifiedThemes": analysis.get(
+            "best_move_verified_themes",
+            [],
+        ),
+        "opponentReplyVerifiedThemes": analysis.get(
+            "opponent_reply_verified_themes",
+            [],
+        ),
         "fenBefore": analysis[
             "fen_before"
         ],

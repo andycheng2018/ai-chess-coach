@@ -16,6 +16,8 @@ export type CoachResult = {
   bestMoveUci: string;
   opponentReply?: string;
   opponentReplyUci?: string;
+  bestMoveVerifiedThemes?: ChessTheme[];
+  opponentReplyVerifiedThemes?: ChessTheme[];
   evaluationBefore?: number;
   evaluationAfter?: number;
 

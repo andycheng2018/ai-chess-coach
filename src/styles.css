@@ -187,6 +187,8 @@ header {
 .quality-badge.blunder { background: rgba(215, 77, 69, .18); color: #f09b95; }
 .coach-theme-tags { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px; }
 .coach-theme-tag { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid rgba(104, 168, 218, .3); border-radius: 999px; background: rgba(74, 137, 192, .11); color: #9bc7e8; font-size: 10px; font-weight: 850; letter-spacing: .02em; }
+.coach-prior-feedback { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.coach-next-decision { margin: 12px 0 8px; color: #8f8982; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .1em; }
 .coach-question { margin-top: 10px; padding: 9px 10px; border-left: 2px solid #548fc2; background: rgba(74, 137, 192, .09); color: #c9dceb; }
 .coach-question span { display: block; margin-bottom: 2px; color: #7fb2dd; font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: .08em; }
 .coach-lesson { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); color: #b8d99c; font-size: 12px; font-weight: 700; }
@@ -913,27 +915,6 @@ header {
   color: #c1a464;
 }
 
-.report-takeaway {
-  margin-top: 10px;
-  padding: 13px 14px;
-  border-radius: 9px;
-  background: #1d1c19;
-}
-
-.report-takeaway > span {
-  color: #99938c;
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: .09em;
-}
-
-.report-takeaway p {
-  margin: 5px 0 0;
-  color: #eeeae6;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 .practice-section {
   margin-top: 18px;
   padding-top: 16px;
@@ -1356,25 +1337,6 @@ header {
 
 .report-card.improve .report-icon {
   background: rgba(193, 164, 100, .12);
-}
-
-.report-takeaway {
-  margin-top: 10px;
-  padding: 15px 16px;
-  border: 1px solid rgba(255, 255, 255, .07);
-  border-radius: 13px;
-  background: rgba(0, 0, 0, .13);
-}
-
-.report-takeaway > span {
-  color: #9acb6c;
-  letter-spacing: .10em;
-}
-
-.report-takeaway p {
-  margin-top: 6px;
-  font-size: 13px;
-  line-height: 1.55;
 }
 
 .practice-section {

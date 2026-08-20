@@ -14,11 +14,45 @@ if str(SERVER) not in sys.path:
 
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
 from coach.llm_coach import ensure_primary_theme_named, normalize_chess_themes  # noqa: E402
-from coach.stockfish_analyzer import capture_context, classify_move, configure_supported_options, pv_to_san  # noqa: E402
+from coach.stockfish_analyzer import capture_context, classify_move, configure_supported_options, pv_to_san, verified_move_themes  # noqa: E402
 from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, critical_position_question, fallback_coaching  # noqa: E402
 
 
 class CoreTests(unittest.TestCase):
+    def test_puzzle_labels_are_verified_from_the_answer_move(self) -> None:
+        fork_board = chess.Board(
+            "r3k3/8/8/1N6/8/8/8/4K3 w - - 0 1"
+        )
+        self.assertIn(
+            "Fork / Double Attack",
+            verified_move_themes(
+                fork_board,
+                chess.Move.from_uci("b5c7"),
+            ),
+        )
+
+        pin_board = chess.Board(
+            "4k3/8/2n5/8/2B5/8/8/4K3 w - - 0 1"
+        )
+        self.assertIn(
+            "Pin",
+            verified_move_themes(
+                pin_board,
+                chess.Move.from_uci("c4b5"),
+            ),
+        )
+
+        hanging_board = chess.Board(
+            "r3k3/8/8/8/8/8/8/Q3K3 w - - 0 1"
+        )
+        self.assertIn(
+            "Hanging Piece",
+            verified_move_themes(
+                hanging_board,
+                chess.Move.from_uci("a1a8"),
+            ),
+        )
+
     def test_confirmed_tactic_is_always_named_in_spoken_feedback(self) -> None:
         feedback = "The knight attacks the queen and rook at the same time."
         named = ensure_primary_theme_named(
@@ -49,6 +83,13 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(context["is_capture"])
         self.assertTrue(context["legally_recapturable"])
         self.assertIn("Nxa1", context["legal_recaptures"])
+        self.assertNotIn(
+            "Hanging Piece",
+            verified_move_themes(
+                board,
+                chess.Move.from_uci("a5a1"),
+            ),
+        )
 
     def test_critical_question_uses_selected_analysis_profile(self) -> None:
         calls: list[dict[str, object]] = []

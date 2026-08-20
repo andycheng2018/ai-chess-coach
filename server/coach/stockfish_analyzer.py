@@ -22,6 +22,8 @@ class MoveAnalysis:
     opponent_reply: str
     opponent_reply_uci: str
     opponent_reply_context: dict[str, Any]
+    best_move_verified_themes: list[str]
+    opponent_reply_verified_themes: list[str]
     evaluation_before: int
     evaluation_after: int
     centipawn_loss: int
@@ -206,6 +208,115 @@ def capture_context(
     }
 
 
+def verified_move_themes(
+    board: chess.Board,
+    move: chess.Move,
+) -> list[str]:
+    """Verify concrete puzzle labels directly from one legal answer move."""
+    if move not in board.legal_moves:
+        return []
+
+    mover = board.turn
+    opponent = not mover
+    was_pinned = {
+        square
+        for square in chess.SQUARES
+        if (
+            (piece := board.piece_at(square)) is not None
+            and piece.color == opponent
+            and board.is_pinned(opponent, square)
+        )
+    }
+    is_capture = board.is_capture(move)
+    capture_facts = capture_context(
+        board,
+        move,
+    )
+    is_en_passant = board.is_en_passant(move)
+    after = board.copy(
+        stack=False
+    )
+    after.push(move)
+    themes: list[str] = []
+
+    if after.is_checkmate():
+        themes.append("Mate in One")
+
+    if move.promotion is not None:
+        themes.append(
+            "Promotion"
+            if move.promotion == chess.QUEEN
+            else "Underpromotion"
+        )
+
+    if is_en_passant:
+        themes.append("En Passant")
+
+    checkers = list(after.checkers())
+
+    if len(checkers) >= 2:
+        themes.append("Double Check")
+    elif (
+        checkers
+        and move.to_square not in checkers
+    ):
+        themes.append("Discovered Check")
+
+    newly_pinned = [
+        square
+        for square in chess.SQUARES
+        if (
+            (piece := after.piece_at(square)) is not None
+            and piece.color == opponent
+            and square not in was_pinned
+            and after.is_pinned(opponent, square)
+        )
+    ]
+
+    if newly_pinned:
+        themes.append("Pin")
+
+    moved_after = after.piece_at(
+        move.to_square
+    )
+
+    if moved_after is not None:
+        non_pawn_targets = [
+            square
+            for square in after.attacks(
+                move.to_square
+            )
+            if (
+                (target := after.piece_at(square)) is not None
+                and target.color == opponent
+                and target.piece_type != chess.PAWN
+            )
+        ]
+
+        # Two attacked non-pawn targets is a concrete double attack. This
+        # covers the familiar knight/pawn fork without relying on prose.
+        if len(non_pawn_targets) >= 2:
+            themes.append("Fork / Double Attack")
+
+    if (
+        is_capture
+        and capture_facts.get("is_capture")
+        and not capture_facts.get(
+            "legal_recaptures"
+        )
+    ):
+        themes.append("Hanging Piece")
+
+    # Preserve a stable, useful priority without duplicates.
+    result: list[str] = []
+
+    for theme in themes:
+        if theme not in result:
+            result.append(theme)
+
+    return result
+
+
 def infer_theme(
     board_before: chess.Board,
     board_after: chess.Board,
@@ -329,6 +440,12 @@ class StockfishAnalyzer:
             )
 
         best_san = board_before.san(best_move)
+        best_move_verified_themes = (
+            verified_move_themes(
+                board_before,
+                best_move,
+            )
+        )
         eval_before = score_cp(before_score, player)
         best_line = pv_to_san(
             board_before,
@@ -384,6 +501,7 @@ class StockfishAnalyzer:
             "is_capture": False,
             "legal_recaptures": [],
         }
+        opponent_reply_verified_themes: list[str] = []
 
         if continuation:
             reply = continuation[0]
@@ -394,6 +512,12 @@ class StockfishAnalyzer:
                 reply_context = capture_context(
                     board_after,
                     reply,
+                )
+                opponent_reply_verified_themes = (
+                    verified_move_themes(
+                        board_after,
+                        reply,
+                    )
                 )
 
         refutation = pv_to_san(
@@ -438,6 +562,8 @@ class StockfishAnalyzer:
             opponent_reply=reply_san,
             opponent_reply_uci=reply_uci,
             opponent_reply_context=reply_context,
+            best_move_verified_themes=best_move_verified_themes,
+            opponent_reply_verified_themes=opponent_reply_verified_themes,
             evaluation_before=eval_before,
             evaluation_after=eval_played,
             centipawn_loss=cp_loss,
