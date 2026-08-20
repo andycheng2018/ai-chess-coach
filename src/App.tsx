@@ -13,6 +13,7 @@ import {
 } from './coach';
 import {
   checkTtsStatus,
+  markCoachVoiceIdle,
   speakCoach,
   stopCoachSpeech,
   subscribeTtsStatus,
@@ -1373,6 +1374,8 @@ export default function App() {
   type CoachJob = {
     fenBefore: string;
     uci: string;
+    detail: CoachDetail;
+    language: CoachLanguage;
   };
 
   const coachAbortRef = useRef<AbortController | null>(null);
@@ -2082,12 +2085,15 @@ export default function App() {
     moveEvaluations,
   ]);
 
-  function speak(text: string) {
+  function speak(
+    text: string,
+    language: CoachLanguage = coachLanguage,
+  ) {
     if (!voiceEnabled) return;
 
     void speakCoach(
       text,
-      coachLanguage,
+      language,
     );
   }
 
@@ -2112,6 +2118,9 @@ export default function App() {
           checking: '正在检查语音',
           ready: 'ElevenLabs 已就绪',
           online: 'ElevenLabs 在线',
+          idle: '在线 · 此步无需讲解',
+          speaking: '正在播放语音',
+          played: '语音播放完成',
           blocked: '音频被阻止，点击重试',
           offline: 'ElevenLabs 离线',
         }[ttsStatus.state]
@@ -2119,6 +2128,9 @@ export default function App() {
           checking: 'Checking voice',
           ready: 'ElevenLabs ready',
           online: 'ElevenLabs online',
+          idle: 'Online · no comment this move',
+          speaking: 'Speaking…',
+          played: 'Voice played',
           blocked: 'Audio blocked — tap to retry',
           offline: 'ElevenLabs offline',
         }[ttsStatus.state];
@@ -2144,9 +2156,9 @@ export default function App() {
           const result = await analyzeMove(
             job.fenBefore,
             job.uci,
-            coachDetail,
+            job.detail,
             controller.signal,
-            coachLanguage,
+            job.language,
           );
 
           const analysisGameId = gameId;
@@ -2210,7 +2222,7 @@ export default function App() {
 
               const praise = personalityPraise(
                 result,
-                coachLanguage,
+                job.language,
                 praiseMoment,
               );
 
@@ -2223,9 +2235,14 @@ export default function App() {
 
               lastPraisePlyRef.current = result.ply;
               setCoachResult(praisedResult);
-              speak(praise.feedback);
+              speak(praise.feedback, job.language);
             } else {
               setCoachResult(null);
+              markCoachVoiceIdle(
+                job.language === 'zh-CN'
+                  ? '这一着没有需要语音讲解的重要内容。'
+                  : 'No important voice comment was scheduled for this move.',
+              );
             }
 
             continue;
@@ -2246,7 +2263,7 @@ export default function App() {
           const fastResult: CoachResult = {
             ...result,
             title:
-              coachLanguage === 'zh-CN'
+              job.language === 'zh-CN'
                 ? result.classification === 'blunder'
                   ? '关键失误'
                   : '值得看一看'
@@ -2254,7 +2271,7 @@ export default function App() {
                   ? 'Critical miss'
                   : 'Worth a look',
             feedback:
-              coachLanguage === 'zh-CN'
+              job.language === 'zh-CN'
                 ? '这里有一个重要的学习点，正在整理最关键的原因…'
                 : 'There is an important idea here. I’m checking the clearest reason…',
             lesson: '',
@@ -2268,7 +2285,7 @@ export default function App() {
                 gameId: analysisGameId || '',
                 savedAt: Date.now(),
                 playerColor: myColor,
-                language: coachLanguage,
+                language: job.language,
               };
 
               return [
@@ -2293,8 +2310,8 @@ export default function App() {
 
             void explainMove(
               result.analysisId,
-              coachDetail,
-              coachLanguage,
+              job.detail,
+              job.language,
               recentFeedback,
             )
               .then((wording) => {
@@ -2347,7 +2364,7 @@ export default function App() {
                 }
 
                 setCoachExplanationPending(false);
-                speak(enriched.feedback);
+                speak(enriched.feedback, job.language);
               })
               .catch((error) => {
                 if (isAbortError(error)) {
@@ -2363,7 +2380,7 @@ export default function App() {
 
                 const fallback = fallbackCoachWording(
                   result,
-                  coachLanguage,
+                  job.language,
                 );
 
                 const unavailable: CoachResult = {
@@ -2382,7 +2399,7 @@ export default function App() {
 
                 // A temporary OpenAI wording failure must never make voice
                 // coaching disappear. This fallback uses only engine facts.
-                speak(unavailable.feedback);
+                speak(unavailable.feedback, job.language);
               });
           } else {
             console.error(
@@ -2392,7 +2409,7 @@ export default function App() {
 
             const fallback = fallbackCoachWording(
               result,
-              coachLanguage,
+              job.language,
             );
 
             const unavailable: CoachResult = {
@@ -2404,7 +2421,7 @@ export default function App() {
             setCoachExplanationPending(false);
             saveNote(unavailable);
             setCoachResult(unavailable);
-            speak(unavailable.feedback);
+            speak(unavailable.feedback, job.language);
           }
         } catch (error) {
           setPlayerMoveAnalysisPending(false);
@@ -2423,8 +2440,6 @@ export default function App() {
       setCoachThinking(false);
     }
   }, [
-    coachDetail,
-    coachLanguage,
     gameId,
     myColor,
     voiceEnabled,
@@ -2649,11 +2664,18 @@ const analyzeStudentMove = useCallback(
     coachQueueRef.current.push({
       fenBefore,
       uci,
+      detail: coachDetail,
+      language: coachLanguage,
     });
 
     void processCoachQueue();
   },
-  [isCoachGame, processCoachQueue],
+  [
+    coachDetail,
+    coachLanguage,
+    isCoachGame,
+    processCoachQueue,
+  ],
 );
   useEffect(() => {
     // Normal phone games use the exact local pre-move FEN captured when the
@@ -3896,11 +3918,11 @@ function handlePuzzleMove(
             <div className="coach-detail-options">
               {(
                 [
-                  ['quick', 'Quick'],
-                  ['balanced', 'Balanced'],
-                  ['deep', 'Deep'],
+                  ['quick', 'Quick', 'Fast'],
+                  ['balanced', 'Balanced', 'Stronger'],
+                  ['deep', 'Deep', 'Deepest'],
                 ] as const
-              ).map(([value, label]) => (
+              ).map(([value, label, strength]) => (
                 <button
                   key={value}
                   type="button"
@@ -3911,6 +3933,7 @@ function handlePuzzleMove(
                   onClick={() => setCoachDetail(value)}
                 >
                   <span>{label}</span>
+                  <small>{strength} Stockfish</small>
                   {coachDetail === value ? (
                     <span className="coach-detail-check" aria-hidden="true">✓</span>
                   ) : null}

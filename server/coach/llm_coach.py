@@ -56,6 +56,7 @@ COACH_DETAIL_CONFIG = {
     "quick": {
         "target": "8-15 words",
         "max_output_tokens": 220,
+        "line_plies": 6,
         "instruction": """
 COACH DETAIL LEVEL: QUICK
 
@@ -70,6 +71,7 @@ Keep lesson and question empty unless either is essential.
     "balanced": {
         "target": "18-30 words",
         "max_output_tokens": 360,
+        "line_plies": 10,
         "instruction": """
 COACH DETAIL LEVEL: BALANCED
 
@@ -86,6 +88,7 @@ Include a reusable thinking habit only when it is specific to this position.
     "deep": {
         "target": "30-50 words",
         "max_output_tokens": 520,
+        "line_plies": 14,
         "instruction": """
 COACH DETAIL LEVEL: DEEP
 
@@ -234,11 +237,11 @@ class LLMCoach:
             "best_line": analysis.get(
                 "best_line",
                 [],
-            )[:8],
+            )[: int(detail_config["line_plies"])],
             "refutation_line": analysis.get(
                 "refutation_line",
                 [],
-            )[:8],
+            )[: int(detail_config["line_plies"])],
             "theme_hint": analysis.get(
                 "theme_hint"
             ),

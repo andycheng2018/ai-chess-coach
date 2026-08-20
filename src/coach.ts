@@ -20,7 +20,9 @@ export type CoachResult = {
   evaluationAfter?: number;
 
   engineDiagnostics?: {
+    profile?: 'quick' | 'balanced' | 'deep';
     budgetMs?: number;
+    pvPlies?: number;
     bestSearch?: {
       depth?: number;
       seldepth?: number;

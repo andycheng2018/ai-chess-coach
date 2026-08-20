@@ -203,6 +203,10 @@ class StockfishAnalyzer:
         self,
         board_before: chess.Board,
         played_move: chess.Move,
+        *,
+        time_ms: int | None = None,
+        max_plies: int = 6,
+        profile: str = "balanced",
     ) -> MoveAnalysis:
         if played_move not in board_before.legal_moves:
             raise ValueError(f"Illegal move: {played_move.uci()}")
@@ -211,8 +215,21 @@ class StockfishAnalyzer:
         fen_before = board_before.fen()
         played_san = board_before.san(played_move)
 
+        search_time_ms = max(
+            200,
+            int(
+                self.time_ms
+                if time_ms is None
+                else time_ms
+            ),
+        )
+        line_plies = max(
+            4,
+            min(20, int(max_plies)),
+        )
+
         limit = chess.engine.Limit(
-            time=self.time_ms / 1000.0
+            time=search_time_ms / 1000.0
         )
 
         # Search the original position for Stockfish's actual top choice.
@@ -238,7 +255,11 @@ class StockfishAnalyzer:
 
         best_san = board_before.san(best_move)
         eval_before = score_cp(before_score, player)
-        best_line = pv_to_san(board_before, before_pv, 6)
+        best_line = pv_to_san(
+            board_before,
+            before_pv,
+            line_plies,
+        )
 
         board_after = board_before.copy()
         board_after.push(played_move)
@@ -295,11 +316,13 @@ class StockfishAnalyzer:
         refutation = pv_to_san(
             board_after,
             continuation,
-            6,
+            line_plies,
         )
 
         diagnostics = {
-            "budgetMs": self.time_ms,
+            "profile": profile,
+            "budgetMs": search_time_ms,
+            "pvPlies": line_plies,
             "bestSearch": info_diagnostics(before_info),
             "playedSearch": {
                 **info_diagnostics(played_info),

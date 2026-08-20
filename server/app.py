@@ -39,6 +39,55 @@ PORT = int(
     )
 )
 COACH_TIME_MS = max(200, int(os.environ.get("COACH_TIME_MS", "250")))
+
+COACH_ANALYSIS_PROFILES = {
+    "quick": {
+        "time_ms": max(
+            200,
+            int(
+                os.environ.get(
+                    "COACH_TIME_MS_QUICK",
+                    str(COACH_TIME_MS),
+                )
+            ),
+        ),
+        "pv_plies": 6,
+    },
+    "balanced": {
+        "time_ms": max(
+            200,
+            int(
+                os.environ.get(
+                    "COACH_TIME_MS_BALANCED",
+                    "800",
+                )
+            ),
+        ),
+        "pv_plies": 10,
+    },
+    "deep": {
+        "time_ms": max(
+            200,
+            int(
+                os.environ.get(
+                    "COACH_TIME_MS_DEEP",
+                    "2000",
+                )
+            ),
+        ),
+        "pv_plies": 14,
+    },
+}
+
+# Keep the modes ordered even if only one environment variable is changed.
+COACH_ANALYSIS_PROFILES["balanced"]["time_ms"] = max(
+    COACH_ANALYSIS_PROFILES["quick"]["time_ms"] + 100,
+    COACH_ANALYSIS_PROFILES["balanced"]["time_ms"],
+)
+COACH_ANALYSIS_PROFILES["deep"]["time_ms"] = max(
+    COACH_ANALYSIS_PROFILES["balanced"]["time_ms"] + 100,
+    COACH_ANALYSIS_PROFILES["deep"]["time_ms"],
+)
 MISTAKE_THRESHOLD_CP = int(os.environ.get("COACH_MISTAKE_THRESHOLD_CP", "80"))
 MAX_BODY_BYTES = 64 * 1024
 
@@ -472,6 +521,10 @@ def analyze_move(
     }:
         detail = "balanced"
 
+    analysis_profile = COACH_ANALYSIS_PROFILES[
+        detail
+    ]
+
     if not fen or not move_uci:
         raise ValueError(
             "fen and move are required"
@@ -505,6 +558,13 @@ def analyze_move(
                 .analyze_move(
                     board,
                     move,
+                    time_ms=analysis_profile[
+                        "time_ms"
+                    ],
+                    max_plies=analysis_profile[
+                        "pv_plies"
+                    ],
+                    profile=detail,
                 )
                 .to_dict()
             )
@@ -521,6 +581,13 @@ def analyze_move(
                 .analyze_move(
                     board,
                     move,
+                    time_ms=analysis_profile[
+                        "time_ms"
+                    ],
+                    max_plies=analysis_profile[
+                        "pv_plies"
+                    ],
+                    profile=detail,
                 )
                 .to_dict()
             )
@@ -1163,6 +1230,17 @@ class Handler(BaseHTTPRequestHandler):
                 "stockfish": stockfish,
                 "bot": runtime.status(),
                 "coachTimeMs": COACH_TIME_MS,
+                "coachAnalysisProfiles": {
+                    name: {
+                        "timeMs": profile[
+                            "time_ms"
+                        ],
+                        "pvPlies": profile[
+                            "pv_plies"
+                        ],
+                    }
+                    for name, profile in COACH_ANALYSIS_PROFILES.items()
+                },
                 "mistakeThresholdCp": MISTAKE_THRESHOLD_CP,
 
                 "tts": {
@@ -1305,7 +1383,14 @@ if __name__ == "__main__":
         print(f"Stockfish: {find_stockfish()}")
     except Exception as exc:
         print(f"Stockfish warning: {exc}")
-    print(f"Coach analysis budget: {COACH_TIME_MS} ms per position")
+    print(
+        "Coach analysis profiles: "
+        + ", ".join(
+            f"{name}={profile['time_ms']} ms"
+            for name, profile in COACH_ANALYSIS_PROFILES.items()
+        )
+        + " per search"
+    )
     print(f"Coach trigger: {MISTAKE_THRESHOLD_CP} cp")
     threading.Thread(target=bootstrap_bot, name="bot-bootstrap", daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)

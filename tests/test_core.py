@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import chess
 
@@ -13,10 +14,71 @@ if str(SERVER) not in sys.path:
 
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
 from coach.stockfish_analyzer import classify_move, configure_supported_options, pv_to_san  # noqa: E402
-from app import analyze_move, fallback_coaching  # noqa: E402
+from app import COACH_ANALYSIS_PROFILES, analyze_move, fallback_coaching  # noqa: E402
 
 
 class CoreTests(unittest.TestCase):
+    def test_coach_detail_profiles_increase_engine_strength(self) -> None:
+        quick = COACH_ANALYSIS_PROFILES["quick"]
+        balanced = COACH_ANALYSIS_PROFILES["balanced"]
+        deep = COACH_ANALYSIS_PROFILES["deep"]
+
+        self.assertLess(quick["time_ms"], balanced["time_ms"])
+        self.assertLess(balanced["time_ms"], deep["time_ms"])
+        self.assertLess(quick["pv_plies"], balanced["pv_plies"])
+        self.assertLess(balanced["pv_plies"], deep["pv_plies"])
+
+    def test_selected_detail_is_forwarded_to_stockfish(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        class FakeResult:
+            def to_dict(self):
+                return {
+                    "move_number": 1,
+                    "ply": 1,
+                    "played_move": "e4",
+                    "played_move_uci": "e2e4",
+                    "classification": "good",
+                    "centipawn_loss": 0,
+                    "best_move": "e4",
+                    "best_move_uci": "e2e4",
+                    "opponent_reply": "c5",
+                    "opponent_reply_uci": "c7c5",
+                    "fen_before": chess.STARTING_FEN,
+                    "fen_after": chess.Board().fen(),
+                    "best_line": ["e4", "c5"],
+                    "refutation_line": ["c5"],
+                    "theme_hint": "development",
+                    "evaluation_before": 20,
+                    "evaluation_after": 20,
+                    "engine_diagnostics": {},
+                }
+
+        class FakeAnalyzer:
+            def analyze_move(self, board, move, **kwargs):
+                calls.append(kwargs)
+                return FakeResult()
+
+        fake = FakeAnalyzer()
+
+        with patch("app.get_analyzer", return_value=fake):
+            for detail in ("quick", "balanced", "deep"):
+                analyze_move({
+                    "fen": chess.STARTING_FEN,
+                    "move": "e2e4",
+                    "detail": detail,
+                })
+
+        for detail, call in zip(
+            ("quick", "balanced", "deep"),
+            calls,
+            strict=True,
+        ):
+            profile = COACH_ANALYSIS_PROFILES[detail]
+            self.assertEqual(call["profile"], detail)
+            self.assertEqual(call["time_ms"], profile["time_ms"])
+            self.assertEqual(call["max_plies"], profile["pv_plies"])
+
     def test_classification_boundaries(self) -> None:
         self.assertEqual(classify_move(0), "good")
         self.assertEqual(classify_move(34), "good")

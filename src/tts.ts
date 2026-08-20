@@ -9,6 +9,9 @@ export type TtsStatus = {
     | 'checking'
     | 'ready'
     | 'online'
+    | 'idle'
+    | 'speaking'
+    | 'played'
     | 'blocked'
     | 'offline';
   detail?: string;
@@ -39,6 +42,20 @@ export function subscribeTtsStatus(
   return () => {
     ttsStatusListeners.delete(listener);
   };
+}
+
+export function markCoachVoiceIdle(detail: string): void {
+  if (
+    ttsStatus.state === 'online' ||
+    ttsStatus.state === 'speaking' ||
+    ttsStatus.state === 'played' ||
+    ttsStatus.state === 'idle'
+  ) {
+    publishTtsStatus({
+      state: 'idle',
+      detail,
+    });
+  }
 }
 
 export async function checkTtsStatus(): Promise<void> {
@@ -86,6 +103,9 @@ export async function checkTtsStatus(): Promise<void> {
     // after the user has already tapped the voice test.
     if (
       ttsStatus.state !== 'online' &&
+      ttsStatus.state !== 'idle' &&
+      ttsStatus.state !== 'speaking' &&
+      ttsStatus.state !== 'played' &&
       ttsStatus.state !== 'blocked'
     ) {
       publishTtsStatus({
@@ -618,7 +638,12 @@ async function playHtmlAudio(
     activeAudioFinish = finish;
     playbackTimeout = window.setTimeout(fail, 30_000);
 
-    void audio.play().catch(fail);
+    void audio.play().then(() => {
+      publishTtsStatus({
+        state: 'speaking',
+        detail: 'Playing ElevenLabs audio through the device player.',
+      });
+    }).catch(fail);
   });
 }
 
@@ -682,6 +707,11 @@ async function playWebAudio(
 
     source.onended = finish;
     source.start();
+
+    publishTtsStatus({
+      state: 'speaking',
+      detail: 'Playing ElevenLabs audio through WebAudio.',
+    });
 
     window.setTimeout(
       finish,
@@ -803,6 +833,13 @@ async function playSpeechJob(
         audioBytes,
         generation,
       );
+    }
+
+    if (generation === speechGeneration) {
+      publishTtsStatus({
+        state: 'played',
+        detail: 'ElevenLabs audio finished playing.',
+      });
     }
 
   } catch (error) {
@@ -980,8 +1017,10 @@ export async function speakCoach(
         resolve,
       });
 
+      // Avoid silently discarding a short burst of real coaching messages on
+      // a slow phone or while the backend is waking up.
       while (
-        speechQueue.length > 3
+        speechQueue.length > 6
       ) {
         const dropped =
           speechQueue.shift();
