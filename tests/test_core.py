@@ -13,7 +13,14 @@ if str(SERVER) not in sys.path:
     sys.path.insert(0, str(SERVER))
 
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
-from coach.llm_coach import LLMCoach, ensure_primary_theme_named, normalize_chess_themes, supported_chess_themes, unverified_tactical_claims  # noqa: E402
+from coach.llm_coach import (  # noqa: E402
+    LLMCoach,
+    ensure_primary_theme_named,
+    normalize_chess_themes,
+    supported_chess_themes,
+    unverified_tactical_claims,
+    verified_chess_themes,
+)
 from coach.stockfish_analyzer import capture_context, classify_move, configure_supported_options, pv_to_san, verified_move_themes  # noqa: E402
 from coach.tactic_verifier import verified_move_facts, verify_tactical_line  # noqa: E402
 from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, critical_position_question, fallback_coaching  # noqa: E402
@@ -153,6 +160,21 @@ class CoreTests(unittest.TestCase):
             ["Skewer"],
         )
 
+    def test_hanging_piece_ranks_above_background_reply_theme(self) -> None:
+        themes = verified_chess_themes({
+            "opponent_reply_verified_themes": [
+                "Back-Rank Weakness",
+            ],
+            "best_move_verified_themes": [
+                "Hanging Piece",
+            ],
+        })
+
+        self.assertEqual(
+            themes,
+            ["Hanging Piece", "Back-Rank Weakness"],
+        )
+
     def test_coach_retries_an_unverified_spoken_fork(self) -> None:
         class FakeResponse:
             def __init__(self, data):
@@ -270,6 +292,24 @@ class CoreTests(unittest.TestCase):
         }
         self.assertIn("Mate in One", themes)
         self.assertIn("Smothered Mate", themes)
+
+    def test_hanging_piece_outranks_unrelated_boxed_king(self) -> None:
+        board = chess.Board(
+            "6k1/5ppp/8/3n4/2B5/8/8/6K1 w - - 0 1"
+        )
+        evidence = verify_tactical_line(
+            board,
+            [
+                chess.Move.from_uci("c4d5"),
+                chess.Move.from_uci("g8h8"),
+                chess.Move.from_uci("g1f2"),
+            ],
+        )
+        themes = [item.theme for item in evidence]
+
+        self.assertIn("Hanging Piece", themes)
+        self.assertNotIn("Back-Rank Weakness", themes)
+        self.assertEqual(themes[0], "Hanging Piece")
 
     def test_confirmed_tactic_is_always_named_in_spoken_feedback(self) -> None:
         feedback = "The knight attacks the queen and rook at the same time."

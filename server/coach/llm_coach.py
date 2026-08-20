@@ -8,6 +8,8 @@ from typing import Any
 
 from openai import OpenAI
 
+from coach.tactic_verifier import THEME_PRIORITY
+
 
 PROMPT_PATH = (
     Path(__file__).resolve().parent
@@ -277,7 +279,7 @@ def verified_chess_themes(
     analysis: dict[str, Any],
 ) -> list[str]:
     """Return only tactic labels calculated from legal engine moves."""
-    return normalize_chess_themes([
+    merged = [
         *normalize_chess_themes(
             analysis.get(
                 "opponent_reply_verified_themes"
@@ -288,6 +290,15 @@ def verified_chess_themes(
                 "best_move_verified_themes"
             )
         ),
+    ]
+    merged_set = set(merged)
+
+    # Rank the two engine-verified sources together. Otherwise a secondary
+    # opponent-reply label can bury a more important missed material win.
+    return normalize_chess_themes([
+        theme
+        for theme in THEME_PRIORITY
+        if theme in merged_set
     ])
 
 

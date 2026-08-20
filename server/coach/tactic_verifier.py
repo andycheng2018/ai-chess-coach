@@ -653,6 +653,45 @@ def _line_has_forcing_payoff(
     ) >= 1
 
 
+def _line_has_back_rank_attack(
+    board: chess.Board,
+    line: list[chess.Move],
+    mover: chess.Color,
+) -> bool:
+    """Confirm that the PV actually uses a rook or queen on the back rank."""
+    temp = board.copy(stack=False)
+
+    for move in line[:5]:
+        if move not in temp.legal_moves:
+            return False
+
+        moving_piece = temp.piece_at(
+            move.from_square
+        )
+        moving_color = temp.turn
+        temp.push(move)
+
+        enemy_king = temp.king(
+            not mover
+        )
+        if (
+            moving_color == mover
+            and moving_piece is not None
+            and moving_piece.piece_type in {
+                chess.ROOK,
+                chess.QUEEN,
+            }
+            and enemy_king is not None
+            and chess.square_rank(enemy_king) in {0, 7}
+            and chess.square_rank(move.to_square)
+            == chess.square_rank(enemy_king)
+            and move.to_square in temp.checkers()
+        ):
+            return True
+
+    return False
+
+
 def _sequence_evidence(
     board: chess.Board,
     line: list[chess.Move],
@@ -1086,16 +1125,14 @@ def verify_tactical_line(
         if all(
             (piece := after.piece_at(square)) is not None and piece.color == enemy
             for square in front_squares
-        ) and (
-            (
-                mate_in is not None
-                and mate_in > 0
-            )
-            or _line_has_forcing_payoff(
-                board,
-                line,
-                mate_in=mate_in,
-            )
+        ) and _line_has_back_rank_attack(
+            board,
+            line,
+            mover,
+        ) and _line_has_forcing_payoff(
+            board,
+            line,
+            mate_in=mate_in,
         ):
             add("Back-Rank Weakness", "The king is confined on its back rank by its own pieces while a rook or queen line applies pressure.")
 

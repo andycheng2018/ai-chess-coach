@@ -371,6 +371,24 @@ function buildPracticePuzzle(
       'find-better',
     );
 
+  const replyThemePriority =
+    replyPuzzleTheme
+      ? PRACTICE_THEME_PRIORITY.indexOf(
+          replyPuzzleTheme,
+        )
+      : Number.POSITIVE_INFINITY;
+
+  const bestThemePriority =
+    bestPuzzleTheme
+      ? PRACTICE_THEME_PRIORITY.indexOf(
+          bestPuzzleTheme,
+        )
+      : Number.POSITIVE_INFINITY;
+
+  const preferReplyPuzzle =
+    Boolean(replyPuzzleTheme) &&
+    replyThemePriority <= bestThemePriority;
+
   const severeEnough =
     note.classification === 'mistake' ||
     note.classification === 'blunder' ||
@@ -405,11 +423,12 @@ function buildPracticePuzzle(
       bestPuzzleTheme as ChessTheme,
     );
 
-  // Strong preference: if Stockfish's opponent reply has a mechanically
-  // verified theme, make the student PLAY it from the opponent side. Do not
-  // require a capture or check; many real forks and pins are quiet moves.
+  // Prefer the opponent's punishment when it is at least as important as the
+  // missed best-move theme. A concrete missed win, such as a hanging piece,
+  // should not be replaced by a lower-priority positional reply theme.
   if (
     replyPuzzleTheme &&
+    preferReplyPuzzle &&
     note.opponentReply &&
     note.opponentReplyUci &&
     note.opponentReplyUci.length >= 4 &&
