@@ -240,6 +240,21 @@ const ZH_RANKS: Record<string, string> = {
   '8': '八',
 };
 
+// Isolated Latin letters are ambiguous for Mandarin voices. In particular,
+// ElevenLabs may read the chess file "E" like a Chinese syllable instead of
+// the English letter name. These phonetic spellings keep square names clear
+// and consistent without changing the text shown in the UI.
+const ZH_FILES: Record<string, string> = {
+  A: '诶',
+  B: '比',
+  C: '西',
+  D: '迪',
+  E: '伊',
+  F: '艾弗',
+  G: '吉',
+  H: '艾尺',
+};
+
 function squareForSpeech(
   square: string,
   language: CoachLanguage,
@@ -248,7 +263,7 @@ function squareForSpeech(
   const rank = square[1];
 
   if (language === 'zh-CN') {
-    return `${file} ${ZH_RANKS[rank] || rank}`;
+    return `${ZH_FILES[file] || file}${ZH_RANKS[rank] || rank}`;
   }
 
   // The space makes ElevenLabs say:

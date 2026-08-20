@@ -584,15 +584,18 @@ function personalityPraise(
   result: CoachResult,
   language: CoachLanguage,
   moment: PraiseMoment,
+  variant: number,
 ): Pick<CoachResult, 'title' | 'feedback'> {
-  const index = Math.abs(result.ply) % 4;
-
   if (language === 'zh-CN') {
     const recovery = [
       ['稳住了', '很好，你马上重新稳住了节奏。'],
       ['调整得不错', '不错，上一处问题之后你很快调整回来了。'],
       ['重新找回节奏', '这步很稳。继续用刚才这种检查方式。'],
       ['处理得很冷静', '很好，没有被前面的失误影响到这一手。'],
+      ['反应很成熟', '你及时调整了思路，这就是很好的比赛心态。'],
+      ['重新站稳了', '这一手处理得很冷静，局面又稳住了。'],
+      ['恢复得很快', '不错，你没有纠结上一手，而是专注在当前局面。'],
+      ['保持住了', '这一步很有韧性。继续一手一手地检查。'],
     ] as const;
 
     const streak = [
@@ -600,6 +603,10 @@ function personalityPraise(
       ['思路很稳', '不错，你现在的落子很有耐心。'],
       ['继续这样想', '这几步的判断都很稳，别急，保持这个过程。'],
       ['状态不错', '你正在连续做出合理的决定。继续专注。'],
+      ['判断很连贯', '你这几步的思路很清楚，继续按这个节奏来。'],
+      ['掌控得不错', '你没有急着出手，每一步都很有分寸。'],
+      ['下得很踏实', '连续几步都很可靠，保持现在的专注度。'],
+      ['耐心有回报', '你正在把稳健的判断一手一手连起来。'],
     ] as const;
 
     const strong = [
@@ -607,16 +614,20 @@ function personalityPraise(
       ['好眼力', `不错，${result.playedMove} 是个很稳的决定。`],
       ['这手很扎实', `漂亮，${result.playedMove} 处理得简单又稳健。`],
       ['选择得很好', `这手 ${result.playedMove} 很有分寸，保持这样的耐心。`],
+      ['看得很准', `${result.playedMove} 抓住了局面的重点，很不错。`],
+      ['处理得很漂亮', `我喜欢 ${result.playedMove}，思路清楚而且很稳。`],
+      ['很有质量的一手', `${result.playedMove} 兼顾得很好，继续这样检查。`],
+      ['决定很成熟', `这手 ${result.playedMove} 不急不躁，判断很到位。`],
     ] as const;
 
+    const choices =
+      moment === 'recovery'
+        ? recovery
+        : moment === 'strong'
+          ? strong
+          : streak;
     const [title, feedback] =
-      (
-        moment === 'recovery'
-          ? recovery
-          : moment === 'strong'
-            ? strong
-            : streak
-      )[index];
+      choices[Math.abs(variant) % choices.length];
 
     return { title, feedback };
   }
@@ -626,6 +637,10 @@ function personalityPraise(
     ['Back on track', 'Good adjustment. You did not let the last mistake affect this move.'],
     ['Good reset', 'That was a composed response. Keep checking the position this way.'],
     ['Steady again', 'Nice recovery — you got right back to making solid decisions.'],
+    ['Calm response', 'You adjusted right away and handled the new position well.'],
+    ['Nicely recovered', 'Good resilience. You focused on the position in front of you.'],
+    ['Fresh start', 'That was a thoughtful response. Keep taking it one move at a time.'],
+    ['Composed chess', 'You steadied the position and got your decision-making back on track.'],
   ] as const;
 
   const streak = [
@@ -633,6 +648,10 @@ function personalityPraise(
     ['Settling in', 'Your last few moves have been patient and sensible. Keep going.'],
     ['Nice process', 'You are making consistently solid choices right now. Stay focused.'],
     ['Looking steady', 'A good run of decisions. Keep thinking before you commit.'],
+    ['Clear thinking', 'Your decisions have been measured and consistent. Keep it up.'],
+    ['In control', 'You are giving each move the attention it deserves. Nice work.'],
+    ['Patient chess', 'That is another reliable decision in a strong sequence.'],
+    ['Good momentum', 'You are stringing together sensible moves without rushing.'],
   ] as const;
 
   const strong = [
@@ -640,16 +659,20 @@ function personalityPraise(
     ['Good eye', `${result.playedMove} was a solid choice. Trust that careful process.`],
     ['Well played', `That was steady chess — ${result.playedMove} kept things simple and sound.`],
     ['Strong decision', `I like ${result.playedMove}. Calm, clear, and no overthinking.`],
+    ['Nicely judged', `${result.playedMove} fits the position well. Good judgment.`],
+    ['Clean move', `${result.playedMove} was precise and purposeful. Nicely done.`],
+    ['Quality choice', `You found ${result.playedMove} and handled the position with confidence.`],
+    ['Good awareness', `${result.playedMove} shows that you understood what the position needed.`],
   ] as const;
 
+  const choices =
+    moment === 'recovery'
+      ? recovery
+      : moment === 'strong'
+        ? strong
+        : streak;
   const [title, feedback] =
-    (
-      moment === 'recovery'
-        ? recovery
-        : moment === 'strong'
-          ? strong
-          : streak
-    )[index];
+    choices[Math.abs(variant) % choices.length];
 
   return { title, feedback };
 }
@@ -1576,7 +1599,7 @@ function gameVoiceIntroduction(
         : '黑方';
 
     return (
-      '你好，我是你的国际象棋教练。' +
+      '你好，我是棋伴，你的国际象棋教练。' +
       '我会帮你留意战术和关键时刻。' +
       `你执${color}，慢慢想，我们开始吧。`
     );
@@ -1753,6 +1776,10 @@ export default function App() {
   const goodMoveRunRef = useRef(0);
   const lastMistakePlyRef = useRef<number | null>(null);
   const lastPraisePlyRef = useRef<number | null>(null);
+  // Unlike a ply-based selector, this advances by exactly one whenever praise
+  // is used. Spaced-out comments therefore rotate through the full phrase bank
+  // instead of bouncing between the same two entries.
+  const praiseVariantRef = useRef(0);
 
   // Last few REAL LLM explanations from this game.
   // Sent back to the next wording request only to reduce repetition.
@@ -2624,8 +2651,8 @@ export default function App() {
     void unlockCoachAudio().then(() =>
       speakCoach(
         coachLanguage === 'zh-CN'
-          ? 'ElevenLabs 语音测试成功。'
-          : 'ElevenLabs voice test successful.',
+          ? 'ElevenLabs 语音测试成功。测试棋步 e4。'
+          : 'ElevenLabs voice test successful. Testing the move e4.',
         coachLanguage,
       ),
     );
@@ -2749,7 +2776,9 @@ export default function App() {
                 result,
                 job.language,
                 praiseMoment,
+                praiseVariantRef.current,
               );
+              praiseVariantRef.current += 1;
 
               const praisedResult: CoachResult = {
                 ...result,
