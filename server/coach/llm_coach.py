@@ -243,6 +243,41 @@ class LLMCoach:
             "theme_hint": analysis.get(
                 "theme_hint"
             ),
+            "opening_eco": analysis.get(
+                "opening_eco",
+                "",
+            ),
+            "opening_name": analysis.get(
+                "opening_name",
+                "",
+            ),
+            "opening_variation": analysis.get(
+                "opening_variation",
+                "",
+            ),
+            "opening_in_book": analysis.get(
+                "opening_in_book",
+                False,
+            ),
+            "opening_left_book_at": analysis.get(
+                "opening_left_book_at",
+            ),
+            "opening_book_move": analysis.get(
+                "opening_book_move_san",
+                "",
+            ),
+            "opening_book_move_uci": analysis.get(
+                "opening_book_move_uci",
+                "",
+            ),
+            "opening_transposed": analysis.get(
+                "opening_transposed",
+                False,
+            ),
+            "opening_depth_matched": analysis.get(
+                "opening_depth_matched",
+                0,
+            ),
             "coach_detail": normalized_detail,
             "feedback_target": detail_config[
                 "target"

@@ -185,6 +185,30 @@ header {
 .quality-badge.inaccuracy { background: rgba(207, 159, 70, .18); color: #e6c47e; }
 .quality-badge.mistake { background: rgba(224, 117, 62, .18); color: #f0a474; }
 .quality-badge.blunder { background: rgba(215, 77, 69, .18); color: #f09b95; }
+.opening-badge {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(129, 182, 76, .08);
+  border: 1px solid rgba(129, 182, 76, .18);
+}
+.opening-badge strong {
+  color: #dfebd0;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.opening-badge small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.coach-opening-badge {
+  margin-bottom: 10px;
+}
+.under-board-meta .opening-badge {
+  min-width: 0;
+}
 .coach-question { margin-top: 10px; padding: 9px 10px; border-left: 2px solid #548fc2; background: rgba(74, 137, 192, .09); color: #c9dceb; }
 .coach-question span { display: block; margin-bottom: 2px; color: #7fb2dd; font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: .08em; }
 .coach-lesson { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); color: #b8d99c; font-size: 12px; font-weight: 700; }

@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 from bot_runtime import BOT_LEVELS, runtime
+from coach.opening_recognizer import recognize_opening
 from coach.stockfish_analyzer import StockfishAnalyzer, find_stockfish
 
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -434,6 +435,57 @@ def synthesize_speech(
     return response.content
     
 
+def parse_moves_payload(payload: dict[str, Any]) -> list[str]:
+    raw_moves = payload.get("moves", [])
+
+    if not isinstance(raw_moves, list):
+        return []
+
+    return [
+        str(item).strip().lower()
+        for item in raw_moves
+        if str(item).strip()
+    ]
+
+
+def opening_result_fields(
+    moves: list[str],
+    move_number: int,
+) -> dict[str, Any]:
+    if move_number > 15 or not moves:
+        return {
+            "openingEco": "",
+            "openingName": "",
+            "openingVariation": "",
+            "openingDepthMatched": 0,
+            "openingInBook": False,
+            "openingLeftBookAt": None,
+            "openingBookMove": None,
+            "openingBookMoveUci": None,
+            "openingTransposed": False,
+        }
+
+    state = recognize_opening(moves)
+    api = state.to_api_dict()
+
+    return {
+        "openingEco": api.get("eco", ""),
+        "openingName": api.get("name", ""),
+        "openingVariation": api.get("variation", ""),
+        "openingDepthMatched": api.get("depthMatched", 0),
+        "openingInBook": api.get("inBook", False),
+        "openingLeftBookAt": api.get("leftBookAt"),
+        "openingBookMove": api.get("bookMove"),
+        "openingBookMoveUci": api.get("bookMoveUci"),
+        "openingTransposed": api.get("transposed", False),
+    }
+
+
+def opening_status(payload: dict[str, Any]) -> dict[str, Any]:
+    moves = parse_moves_payload(payload)
+    return recognize_opening(moves).to_api_dict()
+
+
 def analyze_move(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
@@ -525,6 +577,31 @@ def analyze_move(
                 .to_dict()
             )
 
+    moves_uci = parse_moves_payload(payload)
+
+    if not moves_uci:
+        moves_uci = [move_uci]
+    elif moves_uci[-1] != move_uci:
+        moves_uci = [*moves_uci, move_uci]
+
+    opening_analysis = opening_result_fields(
+        moves_uci,
+        int(analysis["move_number"]),
+    )
+    analysis.update(
+        {
+            "opening_eco": opening_analysis["openingEco"],
+            "opening_name": opening_analysis["openingName"],
+            "opening_variation": opening_analysis["openingVariation"],
+            "opening_depth_matched": opening_analysis["openingDepthMatched"],
+            "opening_in_book": opening_analysis["openingInBook"],
+            "opening_left_book_at": opening_analysis["openingLeftBookAt"],
+            "opening_book_move_san": opening_analysis["openingBookMove"],
+            "opening_book_move_uci": opening_analysis["openingBookMoveUci"],
+            "opening_transposed": opening_analysis["openingTransposed"],
+        }
+    )
+
     should_coach = (
         int(
             analysis[
@@ -596,6 +673,7 @@ def analyze_move(
             "engine_diagnostics",
             {},
         ),
+        **opening_analysis,
     }
 
     if should_coach:
@@ -625,6 +703,8 @@ def analyze_move(
                 if language == "zh-CN"
                 else "Critical miss"
                 if analysis["classification"] == "blunder"
+                else "Off main line"
+                if opening_analysis.get("openingLeftBookAt") == analysis["ply"]
                 else "Worth a look"
             ),
             "feedback": "",
@@ -1259,6 +1339,13 @@ class Handler(BaseHTTPRequestHandler):
                     "audio/mpeg",
                 )
 
+            elif self.path == "/api/coach/opening":
+                self._send(
+                    200,
+                    opening_status(
+                        self._json_body()
+                    ),
+                )
             elif self.path == "/api/coach/analyze":
                 self._send(
                     200,
