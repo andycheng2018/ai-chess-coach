@@ -54,43 +54,42 @@ CRITICAL_QUESTION_SCHEMA = {
 
 COACH_DETAIL_CONFIG = {
     "quick": {
-        "target": "15-25 words",
+        "target": "8-15 words",
         "max_output_tokens": 220,
         "instruction": """
 COACH DETAIL LEVEL: QUICK
 
-Use 1-2 short sentences, roughly 15-25 words total.
+Use 1 short sentence, roughly 8-15 words total.
 
 Give the concrete chess reason, not merely a verdict.
-If there is a forcing reply, name the important reply or consequence.
-Do not add a generic lesson just to fill space.
+Name the key forcing reply or consequence when one exists.
+Keep lesson and question empty unless either is essential.
 """.strip(),
     },
 
     "balanced": {
-        "target": "35-55 words",
+        "target": "18-30 words",
         "max_output_tokens": 360,
         "instruction": """
 COACH DETAIL LEVEL: BALANCED
 
-Use 2-3 natural sentences, roughly 35-55 words total.
+Use at most 2 natural sentences, roughly 18-30 words total.
 
 Explain:
 1. what specifically changed or became vulnerable after the student's move,
-2. how the opponent can exploit it or what opportunity was missed,
-3. why the recommended move handles the position better.
+2. the important consequence or why the recommended move works better.
 
 Include a reusable thinking habit only when it is specific to this position.
 """.strip(),
     },
 
     "deep": {
-        "target": "60-90 words",
+        "target": "30-50 words",
         "max_output_tokens": 520,
         "instruction": """
 COACH DETAIL LEVEL: DEEP
 
-Use 3-5 concise sentences, roughly 60-90 words total.
+Use at most 3 concise sentences, roughly 30-50 words total.
 
 Explain the causal chess story:
 - what the student's move changed,
@@ -99,7 +98,7 @@ Explain the causal chess story:
 - why the recommended move works,
 - one reusable lesson.
 
-Deep means more chess insight, not filler.
+Deep means more chess insight, not a lecture.
 """.strip(),
     },
 }

@@ -8,6 +8,12 @@ let activeRequest: AbortController | null = null;
 
 let audioContext: AudioContext | null = null;
 let activeSource: AudioBufferSourceNode | null = null;
+let activeAudio: HTMLAudioElement | null = null;
+let activeObjectUrl: string | null = null;
+let activeAudioFinish: (() => void) | null = null;
+let activeUtterance: SpeechSynthesisUtterance | null = null;
+
+const TTS_REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * iOS/WKWebView usually wants audio to be unlocked
@@ -23,6 +29,16 @@ export async function unlockCoachAudio(): Promise<void> {
 
     if (audioContext.state === 'suspended') {
       await audioContext.resume();
+    }
+
+    // Starting a tiny silent buffer inside the user's gesture makes the
+    // unlocked state stick much more reliably in iOS Safari/WKWebView.
+    if (audioContext.state === 'running') {
+      const silentBuffer = audioContext.createBuffer(1, 1, 22_050);
+      const silentSource = audioContext.createBufferSource();
+      silentSource.buffer = silentBuffer;
+      silentSource.connect(audioContext.destination);
+      silentSource.start();
     }
 
     console.log(
@@ -252,6 +268,19 @@ function sanToSpeech(
     );
   }
 
+  // Plain pawn move: e4 -> "E four". Without this branch ElevenLabs may
+  // pronounce the square as a single token or as an unrelated word.
+  if (/^[a-h][1-8]$/i.test(san)) {
+    const destination = squareForSpeech(
+      san,
+      language,
+    );
+
+    return language === 'zh-CN'
+      ? `兵走到${destination}${ending}`
+      : `${destination}${ending}`;
+  }
+
   return rawSan;
 }
 
@@ -273,7 +302,7 @@ function makeSpeechFriendly(
    * O-O-O
    */
   const sanPattern =
-    /(^|[^A-Za-z0-9])((?:O-O-O|O-O|0-0-0|0-0|[KQRBN][a-h1-8]{0,2}x?[a-h][1-8](?:=[QRBN])?[+#]?|[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?|[a-h][1-8]=[QRBN][+#]?))(?=$|[^A-Za-z0-9])/gi;
+    /(^|[^A-Za-z0-9])((?:O-O-O|O-O|0-0-0|0-0|[KQRBN][a-h1-8]{0,2}x?[a-h][1-8](?:=[QRBN])?[+#]?|[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?|[a-h][1-8]=[QRBN][+#]?|[a-h][1-8][+#]?))(?=$|[^A-Za-z0-9])/gi;
 
   return text.replace(
     sanPattern,
@@ -309,6 +338,9 @@ async function browserSpeak(
     const utterance =
       new SpeechSynthesisUtterance(text);
 
+    // Safari can garbage-collect a locally scoped utterance before it ends.
+    activeUtterance = utterance;
+
     utterance.lang =
       language === 'zh-CN'
         ? 'zh-CN'
@@ -338,6 +370,11 @@ async function browserSpeak(
     const finish = () => {
       if (finished) return;
       finished = true;
+
+      if (activeUtterance === utterance) {
+        activeUtterance = null;
+      }
+
       resolve();
     };
 
@@ -381,7 +418,63 @@ async function ensureAudioReady(): Promise<AudioContext> {
     await audioContext.resume();
   }
 
+  if (audioContext.state !== 'running') {
+    throw new Error(
+      `WebAudio is ${audioContext.state}; tap the board once to enable sound.`,
+    );
+  }
+
   return audioContext;
+}
+
+async function playHtmlAudio(
+  audioBytes: ArrayBuffer,
+  generation: number,
+): Promise<void> {
+  if (generation !== speechGeneration) return;
+
+  const objectUrl = URL.createObjectURL(
+    new Blob([audioBytes], { type: 'audio/mpeg' }),
+  );
+
+  const audio = new Audio(objectUrl);
+  audio.preload = 'auto';
+  activeAudio = audio;
+  activeObjectUrl = objectUrl;
+
+  await new Promise<void>((resolve, reject) => {
+    let finished = false;
+    let playbackTimeout = 0;
+
+    const cleanup = () => {
+      window.clearTimeout(playbackTimeout);
+      if (activeAudio === audio) activeAudio = null;
+      if (activeObjectUrl === objectUrl) activeObjectUrl = null;
+      if (activeAudioFinish === finish) activeAudioFinish = null;
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      resolve();
+    };
+
+    const fail = () => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(new Error('HTML audio playback failed.'));
+    };
+
+    audio.onended = finish;
+    audio.onerror = fail;
+    activeAudioFinish = finish;
+    playbackTimeout = window.setTimeout(fail, 30_000);
+
+    void audio.play().catch(fail);
+  });
 }
 
 async function playWebAudio(
@@ -472,6 +565,13 @@ async function playSpeechJob(
   const controller =
     new AbortController();
 
+  let timedOut = false;
+
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, TTS_REQUEST_TIMEOUT_MS);
+
   activeRequest = controller;
 
   try {
@@ -530,15 +630,28 @@ async function playSpeechJob(
       );
     }
 
-    await playWebAudio(
-      audioBytes,
-      generation,
-    );
+    try {
+      await playWebAudio(
+        audioBytes,
+        generation,
+      );
+    } catch (webAudioError) {
+      console.warn(
+        '[TTS] WebAudio playback failed; trying HTML audio:',
+        webAudioError,
+      );
+
+      await playHtmlAudio(
+        audioBytes,
+        generation,
+      );
+    }
 
   } catch (error) {
     if (
       error instanceof DOMException &&
-      error.name === 'AbortError'
+      error.name === 'AbortError' &&
+      !timedOut
     ) {
       return;
     }
@@ -559,6 +672,8 @@ async function playSpeechJob(
     }
 
   } finally {
+    window.clearTimeout(timeout);
+
     if (
       activeRequest ===
       controller
@@ -628,12 +743,29 @@ export function stopCoachSpeech() {
     activeSource = null;
   }
 
+  if (activeAudio) {
+    activeAudio.pause();
+    activeAudio.removeAttribute('src');
+    activeAudio.load();
+    activeAudio = null;
+  }
+
+  activeAudioFinish?.();
+  activeAudioFinish = null;
+
+  if (activeObjectUrl) {
+    URL.revokeObjectURL(activeObjectUrl);
+    activeObjectUrl = null;
+  }
+
   if (
     'speechSynthesis'
     in window
   ) {
     window.speechSynthesis.cancel();
   }
+
+  activeUtterance = null;
 
   const queued =
     speechQueue.splice(0);

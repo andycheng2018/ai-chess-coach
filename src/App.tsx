@@ -481,7 +481,7 @@ function selectPracticePuzzles(
 }
 
 
-type PraiseMoment = 'streak' | 'recovery';
+type PraiseMoment = 'strong' | 'streak' | 'recovery';
 
 function personalityPraise(
   result: CoachResult,
@@ -505,8 +505,21 @@ function personalityPraise(
       ['状态不错', '你正在连续做出合理的决定。继续专注。'],
     ] as const;
 
+    const strong = [
+      ['判断得漂亮', `这手 ${result.playedMove} 下得很干净，继续相信你的检查过程。`],
+      ['好眼力', `不错，${result.playedMove} 是个很稳的决定。`],
+      ['这手很扎实', `漂亮，${result.playedMove} 处理得简单又稳健。`],
+      ['选择得很好', `这手 ${result.playedMove} 很有分寸，保持这样的耐心。`],
+    ] as const;
+
     const [title, feedback] =
-      (moment === 'recovery' ? recovery : streak)[index];
+      (
+        moment === 'recovery'
+          ? recovery
+          : moment === 'strong'
+            ? strong
+            : streak
+      )[index];
 
     return { title, feedback };
   }
@@ -525,10 +538,48 @@ function personalityPraise(
     ['Looking steady', 'A good run of decisions. Keep thinking before you commit.'],
   ] as const;
 
+  const strong = [
+    ['Sharp choice', `Nice one — ${result.playedMove} was a clean, confident decision.`],
+    ['Good eye', `${result.playedMove} was a solid choice. Trust that careful process.`],
+    ['Well played', `That was steady chess — ${result.playedMove} kept things simple and sound.`],
+    ['Strong decision', `I like ${result.playedMove}. Calm, clear, and no overthinking.`],
+  ] as const;
+
   const [title, feedback] =
-    (moment === 'recovery' ? recovery : streak)[index];
+    (
+      moment === 'recovery'
+        ? recovery
+        : moment === 'strong'
+          ? strong
+          : streak
+    )[index];
 
   return { title, feedback };
+}
+
+function fallbackCoachWording(
+  result: CoachResult,
+  language: CoachLanguage,
+): Pick<CoachResult, 'title' | 'feedback' | 'lesson' | 'question'> {
+  if (language === 'zh-CN') {
+    return {
+      title: '记住这个局面',
+      feedback: result.opponentReply
+        ? `小心，${result.playedMove} 之后要特别注意对手的 ${result.opponentReply}。${result.bestMove} 是更好的选择。`
+        : `${result.playedMove} 错过了局面里的关键机会。对比一下 ${result.bestMove}，看看它解决了什么问题。`,
+      lesson: '落子前，先检查对手最强的强制回应。',
+      question: '',
+    };
+  }
+
+  return {
+    title: 'One to remember',
+    feedback: result.opponentReply
+      ? `Careful — after ${result.playedMove}, ${result.opponentReply} is the reply to notice. ${result.bestMove} was the stronger choice.`
+      : `${result.playedMove} missed the position's key opportunity. Compare it with ${result.bestMove} and look for what that move solves.`,
+    lesson: "Before moving, check your opponent's strongest forcing reply.",
+    question: '',
+  };
 }
 
 type ReportTheme = {
@@ -1032,11 +1083,15 @@ const VOICE_ENABLED_STORAGE_KEY =
 
 function readVoiceEnabled(): boolean {
   try {
-    return window.localStorage.getItem(
+    const stored = window.localStorage.getItem(
       VOICE_ENABLED_STORAGE_KEY,
-    ) === 'true';
+    );
+
+    // Voice coaching is a core part of Chess Buddy. Preserve an explicit
+    // user choice, but enable it for first-time users and cleared storage.
+    return stored == null ? true : stored === 'true';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -2083,21 +2138,35 @@ export default function App() {
               result.centipawnLoss < 25;
 
             const streak =
-              goodMoveRunRef.current >= 4 &&
-              goodMoveRunRef.current % 4 === 0;
+              result.moveNumber >= 4 &&
+              goodMoveRunRef.current >= 3;
+
+            const strongMove =
+              result.moveNumber >= 4 &&
+              result.classification === 'good' &&
+              result.centipawnLoss <= 15;
 
             const praiseIsSpacedOut =
               lastPraisePlyRef.current == null ||
-              result.ply - lastPraisePlyRef.current >= 8;
+              result.ply - lastPraisePlyRef.current >= 6;
 
-            // Routine good moves are intentionally silent. The coach speaks
-            // when the praise actually means something: a recovery or a run
-            // of consistently strong decisions.
-            if ((recovery || streak) && praiseIsSpacedOut) {
+            // Praise strong decisions often enough for the coach to feel
+            // present, while skipping routine opening moves and spacing out
+            // comments so the same compliment never fires every turn.
+            if (
+              (recovery || strongMove || streak) &&
+              praiseIsSpacedOut
+            ) {
+              const praiseMoment: PraiseMoment = recovery
+                ? 'recovery'
+                : strongMove
+                  ? 'strong'
+                  : 'streak';
+
               const praise = personalityPraise(
                 result,
                 coachLanguage,
-                recovery ? 'recovery' : 'streak',
+                praiseMoment,
               );
 
               const praisedResult: CoachResult = {
@@ -2247,19 +2316,15 @@ export default function App() {
                   error,
                 );
 
+                const fallback = fallbackCoachWording(
+                  result,
+                  coachLanguage,
+                );
+
                 const unavailable: CoachResult = {
                   ...fastResult,
+                  ...fallback,
                   explanationPending: false,
-                  title:
-                    coachLanguage === 'zh-CN'
-                      ? '解释暂时不可用'
-                      : 'Explanation unavailable',
-                  feedback:
-                    coachLanguage === 'zh-CN'
-                      ? `棋局分析已经完成，建议走 ${result.bestMove}，但 AI 解释这次没有加载成功。`
-                      : `The chess analysis is ready and the suggested move is ${result.bestMove}, but the AI explanation did not load.`,
-                  lesson: '',
-                  question: '',
                 };
 
                 saveNote(unavailable);
@@ -2270,7 +2335,9 @@ export default function App() {
                     : current,
                 );
 
-                // Deliberately do NOT speak a canned replacement.
+                // A temporary OpenAI wording failure must never make voice
+                // coaching disappear. This fallback uses only engine facts.
+                speak(unavailable.feedback);
               });
           } else {
             console.error(
@@ -2278,24 +2345,21 @@ export default function App() {
               'The frontend/backend versions are out of sync.',
             );
 
+            const fallback = fallbackCoachWording(
+              result,
+              coachLanguage,
+            );
+
             const unavailable: CoachResult = {
               ...fastResult,
+              ...fallback,
               explanationPending: false,
-              title:
-                coachLanguage === 'zh-CN'
-                  ? '解释连接错误'
-                  : 'Explanation connection error',
-              feedback:
-                coachLanguage === 'zh-CN'
-                  ? '棋局分析完成了，但 AI 解释接口没有正确连接。'
-                  : 'The chess analysis completed, but the AI explanation endpoint is not connected correctly.',
-              lesson: '',
-              question: '',
             };
 
             setCoachExplanationPending(false);
             saveNote(unavailable);
             setCoachResult(unavailable);
+            speak(unavailable.feedback);
           }
         } catch (error) {
           setPlayerMoveAnalysisPending(false);
@@ -3826,7 +3890,14 @@ function handlePuzzleMove(
                     * This happens directly inside a user click,
                     * so iOS can unlock audio playback.
                     */
-                    void unlockCoachAudio();
+                    void unlockCoachAudio().then(() =>
+                      speakCoach(
+                        coachLanguage === 'zh-CN'
+                          ? '语音教练已开启。关键时刻我会提醒你。'
+                          : "Voice coach is on. I'll speak up at the right moments.",
+                        coachLanguage,
+                      ),
+                    );
                   } else {
                     stopCoachSpeech();
                   }
