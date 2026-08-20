@@ -2101,6 +2101,33 @@ export default function App() {
     );
   }
 
+  function speakCriticalQuestion(
+    prompt: CriticalPrompt,
+    language: CoachLanguage = coachLanguage,
+  ) {
+    if (!voiceEnabled) return;
+
+    // A question about the current position is more urgent than praise about
+    // the previous move. End the praise, leave a short conversational beat,
+    // then clearly introduce the question so the interruption feels intended.
+    stopCoachSpeech();
+
+    window.setTimeout(() => {
+      // The player may have moved during the transition.
+      if (criticalPromptRef.current !== prompt) return;
+
+      const spokenQuestion =
+        language === 'zh-CN'
+          ? `先想一想。${prompt.question}`
+          : `Think first. ${prompt.question}`;
+
+      void speakCoachLatest(
+        spokenQuestion,
+        language,
+      );
+    }, 250);
+  }
+
   function testCoachVoice() {
     if (!voiceEnabled) {
       setVoiceEnabled(true);
@@ -2639,8 +2666,9 @@ export default function App() {
             prompt.question,
           ].slice(-4);
 
-        speak(
-          prompt.question
+        speakCriticalQuestion(
+          nextPrompt,
+          coachLanguage,
         );
       })
       .catch((error) => {
