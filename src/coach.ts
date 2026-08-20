@@ -18,6 +18,10 @@ export type CoachResult = {
   opponentReplyUci?: string;
   bestMoveVerifiedThemes?: ChessTheme[];
   opponentReplyVerifiedThemes?: ChessTheme[];
+  bestMoveVerifiedThemeEvidence?: ThemeEvidence[];
+  opponentReplyVerifiedThemeEvidence?: ThemeEvidence[];
+  bestMoveFacts?: VerifiedMoveFacts;
+  opponentReplyFacts?: VerifiedMoveFacts;
   evaluationBefore?: number;
   evaluationAfter?: number;
 
@@ -65,6 +69,24 @@ export type CoachResult = {
   // Stockfish returns immediately, then the LLM wording arrives separately.
   analysisId?: string;
   explanationPending?: boolean;
+};
+
+export type ThemeEvidence = {
+  theme: ChessTheme;
+  reason: string;
+};
+
+export type VerifiedMoveFacts = {
+  move: string;
+  move_uci: string;
+  moved_piece: string;
+  from: string;
+  to: string;
+  is_capture: boolean;
+  captured_piece: string;
+  gives_check: boolean;
+  is_checkmate: boolean;
+  attacked_enemy_pieces: string[];
 };
 
 export type CoachDetail =

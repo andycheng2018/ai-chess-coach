@@ -122,20 +122,11 @@ CHINESE_THEME_LABELS = {
 }
 
 
-# These labels are calculated from the legal board position in
-# stockfish_analyzer.py. The language model may explain them, but it may not
-# introduce one when the deterministic verifier did not find it.
-VERIFIER_CONTROLLED_THEMES = frozenset({
-    "Fork / Double Attack",
-    "Pin",
-    "Discovered Check",
-    "Double Check",
-    "Hanging Piece",
-    "Mate in One",
-    "Promotion",
-    "Underpromotion",
-    "En Passant",
-})
+# Every structured label is now owned by the deterministic verifier. The
+# language model explains verified evidence; it never creates taxonomy data.
+VERIFIER_CONTROLLED_THEMES = frozenset(
+    CHESS_THEME_TERMS
+)
 
 
 VERIFIED_THEME_CLAIM_PATTERNS: dict[str, tuple[str, ...]] = {
@@ -179,7 +170,88 @@ VERIFIED_THEME_CLAIM_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\ben passant\b",
         r"吃过路兵",
     ),
+    "Mate in Two": (
+        r"\bmate in (?:two|2)\b",
+        r"两步将杀",
+    ),
+    "Mate in Three or More": (
+        r"\bmate in (?:three|3)(?:\s+or\s+more)?\b",
+        r"三步以上将杀",
+    ),
+    "Attack on f7 / f2": (
+        r"\battack(?:s|ed|ing)?\s+(?:on\s+)?f[27]\b",
+        r"攻击\s*f[27]",
+    ),
 }
+
+
+# Exact canonical tactic phrases are also protected in prose. Keep generic
+# teaching language such as "defend your king" available, while blocking a
+# named motif such as "skewer" unless the verifier supplied it.
+PROSE_GATED_THEMES = frozenset({
+    "Skewer",
+    "Discovered Attack",
+    "X-Ray Attack",
+    "Back-Rank Weakness",
+    "Back-Rank Mate",
+    "Deflection",
+    "Decoy",
+    "Removal of the Defender",
+    "Overloading",
+    "Interference",
+    "Clearance",
+    "Clearance Sacrifice",
+    "Sacrifice",
+    "Exchange Sacrifice",
+    "Queen Sacrifice",
+    "Zwischenzug",
+    "Desperado",
+    "Trapped Piece",
+    "Mating Net",
+    "Smothered Mate",
+    "Support Mate",
+    "Checkmate Pattern",
+    "Mate in Two",
+    "Mate in Three or More",
+    "Forced Mate",
+    "Perpetual Check",
+    "Windmill",
+    "Attack on f7 / f2",
+    "Attacking the Castled King",
+    "Simplification",
+    "Stalemate",
+    "Zugzwang",
+    "Endgame Tactic",
+    "Passed Pawn",
+    "Opposition",
+    "Open File",
+    "Weak Square",
+})
+
+
+for _theme in PROSE_GATED_THEMES:
+    if _theme in VERIFIED_THEME_CLAIM_PATTERNS:
+        continue
+
+    english = re.escape(_theme.lower()).replace(
+        r"\ ",
+        r"\s+",
+    ).replace(
+        r"\-",
+        r"[-\s]?",
+    )
+    chinese = re.escape(
+        CHINESE_THEME_LABELS.get(
+            _theme,
+            "",
+        )
+    )
+    patterns = [rf"\b{english}\b"]
+    if chinese:
+        patterns.append(chinese)
+    VERIFIED_THEME_CLAIM_PATTERNS[_theme] = tuple(
+        patterns
+    )
 
 
 def normalize_chess_themes(raw: Any) -> list[str]:
@@ -567,6 +639,22 @@ class LLMCoach:
             "opponent_reply_verified_themes": analysis.get(
                 "opponent_reply_verified_themes",
                 [],
+            ),
+            "best_move_verified_theme_evidence": analysis.get(
+                "best_move_verified_theme_evidence",
+                [],
+            ),
+            "opponent_reply_verified_theme_evidence": analysis.get(
+                "opponent_reply_verified_theme_evidence",
+                [],
+            ),
+            "best_move_facts": analysis.get(
+                "best_move_facts",
+                {},
+            ),
+            "opponent_reply_facts": analysis.get(
+                "opponent_reply_facts",
+                {},
             ),
             "classification": analysis.get(
                 "classification"

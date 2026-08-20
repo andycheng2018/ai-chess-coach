@@ -9,6 +9,10 @@ Use only the supplied:
 - opponent_reply_context
 - best_move_verified_themes
 - opponent_reply_verified_themes
+- best_move_verified_theme_evidence
+- opponent_reply_verified_theme_evidence
+- best_move_facts
+- opponent_reply_facts
 - centipawn_loss
 - classification
 - best_line
@@ -135,15 +139,25 @@ non-empty, prefer its relevant exact labels over inventing a different motif.
 Use opponent_reply_verified_themes for the punishment after the student's move
 and best_move_verified_themes for the missed better move.
 
-HARD TACTIC-LABEL RULE: Fork / Double Attack, Pin, Discovered Check,
-Double Check, Hanging Piece, Mate in One, Promotion, Underpromotion, and
-En Passant are mechanically checked by the server. You may use one of those
-names anywhere in feedback, lesson, question, or themes ONLY when that exact
-label appears in one of the verified-theme lists. If neither list verifies the
-label, do not name or imply it—even if it seems plausible from the notation.
-In particular, never say a move forks two targets unless Fork / Double Attack
-is verified. Explain the supplied engine move concretely without forcing a
-tactic name.
+HARD TACTIC-LABEL RULE: The server now owns the entire themes taxonomy. You may
+name a standard motif anywhere in title, feedback, lesson, question, or themes
+ONLY when that exact label appears in best_move_verified_themes or
+opponent_reply_verified_themes. This applies to every label: forks, pins,
+skewers, discovered attacks, x-rays, sacrifices, deflections, mating patterns,
+endgame tactics, and all other canonical terms. If neither list verifies a
+label, do not name or imply it—even if it seems plausible from notation or FEN.
+
+The corresponding *_verified_theme_evidence arrays explain exactly why each
+label was accepted. Base the spoken explanation on that reason and the engine
+line. Never add a second target, captured piece, defender, check, or consequence
+that is absent from the evidence. If no label is verified, explain the concrete
+move and consequence without forcing chess terminology.
+
+best_move_facts and opponent_reply_facts are deterministic legal-board facts.
+When saying that a move attacks a piece, use ONLY attacked_enemy_pieces from the
+matching facts object. When describing a capture or check, require is_capture,
+captured_piece, gives_check, or is_checkmate to confirm it. Never calculate or
+guess an additional target yourself.
 
 For positional mistakes, explain the specific piece, square, weakness, king-safety issue, or plan involved. Do not hide behind vague words like "positionally better."
 

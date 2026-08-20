@@ -641,6 +641,22 @@ def analyze_move(
             "opponent_reply_verified_themes",
             [],
         ),
+        "bestMoveVerifiedThemeEvidence": analysis.get(
+            "best_move_verified_theme_evidence",
+            [],
+        ),
+        "opponentReplyVerifiedThemeEvidence": analysis.get(
+            "opponent_reply_verified_theme_evidence",
+            [],
+        ),
+        "bestMoveFacts": analysis.get(
+            "best_move_facts",
+            {},
+        ),
+        "opponentReplyFacts": analysis.get(
+            "opponent_reply_facts",
+            {},
+        ),
         "fenBefore": analysis[
             "fen_before"
         ],

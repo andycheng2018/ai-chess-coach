@@ -15,6 +15,7 @@ if str(SERVER) not in sys.path:
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
 from coach.llm_coach import LLMCoach, ensure_primary_theme_named, normalize_chess_themes, supported_chess_themes, unverified_tactical_claims  # noqa: E402
 from coach.stockfish_analyzer import capture_context, classify_move, configure_supported_options, pv_to_san, verified_move_themes  # noqa: E402
+from coach.tactic_verifier import verified_move_facts, verify_tactical_line  # noqa: E402
 from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, critical_position_question, fallback_coaching  # noqa: E402
 
 
@@ -63,6 +64,13 @@ class CoreTests(unittest.TestCase):
                 chess.Move.from_uci("d2e4"),
             ),
         )
+        self.assertEqual(
+            verified_move_facts(
+                one_target_board,
+                chess.Move.from_uci("d2e4"),
+            )["attacked_enemy_pieces"],
+            ["pawn on c5"],
+        )
 
         queen_and_pawn_board = chess.Board(
             "4k3/8/5q2/2p5/8/8/3N4/4K3 w - - 0 1"
@@ -86,7 +94,7 @@ class CoreTests(unittest.TestCase):
                 analysis,
                 ["Fork / Double Attack", "Skewer"],
             ),
-            ["Skewer"],
+            [],
         )
         self.assertEqual(
             unverified_tactical_claims(
@@ -94,6 +102,13 @@ class CoreTests(unittest.TestCase):
                 analysis,
             ),
             ["Fork / Double Attack"],
+        )
+        self.assertEqual(
+            unverified_tactical_claims(
+                "This skewer wins the rook.",
+                analysis,
+            ),
+            ["Skewer"],
         )
 
     def test_coach_retries_an_unverified_spoken_fork(self) -> None:
@@ -150,6 +165,69 @@ class CoreTests(unittest.TestCase):
             len(coach.client.responses.calls),
             2,
         )
+
+    def test_line_verifier_names_slider_tactics_with_evidence(self) -> None:
+        cases = [
+            (
+                "r3k3/q7/8/8/8/8/R7/4K3 w - - 0 1",
+                "a2a6",
+                "Skewer",
+                "queen on a7",
+            ),
+            (
+                "q3k3/p7/8/8/8/8/R7/4K3 w - - 0 1",
+                "a2a6",
+                "X-Ray Attack",
+                "queen on a8",
+            ),
+            (
+                "4k3/8/8/8/4r3/3N4/8/KB6 w - - 0 1",
+                "d3f4",
+                "Discovered Attack",
+                "bishop on b1",
+            ),
+        ]
+
+        for fen, uci, expected_theme, reason_text in cases:
+            with self.subTest(theme=expected_theme):
+                board = chess.Board(fen)
+                evidence = verify_tactical_line(
+                    board,
+                    [chess.Move.from_uci(uci)],
+                )
+                match = next(
+                    item
+                    for item in evidence
+                    if item.theme == expected_theme
+                )
+                self.assertIn(reason_text, match.reason)
+
+    def test_line_verifier_names_specific_mating_pattern(self) -> None:
+        back_rank = chess.Board(
+            "6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1"
+        )
+        themes = {
+            item.theme
+            for item in verify_tactical_line(
+                back_rank,
+                [chess.Move.from_uci("e1e8")],
+            )
+        }
+        self.assertIn("Mate in One", themes)
+        self.assertIn("Back-Rank Mate", themes)
+
+        smothered = chess.Board(
+            "6rk/6pp/7N/8/2B5/8/8/4K3 w - - 0 1"
+        )
+        themes = {
+            item.theme
+            for item in verify_tactical_line(
+                smothered,
+                [chess.Move.from_uci("h6f7")],
+            )
+        }
+        self.assertIn("Mate in One", themes)
+        self.assertIn("Smothered Mate", themes)
 
     def test_confirmed_tactic_is_always_named_in_spoken_feedback(self) -> None:
         feedback = "The knight attacks the queen and rook at the same time."

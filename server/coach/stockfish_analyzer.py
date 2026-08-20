@@ -9,6 +9,14 @@ from typing import Any
 import chess
 import chess.engine
 
+from coach.tactic_verifier import (
+    ThemeEvidence,
+    prioritize_theme_evidence,
+    verified_move_facts,
+    verified_move_themes,
+    verify_tactical_line,
+)
+
 
 @dataclass
 class MoveAnalysis:
@@ -24,6 +32,10 @@ class MoveAnalysis:
     opponent_reply_context: dict[str, Any]
     best_move_verified_themes: list[str]
     opponent_reply_verified_themes: list[str]
+    best_move_verified_theme_evidence: list[dict[str, str]]
+    opponent_reply_verified_theme_evidence: list[dict[str, str]]
+    best_move_facts: dict[str, object]
+    opponent_reply_facts: dict[str, object]
     evaluation_before: int
     evaluation_after: int
     centipawn_loss: int
@@ -208,114 +220,6 @@ def capture_context(
     }
 
 
-def verified_move_themes(
-    board: chess.Board,
-    move: chess.Move,
-) -> list[str]:
-    """Verify concrete puzzle labels directly from one legal answer move."""
-    if move not in board.legal_moves:
-        return []
-
-    mover = board.turn
-    opponent = not mover
-    was_pinned = {
-        square
-        for square in chess.SQUARES
-        if (
-            (piece := board.piece_at(square)) is not None
-            and piece.color == opponent
-            and board.is_pinned(opponent, square)
-        )
-    }
-    is_capture = board.is_capture(move)
-    capture_facts = capture_context(
-        board,
-        move,
-    )
-    is_en_passant = board.is_en_passant(move)
-    after = board.copy(
-        stack=False
-    )
-    after.push(move)
-    themes: list[str] = []
-
-    if after.is_checkmate():
-        themes.append("Mate in One")
-
-    if move.promotion is not None:
-        themes.append(
-            "Promotion"
-            if move.promotion == chess.QUEEN
-            else "Underpromotion"
-        )
-
-    if is_en_passant:
-        themes.append("En Passant")
-
-    checkers = list(after.checkers())
-
-    if len(checkers) >= 2:
-        themes.append("Double Check")
-    elif (
-        checkers
-        and move.to_square not in checkers
-    ):
-        themes.append("Discovered Check")
-
-    newly_pinned = [
-        square
-        for square in chess.SQUARES
-        if (
-            (piece := after.piece_at(square)) is not None
-            and piece.color == opponent
-            and square not in was_pinned
-            and after.is_pinned(opponent, square)
-        )
-    ]
-
-    if newly_pinned:
-        themes.append("Pin")
-
-    moved_after = after.piece_at(
-        move.to_square
-    )
-
-    if moved_after is not None:
-        attacked_targets = [
-            square
-            for square in after.attacks(
-                move.to_square
-            )
-            if (
-                (target := after.piece_at(square)) is not None
-                and target.color == opponent
-            )
-        ]
-
-        # A fork/double attack must attack at least two actual enemy pieces.
-        # Pawns count as targets; attacking only one pawn never becomes a fork.
-        if len(attacked_targets) >= 2:
-            themes.append("Fork / Double Attack")
-
-    if (
-        is_capture
-        and capture_facts.get("is_capture")
-        and not capture_facts.get(
-            "legal_recaptures"
-        )
-    ):
-        themes.append("Hanging Piece")
-
-    # Preserve a stable, useful priority without duplicates.
-    result: list[str] = []
-
-    for theme in themes:
-        if theme not in result:
-            result.append(theme)
-
-    return result
-
-
 def infer_theme(
     board_before: chess.Board,
     board_after: chess.Board,
@@ -384,6 +288,73 @@ class StockfishAnalyzer:
             except Exception:
                 pass
 
+    def _verify_zugzwang(
+        self,
+        board: chess.Board,
+        move: chess.Move,
+        *,
+        profile: str,
+    ) -> ThemeEvidence | None:
+        """Use a null-move comparison to confirm rare endgame zugzwangs."""
+        if profile not in {"balanced", "deep"}:
+            return None
+        if (
+            move not in board.legal_moves
+            or board.is_capture(move)
+            or board.gives_check(move)
+            or move.promotion is not None
+        ):
+            return None
+
+        after = board.copy(stack=False)
+        after.push(move)
+        non_king_pieces = sum(
+            1
+            for piece in after.piece_map().values()
+            if piece.piece_type != chess.KING
+        )
+        legal_replies = list(after.legal_moves)
+        if (
+            non_king_pieces > 6
+            or len(legal_replies) < 2
+            or len(legal_replies) > 8
+            or after.is_check()
+        ):
+            return None
+
+        opponent = after.turn
+        passed = after.copy(stack=False)
+        passed.push(chess.Move.null())
+        verification_ms = 90 if profile == "balanced" else 160
+        limit = chess.engine.Limit(
+            time=verification_ms / 1000.0
+        )
+
+        try:
+            forced_info = self.engine.analyse(after, limit)
+            passed_info = self.engine.analyse(passed, limit)
+        except (
+            chess.engine.EngineError,
+            chess.engine.EngineTerminatedError,
+            BrokenPipeError,
+        ):
+            return None
+
+        forced_score = forced_info.get("score")
+        passed_score = passed_info.get("score")
+        if forced_score is None or passed_score is None:
+            return None
+
+        forced_eval = score_cp(forced_score, opponent)
+        passed_eval = score_cp(passed_score, opponent)
+        if passed_eval - forced_eval < 180:
+            return None
+
+        return ThemeEvidence(
+            "Zugzwang",
+            "In this low-material position, Stockfish evaluates every legal move much worse than the otherwise identical null-move position.",
+        )
+
     def analyze_move(
         self,
         board_before: chess.Board,
@@ -439,11 +410,33 @@ class StockfishAnalyzer:
             )
 
         best_san = board_before.san(best_move)
-        best_move_verified_themes = (
-            verified_move_themes(
+        best_mate_in = before_score.pov(player).mate()
+        best_move_theme_evidence: list[ThemeEvidence] = (
+            verify_tactical_line(
                 board_before,
-                best_move,
+                before_pv,
+                mate_in=best_mate_in,
             )
+        )
+        best_zugzwang = self._verify_zugzwang(
+            board_before,
+            best_move,
+            profile=profile,
+        )
+        if best_zugzwang is not None:
+            best_move_theme_evidence = (
+                prioritize_theme_evidence([
+                    *best_move_theme_evidence,
+                    best_zugzwang,
+                ])
+            )
+        best_move_verified_themes = [
+            item.theme
+            for item in best_move_theme_evidence
+        ]
+        best_move_facts = verified_move_facts(
+            board_before,
+            best_move,
         )
         eval_before = score_cp(before_score, player)
         best_line = pv_to_san(
@@ -459,6 +452,7 @@ class StockfishAnalyzer:
             # Reuse the best search instead of running Stockfish again.
             played_info = before_info
             played_pv = before_pv
+            played_score = before_score
             eval_played = eval_before
             cp_loss = 0
         else:
@@ -501,6 +495,8 @@ class StockfishAnalyzer:
             "legal_recaptures": [],
         }
         opponent_reply_verified_themes: list[str] = []
+        opponent_reply_theme_evidence: list[ThemeEvidence] = []
+        opponent_reply_facts: dict[str, object] = {}
 
         if continuation:
             reply = continuation[0]
@@ -512,11 +508,35 @@ class StockfishAnalyzer:
                     board_after,
                     reply,
                 )
-                opponent_reply_verified_themes = (
-                    verified_move_themes(
+                reply_mate_in = played_score.pov(
+                    not player
+                ).mate()
+                opponent_reply_theme_evidence = (
+                    verify_tactical_line(
                         board_after,
-                        reply,
+                        continuation,
+                        mate_in=reply_mate_in,
                     )
+                )
+                reply_zugzwang = self._verify_zugzwang(
+                    board_after,
+                    reply,
+                    profile=profile,
+                )
+                if reply_zugzwang is not None:
+                    opponent_reply_theme_evidence = (
+                        prioritize_theme_evidence([
+                            *opponent_reply_theme_evidence,
+                            reply_zugzwang,
+                        ])
+                    )
+                opponent_reply_verified_themes = [
+                    item.theme
+                    for item in opponent_reply_theme_evidence
+                ]
+                opponent_reply_facts = verified_move_facts(
+                    board_after,
+                    reply,
                 )
 
         refutation = pv_to_san(
@@ -563,6 +583,16 @@ class StockfishAnalyzer:
             opponent_reply_context=reply_context,
             best_move_verified_themes=best_move_verified_themes,
             opponent_reply_verified_themes=opponent_reply_verified_themes,
+            best_move_verified_theme_evidence=[
+                item.to_dict()
+                for item in best_move_theme_evidence
+            ],
+            opponent_reply_verified_theme_evidence=[
+                item.to_dict()
+                for item in opponent_reply_theme_evidence
+            ],
+            best_move_facts=best_move_facts,
+            opponent_reply_facts=opponent_reply_facts,
             evaluation_before=eval_before,
             evaluation_after=eval_played,
             centipawn_loss=cp_loss,
