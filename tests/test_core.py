@@ -15,10 +15,25 @@ if str(SERVER) not in sys.path:
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
 from coach.llm_coach import normalize_chess_themes  # noqa: E402
 from coach.stockfish_analyzer import classify_move, configure_supported_options, pv_to_san  # noqa: E402
-from app import COACH_ANALYSIS_PROFILES, analyze_move, fallback_coaching  # noqa: E402
+from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, fallback_coaching  # noqa: E402
 
 
 class CoreTests(unittest.TestCase):
+    def test_disconnected_client_does_not_raise_a_second_response_error(self) -> None:
+        handler = Handler.__new__(Handler)
+        handler.close_connection = False
+
+        def disconnected(_status):
+            raise BrokenPipeError("client canceled stale request")
+
+        handler.send_response = disconnected
+        handler._send(200, {"ok": True})
+        self.assertTrue(handler.close_connection)
+
+        handler.close_connection = False
+        handler._send_bytes(200, b"audio", "audio/mpeg")
+        self.assertTrue(handler.close_connection)
+
     def test_chess_themes_are_validated_deduplicated_and_limited(self) -> None:
         self.assertEqual(
             normalize_chess_themes([

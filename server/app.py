@@ -1136,18 +1136,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, payload: dict[str, Any]) -> None:
         body = b"" if status == 204 else json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Access-Control-Allow-Origin", self._cors_origin())
-        self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Cache-Control", "no-store")
-        if status != 204:
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        if body:
-            self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Access-Control-Allow-Origin", self._cors_origin())
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Cache-Control", "no-store")
+            if status != 204:
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+        except (
+            BrokenPipeError,
+            ConnectionAbortedError,
+            ConnectionResetError,
+        ):
+            # Mobile clients intentionally cancel stale coach requests when a
+            # newer move arrives. The response is no longer deliverable, so do
+            # not turn that normal disconnect into another attempted 503.
+            self.close_connection = True
 
     def _send_bytes(
         self,
@@ -1155,47 +1165,56 @@ class Handler(BaseHTTPRequestHandler):
         body: bytes,
         content_type: str,
     ) -> None:
-        self.send_response(status)
+        try:
+            self.send_response(status)
 
-        self.send_header(
-            "Access-Control-Allow-Origin",
-            self._cors_origin(),
-        )
+            self.send_header(
+                "Access-Control-Allow-Origin",
+                self._cors_origin(),
+            )
 
-        self.send_header(
-            "Vary",
-            "Origin",
-        )
+            self.send_header(
+                "Vary",
+                "Origin",
+            )
 
-        self.send_header(
-            "Access-Control-Allow-Methods",
-            "GET, POST, OPTIONS",
-        )
+            self.send_header(
+                "Access-Control-Allow-Methods",
+                "GET, POST, OPTIONS",
+            )
 
-        self.send_header(
-            "Access-Control-Allow-Headers",
-            "Content-Type",
-        )
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type",
+            )
 
-        self.send_header(
-            "Cache-Control",
-            "no-store",
-        )
+            self.send_header(
+                "Cache-Control",
+                "no-store",
+            )
 
-        self.send_header(
-            "Content-Type",
-            content_type,
-        )
+            self.send_header(
+                "Content-Type",
+                content_type,
+            )
 
-        self.send_header(
-            "Content-Length",
-            str(len(body)),
-        )
+            self.send_header(
+                "Content-Length",
+                str(len(body)),
+            )
 
-        self.end_headers()
+            self.end_headers()
 
-        if body:
-            self.wfile.write(body)
+            if body:
+                self.wfile.write(body)
+        except (
+            BrokenPipeError,
+            ConnectionAbortedError,
+            ConnectionResetError,
+        ):
+            # Audio requests can also be canceled when newer speech takes
+            # priority. A closed socket is not a provider or TTS failure.
+            self.close_connection = True
 
     def _json_body(self) -> dict[str, Any]:
         try:

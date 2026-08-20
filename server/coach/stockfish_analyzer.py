@@ -530,6 +530,11 @@ class StockfishAnalyzer:
                 chess.Move.null()
             )
 
+            # Stockfish only needs the resulting position. Keeping the
+            # synthetic null move in python-chess history causes a noisy UCI
+            # warning even though the position is transmitted correctly.
+            null_board.clear_stack()
+
             threat_limit = chess.engine.Limit(
                 time=max(
                     90,
