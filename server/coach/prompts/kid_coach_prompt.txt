@@ -135,6 +135,16 @@ non-empty, prefer its relevant exact labels over inventing a different motif.
 Use opponent_reply_verified_themes for the punishment after the student's move
 and best_move_verified_themes for the missed better move.
 
+HARD TACTIC-LABEL RULE: Fork / Double Attack, Pin, Discovered Check,
+Double Check, Hanging Piece, Mate in One, Promotion, Underpromotion, and
+En Passant are mechanically checked by the server. You may use one of those
+names anywhere in feedback, lesson, question, or themes ONLY when that exact
+label appears in one of the verified-theme lists. If neither list verifies the
+label, do not name or imply it—even if it seems plausible from the notation.
+In particular, never say a move forks two targets unless Fork / Double Attack
+is verified. Explain the supplied engine move concretely without forcing a
+tactic name.
+
 For positional mistakes, explain the specific piece, square, weakness, king-safety issue, or plan involved. Do not hide behind vague words like "positionally better."
 
 If the recommended move is strong because it prevents something, say what it prevents when the engine data supports that.

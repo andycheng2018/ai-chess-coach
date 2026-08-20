@@ -281,7 +281,7 @@ def verified_move_themes(
     )
 
     if moved_after is not None:
-        non_pawn_targets = [
+        attacked_targets = [
             square
             for square in after.attacks(
                 move.to_square
@@ -289,13 +289,12 @@ def verified_move_themes(
             if (
                 (target := after.piece_at(square)) is not None
                 and target.color == opponent
-                and target.piece_type != chess.PAWN
             )
         ]
 
-        # Two attacked non-pawn targets is a concrete double attack. This
-        # covers the familiar knight/pawn fork without relying on prose.
-        if len(non_pawn_targets) >= 2:
+        # A fork/double attack must attack at least two actual enemy pieces.
+        # Pawns count as targets; attacking only one pawn never becomes a fork.
+        if len(attacked_targets) >= 2:
             themes.append("Fork / Double Attack")
 
     if (

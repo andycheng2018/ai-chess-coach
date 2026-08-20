@@ -13,7 +13,7 @@ if str(SERVER) not in sys.path:
     sys.path.insert(0, str(SERVER))
 
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
-from coach.llm_coach import ensure_primary_theme_named, normalize_chess_themes  # noqa: E402
+from coach.llm_coach import LLMCoach, ensure_primary_theme_named, normalize_chess_themes, supported_chess_themes, unverified_tactical_claims  # noqa: E402
 from coach.stockfish_analyzer import capture_context, classify_move, configure_supported_options, pv_to_san, verified_move_themes  # noqa: E402
 from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, critical_position_question, fallback_coaching  # noqa: E402
 
@@ -51,6 +51,104 @@ class CoreTests(unittest.TestCase):
                 hanging_board,
                 chess.Move.from_uci("a1a8"),
             ),
+        )
+
+        one_target_board = chess.Board(
+            "4k3/8/8/2p5/8/8/3N4/4K3 w - - 0 1"
+        )
+        self.assertNotIn(
+            "Fork / Double Attack",
+            verified_move_themes(
+                one_target_board,
+                chess.Move.from_uci("d2e4"),
+            ),
+        )
+
+        queen_and_pawn_board = chess.Board(
+            "4k3/8/5q2/2p5/8/8/3N4/4K3 w - - 0 1"
+        )
+        self.assertIn(
+            "Fork / Double Attack",
+            verified_move_themes(
+                queen_and_pawn_board,
+                chess.Move.from_uci("d2e4"),
+            ),
+        )
+
+    def test_unverified_fork_is_rejected_from_labels_and_prose(self) -> None:
+        analysis = {
+            "best_move_verified_themes": [],
+            "opponent_reply_verified_themes": [],
+        }
+
+        self.assertEqual(
+            supported_chess_themes(
+                analysis,
+                ["Fork / Double Attack", "Skewer"],
+            ),
+            ["Skewer"],
+        )
+        self.assertEqual(
+            unverified_tactical_claims(
+                "Knight e4 forks the queen and pawn.",
+                analysis,
+            ),
+            ["Fork / Double Attack"],
+        )
+
+    def test_coach_retries_an_unverified_spoken_fork(self) -> None:
+        class FakeResponse:
+            def __init__(self, data):
+                self.output_text = __import__("json").dumps(data)
+
+        class FakeResponses:
+            def __init__(self):
+                self.calls = []
+                self.outputs = [
+                    {
+                        "title": "Missed tactic",
+                        "feedback": "Knight e4 forks the queen and pawn.",
+                        "lesson": "Look for forks.",
+                        "question": "",
+                        "themes": ["Fork / Double Attack"],
+                    },
+                    {
+                        "title": "Pawn pressure",
+                        "feedback": "Knight e4 attacks the pawn on c5.",
+                        "lesson": "Check every attacked square.",
+                        "question": "",
+                        "themes": [],
+                    },
+                ]
+
+            def create(self, **kwargs):
+                self.calls.append(kwargs)
+                return FakeResponse(self.outputs.pop(0))
+
+        class FakeClient:
+            def __init__(self):
+                self.responses = FakeResponses()
+
+        coach = LLMCoach.__new__(LLMCoach)
+        coach.client = FakeClient()
+        coach.model = "test-model"
+        coach.instructions = "Use Stockfish facts only."
+
+        result = coach.create_feedback({
+            "played_move": "Qc4",
+            "best_move": "Ne4",
+            "best_move_verified_themes": [],
+            "opponent_reply_verified_themes": [],
+        })
+
+        self.assertEqual(
+            result["feedback"],
+            "Knight e4 attacks the pawn on c5.",
+        )
+        self.assertEqual(result["themes"], [])
+        self.assertEqual(
+            len(coach.client.responses.calls),
+            2,
         )
 
     def test_confirmed_tactic_is_always_named_in_spoken_feedback(self) -> None:

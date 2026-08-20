@@ -351,20 +351,6 @@ function buildPracticePuzzle(
     return null;
   }
 
-  const severeEnough =
-    note.classification === 'mistake' ||
-    note.classification === 'blunder' ||
-    note.centipawnLoss >= 120;
-
-  if (!severeEnough) return null;
-
-  const replyStrength =
-    forcingMoveStrength(
-      note.fenAfter,
-      note.opponentReplyUci,
-      note.opponentReply,
-    );
-
   const bestStrength =
     forcingMoveStrength(
       note.fenBefore,
@@ -383,6 +369,18 @@ function buildPracticePuzzle(
       note,
       'find-better',
     );
+
+  const severeEnough =
+    note.classification === 'mistake' ||
+    note.classification === 'blunder' ||
+    note.centipawnLoss >= 120;
+
+  // A verified tactical reply is itself a useful practice position, even
+  // when it is a quiet fork or pin and even when the preceding evaluation
+  // loss did not cross the old 120-centipawn cutoff.
+  if (!severeEnough && !replyPuzzleTheme) {
+    return null;
+  }
 
   const clearPositionalLesson =
     Boolean(bestPuzzleTheme) &&
@@ -406,10 +404,10 @@ function buildPracticePuzzle(
       bestPuzzleTheme as ChessTheme,
     );
 
-  // Strong preference: if the student's move allowed a clear tactical
-  // punishment, make them PLAY that punishment from the opponent side.
+  // Strong preference: if Stockfish's opponent reply has a mechanically
+  // verified theme, make the student PLAY it from the opponent side. Do not
+  // require a capture or check; many real forks and pins are quiet moves.
   if (
-    replyStrength >= 3 &&
     replyPuzzleTheme &&
     note.opponentReply &&
     note.opponentReplyUci &&

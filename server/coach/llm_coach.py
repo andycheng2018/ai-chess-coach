@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -121,6 +122,66 @@ CHINESE_THEME_LABELS = {
 }
 
 
+# These labels are calculated from the legal board position in
+# stockfish_analyzer.py. The language model may explain them, but it may not
+# introduce one when the deterministic verifier did not find it.
+VERIFIER_CONTROLLED_THEMES = frozenset({
+    "Fork / Double Attack",
+    "Pin",
+    "Discovered Check",
+    "Double Check",
+    "Hanging Piece",
+    "Mate in One",
+    "Promotion",
+    "Underpromotion",
+    "En Passant",
+})
+
+
+VERIFIED_THEME_CLAIM_PATTERNS: dict[str, tuple[str, ...]] = {
+    "Fork / Double Attack": (
+        r"\bfork(?:s|ed|ing)?\b",
+        r"\bdouble attack\b",
+        r"叉攻|双攻",
+    ),
+    "Pin": (
+        r"\bpin(?:s|ned|ning)?\b",
+        r"牵制",
+    ),
+    "Discovered Check": (
+        r"\bdiscovered check\b",
+        r"闪将",
+    ),
+    "Double Check": (
+        r"\bdouble check\b",
+        r"双将",
+    ),
+    "Hanging Piece": (
+        r"\bhanging piece\b",
+        r"\bundefended piece\b",
+        r"\bloose piece\b",
+        r"悬子|挂子",
+    ),
+    "Mate in One": (
+        r"\bmate in (?:one|1)\b",
+        r"\bone[ -]move (?:mate|checkmate)\b",
+        r"一步将杀",
+    ),
+    "Underpromotion": (
+        r"\bunderpromot(?:e|es|ed|ing|ion)\b",
+        r"低级升变",
+    ),
+    "Promotion": (
+        r"\bpromot(?:e|es|ed|ing|ion)\b",
+        r"升变",
+    ),
+    "En Passant": (
+        r"\ben passant\b",
+        r"吃过路兵",
+    ),
+}
+
+
 def normalize_chess_themes(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
@@ -138,6 +199,89 @@ def normalize_chess_themes(raw: Any) -> list[str]:
             break
 
     return result
+
+
+def verified_chess_themes(
+    analysis: dict[str, Any],
+) -> list[str]:
+    """Return only tactic labels calculated from legal engine moves."""
+    return normalize_chess_themes([
+        *normalize_chess_themes(
+            analysis.get(
+                "opponent_reply_verified_themes"
+            )
+        ),
+        *normalize_chess_themes(
+            analysis.get(
+                "best_move_verified_themes"
+            )
+        ),
+    ])
+
+
+def supported_chess_themes(
+    analysis: dict[str, Any],
+    model_themes: Any,
+) -> list[str]:
+    """Reject model-created versions of mechanically verifiable labels."""
+    verified = verified_chess_themes(
+        analysis
+    )
+    verified_set = set(verified)
+    model_supported = [
+        theme
+        for theme in normalize_chess_themes(
+            model_themes
+        )
+        if (
+            theme not in VERIFIER_CONTROLLED_THEMES
+            or theme in verified_set
+        )
+    ]
+
+    return normalize_chess_themes([
+        *verified,
+        *model_supported,
+    ])
+
+
+def unverified_tactical_claims(
+    text: str,
+    analysis: dict[str, Any],
+) -> list[str]:
+    """Find concrete tactic names contradicted by the move verifier."""
+    if not text:
+        return []
+
+    verified = set(
+        verified_chess_themes(
+            analysis
+        )
+    )
+    claims: list[str] = []
+
+    for theme, patterns in VERIFIED_THEME_CLAIM_PATTERNS.items():
+        accepted = {theme}
+
+        # Underpromotion is also a promotion, so the general word is valid
+        # whenever the more specific verified label is present.
+        if theme == "Promotion":
+            accepted.add("Underpromotion")
+
+        if verified.intersection(accepted):
+            continue
+
+        if any(
+            re.search(
+                pattern,
+                text,
+                flags=re.IGNORECASE,
+            )
+            for pattern in patterns
+        ):
+            claims.append(theme)
+
+    return claims
 
 
 def ensure_primary_theme_named(
@@ -487,47 +631,109 @@ class LLMCoach:
             + recent_instruction
         )
 
-        response = self.client.responses.create(
-            model=self.model,
+        def request_data(
+            correction: str = "",
+        ) -> dict[str, Any]:
+            response = self.client.responses.create(
+                model=self.model,
 
-            instructions=combined_instructions,
+                instructions=(
+                    combined_instructions
+                    + correction
+                ),
 
-            input=json.dumps(
-                payload,
-                ensure_ascii=False,
-            ),
+                input=json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                ),
 
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "chess_coach_feedback",
-                    "strict": True,
-                    "schema": COACH_RESPONSE_SCHEMA,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "chess_coach_feedback",
+                        "strict": True,
+                        "schema": COACH_RESPONSE_SCHEMA,
+                    },
                 },
-            },
 
-            max_output_tokens=int(
-                detail_config[
-                    "max_output_tokens"
-                ]
-            ),
+                max_output_tokens=int(
+                    detail_config[
+                        "max_output_tokens"
+                    ]
+                ),
 
-            store=False,
-        )
-
-        text = response.output_text.strip()
-
-        if not text:
-            raise ValueError(
-                "Coach returned an empty response."
+                store=False,
             )
 
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as error:
+            text = response.output_text.strip()
+
+            if not text:
+                raise ValueError(
+                    "Coach returned an empty response."
+                )
+
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    "Coach returned invalid JSON."
+                ) from error
+
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    "Coach returned an invalid response object."
+                )
+
+            return parsed
+
+        data = request_data()
+
+        def claim_text(
+            value: dict[str, Any],
+        ) -> str:
+            return " ".join(
+                str(value.get(field, ""))
+                for field in (
+                    "title",
+                    "feedback",
+                    "lesson",
+                    "question",
+                )
+            )
+
+        unsupported_claims = (
+            unverified_tactical_claims(
+                claim_text(data),
+                analysis,
+            )
+        )
+
+        if unsupported_claims:
+            labels = ", ".join(
+                unsupported_claims
+            )
+            data = request_data(
+                "\n\nCORRECTION REQUIRED: Your previous draft named "
+                f"unsupported tactical labels ({labels}). The deterministic "
+                "verified-theme lists do not contain those labels. Rewrite "
+                "all fields without those claims. Describe only the concrete "
+                "engine moves and consequences supplied in the input."
+            )
+
+            unsupported_claims = (
+                unverified_tactical_claims(
+                    claim_text(data),
+                    analysis,
+                )
+            )
+
+        if unsupported_claims:
             raise ValueError(
-                "Coach returned invalid JSON."
-            ) from error
+                "Coach repeated an unverified tactical claim: "
+                + ", ".join(
+                    unsupported_claims
+                )
+            )
 
         title = str(
             data.get("title", "")
@@ -545,21 +751,10 @@ class LLMCoach:
             data.get("question", "")
         ).strip()
 
-        themes = normalize_chess_themes([
-            *normalize_chess_themes(
-                analysis.get(
-                    "opponent_reply_verified_themes"
-                )
-            ),
-            *normalize_chess_themes(
-                data.get("themes")
-            ),
-            *normalize_chess_themes(
-                analysis.get(
-                    "best_move_verified_themes"
-                )
-            ),
-        ])
+        themes = supported_chess_themes(
+            analysis,
+            data.get("themes"),
+        )
 
         feedback = ensure_primary_theme_named(
             feedback,
