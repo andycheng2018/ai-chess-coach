@@ -2832,6 +2832,7 @@ export default function App() {
       lastOpponentMove,
       lastOpponentMoveUci,
       coachLanguage,
+      coachDetail,
       recentQuestions,
       controller.signal,
     )
@@ -2917,6 +2918,7 @@ export default function App() {
     position,
     initialFen,
     coachLanguage,
+    coachDetail,
     voiceEnabled,
     coachExplanationPending,
     playerMoveAnalysisPending,

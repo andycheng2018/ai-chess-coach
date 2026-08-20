@@ -21,6 +21,7 @@ class MoveAnalysis:
     best_move_uci: str
     opponent_reply: str
     opponent_reply_uci: str
+    opponent_reply_context: dict[str, Any]
     evaluation_before: int
     evaluation_after: int
     centipawn_loss: int
@@ -129,6 +130,80 @@ def pv_to_san(
         temp.push(move)
 
     return result
+
+
+def capture_context(
+    board: chess.Board,
+    move: chess.Move,
+) -> dict[str, Any]:
+    """Describe whether an engine capture can be legally recaptured."""
+    if (
+        move not in board.legal_moves
+        or not board.is_capture(move)
+    ):
+        return {
+            "is_capture": False,
+            "legal_recaptures": [],
+        }
+
+    capturing_piece = board.piece_at(
+        move.from_square
+    )
+    captured_piece = board.piece_at(
+        move.to_square
+    )
+
+    if board.is_en_passant(move):
+        captured_square = (
+            move.to_square - 8
+            if board.turn == chess.WHITE
+            else move.to_square + 8
+        )
+        captured_piece = board.piece_at(
+            captured_square
+        )
+
+    destination = chess.square_name(
+        move.to_square
+    )
+    after = board.copy(
+        stack=False
+    )
+    capture_san = board.san(move)
+    after.push(move)
+
+    legal_recaptures = [
+        after.san(reply)
+        for reply in after.legal_moves
+        if (
+            reply.to_square == move.to_square
+            and after.is_capture(reply)
+        )
+    ][:4]
+
+    return {
+        "is_capture": True,
+        "move": capture_san,
+        "capturing_piece": (
+            chess.piece_name(
+                capturing_piece.piece_type
+            )
+            if capturing_piece is not None
+            else ""
+        ),
+        "captured_piece": (
+            chess.piece_name(
+                captured_piece.piece_type
+            )
+            if captured_piece is not None
+            else ""
+        ),
+        "destination": destination,
+        "legally_recapturable": bool(
+            legal_recaptures
+        ),
+        "legal_recaptures": legal_recaptures,
+    }
 
 
 def infer_theme(
@@ -305,6 +380,10 @@ class StockfishAnalyzer:
 
         reply_san = ""
         reply_uci = ""
+        reply_context: dict[str, Any] = {
+            "is_capture": False,
+            "legal_recaptures": [],
+        }
 
         if continuation:
             reply = continuation[0]
@@ -312,6 +391,10 @@ class StockfishAnalyzer:
             if reply in board_after.legal_moves:
                 reply_san = board_after.san(reply)
                 reply_uci = reply.uci()
+                reply_context = capture_context(
+                    board_after,
+                    reply,
+                )
 
         refutation = pv_to_san(
             board_after,
@@ -354,6 +437,7 @@ class StockfishAnalyzer:
             best_move_uci=best_move.uci(),
             opponent_reply=reply_san,
             opponent_reply_uci=reply_uci,
+            opponent_reply_context=reply_context,
             evaluation_before=eval_before,
             evaluation_after=eval_played,
             centipawn_loss=cp_loss,
@@ -373,6 +457,9 @@ class StockfishAnalyzer:
     def analyze_critical_position(
         self,
         board: chess.Board,
+        *,
+        time_ms: int | None = None,
+        profile: str = "balanced",
     ) -> dict[str, Any]:
         """
         Decide whether the side to move is facing a genuinely useful
@@ -391,12 +478,19 @@ class StockfishAnalyzer:
 
         player = board.turn
 
-        # This feature must never slow the main coaching pipeline very much.
+        requested_ms = (
+            self.time_ms
+            if time_ms is None
+            else int(time_ms)
+        )
+
+        # Respect the selected detail mode while keeping pre-move questions
+        # responsive enough for live play.
         critical_ms = max(
-            120,
+            300,
             min(
-                180,
-                self.time_ms,
+                1200,
+                requested_ms,
             ),
         )
 
@@ -537,10 +631,10 @@ class StockfishAnalyzer:
 
             threat_limit = chess.engine.Limit(
                 time=max(
-                    90,
+                    150,
                     min(
-                        120,
-                        critical_ms,
+                        350,
+                        critical_ms // 2,
                     ),
                 )
                 / 1000.0
@@ -679,6 +773,7 @@ class StockfishAnalyzer:
             "threat_gives_check": threat_gives_check,
             "threat_is_mate": threat_is_mate,
             "diagnostics": {
+                "profile": profile,
                 "budgetMs": critical_ms,
                 "bestGapCp": best_gap,
                 "search": info_diagnostics(

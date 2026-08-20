@@ -68,6 +68,59 @@ CHESS_THEME_TERMS = (
 )
 
 
+CHINESE_THEME_LABELS = {
+    "Fork / Double Attack": "叉攻 / 双攻",
+    "Pin": "牵制",
+    "Skewer": "串击",
+    "Discovered Attack": "闪击",
+    "Discovered Check": "闪将",
+    "Double Check": "双将",
+    "X-Ray Attack": "X 射线攻击",
+    "Defense": "防守",
+    "Back-Rank Weakness": "后排弱点",
+    "Back-Rank Mate": "后排将杀",
+    "Deflection": "引离",
+    "Decoy": "诱离",
+    "Removal of the Defender": "消除防守子",
+    "Overloading": "过载",
+    "Interference": "干扰",
+    "Clearance": "腾挪",
+    "Clearance Sacrifice": "腾挪弃子",
+    "Sacrifice": "弃子",
+    "Exchange Sacrifice": "弃质量",
+    "Queen Sacrifice": "弃后",
+    "Zwischenzug": "中间着",
+    "Desperado": "亡命攻击",
+    "Hanging Piece": "悬子",
+    "Trapped Piece": "困子",
+    "Mating Net": "将杀网",
+    "Smothered Mate": "闷杀",
+    "Support Mate": "保护式将杀",
+    "Checkmate Pattern": "基本将杀型",
+    "Mate in One": "一步将杀",
+    "Mate in Two": "两步将杀",
+    "Mate in Three or More": "三步以上将杀",
+    "Forced Mate": "强制将杀",
+    "Perpetual Check": "长将",
+    "Windmill": "风车战术",
+    "Attack on f7 / f2": "攻击 f7 / f2",
+    "Attacking the Castled King": "进攻易位后的王",
+    "Vulnerable King": "王位脆弱",
+    "King Safety": "王的安全",
+    "Simplification": "简化局面",
+    "Promotion": "升变",
+    "Underpromotion": "低级升变",
+    "En Passant": "吃过路兵",
+    "Stalemate": "逼和",
+    "Zugzwang": "无着可动",
+    "Endgame Tactic": "残局战术",
+    "Passed Pawn": "通路兵",
+    "Opposition": "对王",
+    "Open File": "开放线",
+    "Weak Square": "弱格",
+}
+
+
 def normalize_chess_themes(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
@@ -85,6 +138,56 @@ def normalize_chess_themes(raw: Any) -> list[str]:
             break
 
     return result
+
+
+def ensure_primary_theme_named(
+    feedback: str,
+    themes: list[str],
+    language: str,
+) -> str:
+    """Guarantee that a confirmed structured theme is also spoken aloud."""
+    if not feedback or not themes:
+        return feedback
+
+    primary = themes[0]
+    normalized_feedback = feedback.lower().replace(
+        "-",
+        " ",
+    )
+
+    if language == "zh-CN":
+        label = CHINESE_THEME_LABELS.get(
+            primary,
+            primary,
+        )
+        if (
+            label in feedback
+            or primary.lower() in normalized_feedback
+        ):
+            return feedback
+
+        return f"这里的关键主题是{label}。{feedback}"
+
+    aliases = {
+        primary.lower().replace("-", " "),
+    }
+
+    if "/" in primary:
+        aliases.update(
+            part.strip().lower()
+            for part in primary.split("/")
+        )
+
+    if any(
+        alias and alias in normalized_feedback
+        for alias in aliases
+    ):
+        return feedback
+
+    return (
+        f"The key pattern here is {primary.lower()}. "
+        f"{feedback}"
+    )
 
 
 COACH_RESPONSE_SCHEMA = {
@@ -309,6 +412,10 @@ class LLMCoach:
             "opponent_reply_uci": analysis.get(
                 "opponent_reply_uci"
             ),
+            "opponent_reply_context": analysis.get(
+                "opponent_reply_context",
+                {},
+            ),
             "classification": analysis.get(
                 "classification"
             ),
@@ -434,6 +541,12 @@ class LLMCoach:
             data.get("themes", [])
         )
 
+        feedback = ensure_primary_theme_named(
+            feedback,
+            themes,
+            normalized_language,
+        )
+
         if not feedback:
             raise ValueError(
                 "Coach returned empty feedback."
@@ -506,6 +619,10 @@ class LLMCoach:
                 "attacked_targets",
                 [],
             ),
+            "attacked_target_details": position.get(
+                "attacked_target_details",
+                [],
+            ),
 
             # These are private chess facts used to formulate a good
             # question. The answer must NOT reveal them.
@@ -570,11 +687,22 @@ Use ONLY supplied facts:
 - opponent_moved_piece
 - newly_pinned_squares
 - attacked_targets
+- attacked_target_details
 - threat_move / threat_line
 - in_check
 - FEN
 
 Never invent a pin, target, threat, or plan.
+
+An attacked target is not automatically hanging. attacked_target_details tells
+you whether that piece is defended and lists legal recaptures after a
+hypothetical capture. If legal_recaptures is non-empty, do NOT imply that the
+opponent can simply win or take that piece. Describe it only as pressure unless
+threat_move and threat_line prove a concrete tactic beyond the recapture.
+
+Only ask about a specific capture as an immediate threat when threat_move is
+that capture and threat_line supports the consequence. Otherwise ask what the
+opponent's move pressures, prepares, pins, or improves.
 
 If newly_pinned_squares is non-empty, prefer asking about the new pin.
 If the opponent just gave check, ask what their checking move is trying

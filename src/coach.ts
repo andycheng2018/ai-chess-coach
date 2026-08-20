@@ -243,6 +243,7 @@ export async function checkCriticalPosition(
   lastOpponentMove: string,
   lastOpponentMoveUci: string,
   language: CoachLanguage = 'en',
+  detail: CoachDetail = 'balanced',
   recentQuestions: string[] = [],
   signal?: AbortSignal,
 ): Promise<CriticalPositionPrompt> {
@@ -259,6 +260,7 @@ export async function checkCriticalPosition(
         lastOpponentMove,
         lastOpponentMoveUci,
         language,
+        detail,
         recentQuestions,
       }),
       signal,

@@ -13,12 +13,112 @@ if str(SERVER) not in sys.path:
     sys.path.insert(0, str(SERVER))
 
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
-from coach.llm_coach import normalize_chess_themes  # noqa: E402
-from coach.stockfish_analyzer import classify_move, configure_supported_options, pv_to_san  # noqa: E402
-from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, fallback_coaching  # noqa: E402
+from coach.llm_coach import ensure_primary_theme_named, normalize_chess_themes  # noqa: E402
+from coach.stockfish_analyzer import capture_context, classify_move, configure_supported_options, pv_to_san  # noqa: E402
+from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, critical_position_question, fallback_coaching  # noqa: E402
 
 
 class CoreTests(unittest.TestCase):
+    def test_confirmed_tactic_is_always_named_in_spoken_feedback(self) -> None:
+        feedback = "The knight attacks the queen and rook at the same time."
+        named = ensure_primary_theme_named(
+            feedback,
+            ["Fork / Double Attack"],
+            "en",
+        )
+        self.assertIn("fork / double attack", named.lower())
+
+        already_named = "This fork wins the exchange."
+        self.assertEqual(
+            ensure_primary_theme_named(
+                already_named,
+                ["Fork / Double Attack"],
+                "en",
+            ),
+            already_named,
+        )
+
+    def test_capture_context_reports_legal_recapture(self) -> None:
+        board = chess.Board(
+            "4k3/8/8/q7/8/8/2N5/R3K3 b - - 0 1"
+        )
+        context = capture_context(
+            board,
+            chess.Move.from_uci("a5a1"),
+        )
+        self.assertTrue(context["is_capture"])
+        self.assertTrue(context["legally_recapturable"])
+        self.assertIn("Nxa1", context["legal_recaptures"])
+
+    def test_critical_question_uses_selected_analysis_profile(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        class FakeAnalyzer:
+            def analyze_critical_position(self, board, **kwargs):
+                calls.append(kwargs)
+                return {"is_critical": False}
+
+        with patch("app.get_analyzer", return_value=FakeAnalyzer()):
+            result = critical_position_question({
+                "fen": chess.STARTING_FEN,
+                "detail": "deep",
+            })
+
+        self.assertFalse(result["isCritical"])
+        self.assertEqual(calls, [{
+            "time_ms": COACH_ANALYSIS_PROFILES["deep"]["time_ms"],
+            "profile": "deep",
+        }])
+
+    def test_critical_question_marks_attacked_rook_as_recapturable(self) -> None:
+        before = chess.Board(
+            "3qk3/8/8/8/8/8/2N4K/R7 b - - 0 1"
+        )
+        after = before.copy()
+        after.push_uci("d8a5")
+        captured: dict[str, object] = {}
+
+        class FakeAnalyzer:
+            def analyze_critical_position(self, board, **kwargs):
+                return {
+                    "is_critical": True,
+                    "in_check": False,
+                    "threat_is_capture": True,
+                    "threat_is_mate": False,
+                    "threat_gives_check": False,
+                }
+
+        class FakeCoach:
+            def create_critical_question(self, position, **kwargs):
+                captured.update(position)
+                return {
+                    "title": "Opponent idea",
+                    "question": "What pressure did the queen add?",
+                }
+
+        with (
+            patch("app.get_analyzer", return_value=FakeAnalyzer()),
+            patch("app.get_llm_coach", return_value=FakeCoach()),
+        ):
+            result = critical_position_question({
+                "fen": after.fen(),
+                "fenBeforeOpponent": before.fen(),
+                "lastOpponentMove": "Qa5",
+                "lastOpponentMoveUci": "d8a5",
+                "detail": "quick",
+            })
+
+        self.assertTrue(result["isCritical"])
+        details = captured["attacked_target_details"]
+        self.assertIsInstance(details, list)
+        rook = next(
+            item
+            for item in details
+            if item["target"] == "rook on a1"
+        )
+        self.assertTrue(rook["defended"])
+        self.assertIn("Nxa1", rook["legal_recaptures"])
+
     def test_disconnected_client_does_not_raise_a_second_response_error(self) -> None:
         handler = Handler.__new__(Handler)
         handler.close_connection = False
@@ -57,6 +157,9 @@ class CoreTests(unittest.TestCase):
         self.assertLess(balanced["time_ms"], deep["time_ms"])
         self.assertLess(quick["pv_plies"], balanced["pv_plies"])
         self.assertLess(balanced["pv_plies"], deep["pv_plies"])
+        self.assertGreaterEqual(quick["time_ms"], 400)
+        self.assertGreaterEqual(balanced["time_ms"], 900)
+        self.assertGreaterEqual(deep["time_ms"], 2200)
 
     def test_selected_detail_is_forwarded_to_stockfish(self) -> None:
         calls: list[dict[str, object]] = []

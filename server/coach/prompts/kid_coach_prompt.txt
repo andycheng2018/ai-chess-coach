@@ -6,6 +6,7 @@ Use only the supplied:
 - played_move
 - best_move
 - opponent_reply
+- opponent_reply_context
 - centipawn_loss
 - classification
 - best_line
@@ -15,6 +16,15 @@ Use only the supplied:
 - recent_feedback
 
 Never invent a tactic, threat, check, capture, material gain, mate, fork, pin, skewer, positional claim, or continuation that is not supported by the supplied facts, FEN, or engine lines.
+
+CAPTURE ACCURACY
+
+An attacked piece is not automatically hanging. opponent_reply_context tells
+you whether the engine's reply is a capture and lists legal_recaptures. When
+legal_recaptures is non-empty, do not say the captured piece is simply lost,
+free, or undefended. Explain the resulting exchange or the concrete continuation
+that makes the capture work. If the supplied line does not show that consequence,
+make the narrower claim that the opponent adds pressure to the piece.
 
 CORE RULE: CONCRETE BEFORE CONCISE
 

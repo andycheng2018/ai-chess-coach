@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 from bot_runtime import BOT_LEVELS, runtime
-from coach.stockfish_analyzer import StockfishAnalyzer, find_stockfish
+from coach.stockfish_analyzer import StockfishAnalyzer, capture_context, find_stockfish
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 
@@ -38,12 +38,12 @@ PORT = int(
         os.environ.get("CHESS_SERVER_PORT", "8765")
     )
 )
-COACH_TIME_MS = max(200, int(os.environ.get("COACH_TIME_MS", "250")))
+COACH_TIME_MS = max(200, int(os.environ.get("COACH_TIME_MS", "400")))
 
 COACH_ANALYSIS_PROFILES = {
     "quick": {
         "time_ms": max(
-            200,
+            400,
             int(
                 os.environ.get(
                     "COACH_TIME_MS_QUICK",
@@ -51,31 +51,31 @@ COACH_ANALYSIS_PROFILES = {
                 )
             ),
         ),
-        "pv_plies": 6,
+        "pv_plies": 8,
     },
     "balanced": {
         "time_ms": max(
-            200,
+            900,
             int(
                 os.environ.get(
                     "COACH_TIME_MS_BALANCED",
-                    "800",
+                    "900",
                 )
             ),
         ),
-        "pv_plies": 10,
+        "pv_plies": 12,
     },
     "deep": {
         "time_ms": max(
-            200,
+            2200,
             int(
                 os.environ.get(
                     "COACH_TIME_MS_DEEP",
-                    "2000",
+                    "2200",
                 )
             ),
         ),
-        "pv_plies": 14,
+        "pv_plies": 18,
     },
 }
 
@@ -891,6 +891,20 @@ def critical_position_question(
         )
     )
 
+    detail = str(
+        payload.get(
+            "detail",
+            "balanced",
+        )
+    ).strip().lower()
+
+    if detail not in COACH_ANALYSIS_PROFILES:
+        detail = "balanced"
+
+    analysis_profile = COACH_ANALYSIS_PROFILES[
+        detail
+    ]
+
     recent_questions: list[str] = []
 
     raw_recent = payload.get(
@@ -915,7 +929,11 @@ def critical_position_question(
             position = (
                 get_analyzer()
                 .analyze_critical_position(
-                    board
+                    board,
+                    time_ms=analysis_profile[
+                        "time_ms"
+                    ],
+                    profile=detail,
                 )
             )
         except (
@@ -928,13 +946,20 @@ def critical_position_question(
             position = (
                 get_analyzer()
                 .analyze_critical_position(
-                    board
+                    board,
+                    time_ms=analysis_profile[
+                        "time_ms"
+                    ],
+                    profile=detail,
                 )
             )
 
     moved_piece_name = ""
     newly_pinned_squares: list[str] = []
     attacked_targets: list[str] = []
+    attacked_target_details: list[
+        dict[str, Any]
+    ] = []
 
     if (
         before_board is not None
@@ -1030,6 +1055,69 @@ def critical_position_question(
                             )
                         )
 
+                        target_name = (
+                            f"{chess.piece_name(target.piece_type)} "
+                            f"on {chess.square_name(target_square)}"
+                        )
+
+                        defenders = [
+                            (
+                                f"{chess.piece_name(defender.piece_type)} "
+                                f"on {chess.square_name(defender_square)}"
+                            )
+                            for defender_square in board.attackers(
+                                student_color,
+                                target_square,
+                            )
+                            if (
+                                defender := board.piece_at(
+                                    defender_square
+                                )
+                            ) is not None
+                        ]
+
+                        detail_item: dict[str, Any] = {
+                            "target": target_name,
+                            "defended": bool(defenders),
+                            "defended_by": defenders[:4],
+                            "capture_is_legal_after_pass": False,
+                            "legal_recaptures": [],
+                        }
+
+                        if (
+                            not board.is_check()
+                            and board.ep_square is None
+                        ):
+                            pass_board = board.copy(
+                                stack=False
+                            )
+                            pass_board.push(
+                                chess.Move.null()
+                            )
+                            pass_board.clear_stack()
+
+                            capture_move = chess.Move(
+                                last_move.to_square,
+                                target_square,
+                            )
+
+                            if capture_move in pass_board.legal_moves:
+                                capture_facts = capture_context(
+                                    pass_board,
+                                    capture_move,
+                                )
+                                detail_item.update({
+                                    "capture_is_legal_after_pass": True,
+                                    "legal_recaptures": capture_facts.get(
+                                        "legal_recaptures",
+                                        [],
+                                    ),
+                                })
+
+                        attacked_target_details.append(
+                            detail_item
+                        )
+
         except ValueError:
             pass
 
@@ -1072,6 +1160,10 @@ def critical_position_question(
     position[
         "attacked_targets"
     ] = attacked_targets[:4]
+
+    position[
+        "attacked_target_details"
+    ] = attacked_target_details[:4]
 
     try:
         with _llm_lock:
