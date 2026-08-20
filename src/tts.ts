@@ -4,6 +4,105 @@ const CONTROL_URL =
   import.meta.env.VITE_BOT_CONTROL_URL ||
   'http://127.0.0.1:8765';
 
+export type TtsStatus = {
+  state:
+    | 'checking'
+    | 'ready'
+    | 'online'
+    | 'blocked'
+    | 'offline';
+  detail?: string;
+};
+
+let ttsStatus: TtsStatus = {
+  state: 'checking',
+};
+
+const ttsStatusListeners = new Set<
+  (status: TtsStatus) => void
+>();
+
+function publishTtsStatus(status: TtsStatus) {
+  ttsStatus = status;
+
+  for (const listener of ttsStatusListeners) {
+    listener(status);
+  }
+}
+
+export function subscribeTtsStatus(
+  listener: (status: TtsStatus) => void,
+): () => void {
+  ttsStatusListeners.add(listener);
+  listener(ttsStatus);
+
+  return () => {
+    ttsStatusListeners.delete(listener);
+  };
+}
+
+export async function checkTtsStatus(): Promise<void> {
+  publishTtsStatus({
+    state: 'checking',
+  });
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    TTS_REQUEST_TIMEOUT_MS,
+  );
+
+  try {
+    const response = await fetch(
+      `${CONTROL_URL}/api/health`,
+      {
+        cache: 'no-store',
+        signal: controller.signal,
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Voice server returned HTTP ${response.status}.`,
+      );
+    }
+
+    const health = (await response.json()) as {
+      tts?: {
+        configured?: boolean;
+        provider?: string;
+      };
+    };
+
+    if (!health.tts?.configured) {
+      publishTtsStatus({
+        state: 'offline',
+        detail: 'ElevenLabs is not configured on the server.',
+      });
+      return;
+    }
+
+    // Do not downgrade a real TTS result if the initial health check finishes
+    // after the user has already tapped the voice test.
+    if (
+      ttsStatus.state !== 'online' &&
+      ttsStatus.state !== 'blocked'
+    ) {
+      publishTtsStatus({
+        state: 'ready',
+        detail: 'ElevenLabs is configured. Tap to test playback.',
+      });
+    }
+  } catch (error) {
+    publishTtsStatus({
+      state: 'offline',
+      detail: `Voice status check failed: ${String(error)}`,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 let activeRequest: AbortController | null = null;
 
 let audioContext: AudioContext | null = null;
@@ -619,6 +718,13 @@ async function playSpeechJob(
   }, TTS_REQUEST_TIMEOUT_MS);
 
   activeRequest = controller;
+  let providerResponded = false;
+  const statusBeforeRequest = ttsStatus;
+
+  publishTtsStatus({
+    state: 'checking',
+    detail: 'Requesting ElevenLabs audio…',
+  });
 
   try {
     const response =
@@ -676,6 +782,12 @@ async function playSpeechJob(
       );
     }
 
+    providerResponded = true;
+    publishTtsStatus({
+      state: 'online',
+      detail: `ElevenLabs returned ${audioBytes.byteLength.toLocaleString()} bytes of audio.`,
+    });
+
     try {
       await playWebAudio(
         audioBytes,
@@ -699,12 +811,26 @@ async function playSpeechJob(
       error.name === 'AbortError' &&
       !timedOut
     ) {
+      publishTtsStatus(statusBeforeRequest);
       return;
     }
 
     console.error(
       '[TTS] ElevenLabs/WebAudio failed:',
       error,
+    );
+
+    publishTtsStatus(
+      providerResponded
+        ? {
+            state: 'blocked',
+            detail:
+              'ElevenLabs returned audio, but this device could not play it. Tap the status to retry.',
+          }
+        : {
+            state: 'offline',
+            detail: `ElevenLabs request failed: ${String(error)}`,
+          },
     );
 
     if (

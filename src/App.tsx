@@ -12,8 +12,11 @@ import {
   type CoachResult,
 } from './coach';
 import {
+  checkTtsStatus,
   speakCoach,
   stopCoachSpeech,
+  subscribeTtsStatus,
+  type TtsStatus,
   unlockCoachAudio,
 } from './tts';
 import {
@@ -1357,6 +1360,9 @@ export default function App() {
   const [puzzleState, setPuzzleState] = useState<PuzzleState>('solving');
   const [puzzleRollbackSignal, setPuzzleRollbackSignal] = useState(0);
   const [voiceEnabled, setVoiceEnabled] = useState(readVoiceEnabled);
+  const [ttsStatus, setTtsStatus] = useState<TtsStatus>({
+    state: 'checking',
+  });
   const [hintsEnabled, setHintsEnabled] = useState(true);
 
   const [coachDetail, setCoachDetail] = useState<CoachDetail>(readCoachDetail);
@@ -1503,6 +1509,13 @@ export default function App() {
       // no-op
     }
   }, [voiceEnabled]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeTtsStatus(setTtsStatus);
+    void checkTtsStatus();
+
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     if (!voiceEnabled) return;
@@ -2077,6 +2090,38 @@ export default function App() {
       coachLanguage,
     );
   }
+
+  function testCoachVoice() {
+    if (!voiceEnabled) {
+      setVoiceEnabled(true);
+    }
+
+    void unlockCoachAudio().then(() =>
+      speakCoach(
+        coachLanguage === 'zh-CN'
+          ? 'ElevenLabs 语音测试成功。'
+          : 'ElevenLabs voice test successful.',
+        coachLanguage,
+      ),
+    );
+  }
+
+  const ttsStatusLabel =
+    coachLanguage === 'zh-CN'
+      ? {
+          checking: '正在检查语音',
+          ready: 'ElevenLabs 已就绪',
+          online: 'ElevenLabs 在线',
+          blocked: '音频被阻止，点击重试',
+          offline: 'ElevenLabs 离线',
+        }[ttsStatus.state]
+      : {
+          checking: 'Checking voice',
+          ready: 'ElevenLabs ready',
+          online: 'ElevenLabs online',
+          blocked: 'Audio blocked — tap to retry',
+          offline: 'ElevenLabs offline',
+        }[ttsStatus.state];
 
   const processCoachQueue = useCallback(async () => {
     if (coachProcessingRef.current) return;
@@ -3874,40 +3919,52 @@ function handlePuzzleMove(
             </div>
           </div>
           <div className="coach-actions">
-            <label>
-              <input
-                type="checkbox"
-                checked={voiceEnabled}
-                onChange={(event) => {
-                  const enabled =
-                    event.target.checked;
+            <div className="voice-controls">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={voiceEnabled}
+                  onChange={(event) => {
+                    const enabled =
+                      event.target.checked;
 
-                  setVoiceEnabled(enabled);
+                    setVoiceEnabled(enabled);
 
-                  if (enabled) {
-                    /*
-                    * IMPORTANT:
-                    * This happens directly inside a user click,
-                    * so iOS can unlock audio playback.
-                    */
-                    void unlockCoachAudio().then(() =>
-                      speakCoach(
-                        coachLanguage === 'zh-CN'
-                          ? '语音教练已开启。关键时刻我会提醒你。'
-                          : "Voice coach is on. I'll speak up at the right moments.",
-                        coachLanguage,
-                      ),
-                    );
-                  } else {
-                    stopCoachSpeech();
-                  }
-                }}
-              />
+                    if (enabled) {
+                      /*
+                      * IMPORTANT:
+                      * This happens directly inside a user click,
+                      * so iOS can unlock audio playback.
+                      */
+                      void unlockCoachAudio().then(() =>
+                        speakCoach(
+                          coachLanguage === 'zh-CN'
+                            ? '语音教练已开启。关键时刻我会提醒你。'
+                            : "Voice coach is on. I'll speak up at the right moments.",
+                          coachLanguage,
+                        ),
+                      );
+                    } else {
+                      stopCoachSpeech();
+                    }
+                  }}
+                />
 
-              {coachLanguage === 'zh-CN'
-                ? ' 语音'
-                : ' Voice'}
-            </label>
+                {coachLanguage === 'zh-CN'
+                  ? ' 语音'
+                  : ' Voice'}
+              </label>
+
+              <button
+                type="button"
+                className={`tts-status ${ttsStatus.state}`}
+                title={ttsStatus.detail || ttsStatusLabel}
+                onClick={testCoachVoice}
+              >
+                <i aria-hidden="true" />
+                {ttsStatusLabel}
+              </button>
+            </div>
             <label><input type="checkbox" checked={hintsEnabled} onChange={(event) => setHintsEnabled(event.target.checked)} /> Board hints</label>
           </div>
           <div className="hint-legend"><span><i className="legend-line best" />best</span><span><i className="legend-line danger" />threat</span><span><i className="legend-square" />key square</span></div>
