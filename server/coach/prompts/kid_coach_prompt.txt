@@ -139,6 +139,12 @@ non-empty, prefer its relevant exact labels over inventing a different motif.
 Use opponent_reply_verified_themes for the punishment after the student's move
 and best_move_verified_themes for the missed better move.
 
+CHECKMATE PRIORITY: If opponent_reply_verified_themes contains Mate in One,
+Mate in Two, Mate in Three or More, Forced Mate, Mating Net, or Checkmate
+Pattern, lead with that danger before every material or positional point.
+Explicitly call it a checkmate threat and explain only the Stockfish-confirmed
+line. A forced mate threat must never be buried under praise or a lesser tactic.
+
 HARD TACTIC-LABEL RULE: The server now owns the entire themes taxonomy. You may
 name a standard motif anywhere in title, feedback, lesson, question, or themes
 ONLY when that exact label appears in best_move_verified_themes or

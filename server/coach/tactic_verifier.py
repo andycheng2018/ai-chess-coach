@@ -589,9 +589,75 @@ def _line_material_swing(
     return after - before
 
 
+def _line_exploits_targets(
+    board: chess.Board,
+    line: list[chess.Move],
+    target_squares: Iterable[chess.Square],
+) -> bool:
+    """Require the PV to cash in the geometric motif, not merely resemble it."""
+    if len(line) < 3:
+        return False
+
+    mover = board.turn
+    after_motif = board.copy(stack=False)
+    first = line[0]
+    if first not in after_motif.legal_moves:
+        return False
+    after_motif.push(first)
+    material_after_motif = (
+        _material(after_motif, mover)
+        - _material(after_motif, not mover)
+    )
+
+    after_reply = board.copy(stack=False)
+    for move in line[:2]:
+        if move not in after_reply.legal_moves:
+            return False
+        after_reply.push(move)
+
+    follow_up = line[2]
+    if (
+        follow_up not in after_reply.legal_moves
+        or not after_reply.is_capture(follow_up)
+        or follow_up.to_square not in set(target_squares)
+    ):
+        return False
+
+    line_end = after_motif.copy(stack=False)
+    for continuation in line[1:5]:
+        if continuation not in line_end.legal_moves:
+            return False
+        line_end.push(continuation)
+
+    material_at_line_end = (
+        _material(line_end, mover)
+        - _material(line_end, not mover)
+    )
+    return material_at_line_end - material_after_motif >= 1
+
+
+def _line_has_forcing_payoff(
+    board: chess.Board,
+    line: list[chess.Move],
+    *,
+    mate_in: int | None = None,
+) -> bool:
+    if mate_in is not None and mate_in > 0:
+        return True
+    if len(line) < 3:
+        return False
+    return _line_material_swing(
+        board,
+        line,
+        board.turn,
+    ) >= 1
+
+
 def _sequence_evidence(
     board: chess.Board,
     line: list[chess.Move],
+    *,
+    mate_in: int | None = None,
 ) -> list[ThemeEvidence]:
     if len(line) < 3:
         return []
@@ -623,6 +689,13 @@ def _sequence_evidence(
     follow_is_capture = after_reply.is_capture(follow_up)
     result: list[ThemeEvidence] = []
     swing = _line_material_swing(board, line, mover)
+    forcing_payoff = (
+        swing >= 1
+        or (
+            mate_in is not None
+            and mate_in > 0
+        )
+    )
 
     if reply_captures_offer and (swing >= 2 or after_reply.san(follow_up).endswith("#")):
         offered = chess.piece_name(first_piece.piece_type)
@@ -637,13 +710,18 @@ def _sequence_evidence(
             f"The {offered} is offered on {chess.square_name(first.to_square)} and the engine line gains compensation after it is taken.",
         ))
 
-    if reply_captures_offer and follow_is_capture:
+    if reply_captures_offer and follow_is_capture and forcing_payoff:
         result.append(ThemeEvidence(
             "Decoy",
             f"The reply is drawn to {chess.square_name(reply.to_square)}, enabling {after_reply.san(follow_up)}.",
         ))
 
-    if first_is_capture and captured_first is not None and follow_is_capture:
+    if (
+        first_is_capture
+        and captured_first is not None
+        and follow_is_capture
+        and forcing_payoff
+    ):
         defended_target = follow_up.to_square
         if first.to_square in board.attackers(
             captured_first.color,
@@ -654,7 +732,7 @@ def _sequence_evidence(
                 f"The first move removes {_piece_label(board, first.to_square)}, then the line captures {_piece_label(after_reply, defended_target)}.",
             ))
 
-    if reply_piece_before is not None and follow_is_capture:
+    if reply_piece_before is not None and follow_is_capture and forcing_payoff:
         follow_target = follow_up.to_square
         if reply.from_square in board.attackers(
             reply_piece_before.color,
@@ -666,7 +744,7 @@ def _sequence_evidence(
             ))
 
     follow_piece = after_reply.piece_at(follow_up.from_square)
-    if follow_piece is not None and first.from_square in _between(
+    if forcing_payoff and follow_piece is not None and first.from_square in _between(
         follow_up.from_square,
         follow_up.to_square,
     ):
@@ -680,7 +758,7 @@ def _sequence_evidence(
             f"The first move clears {chess.square_name(first.from_square)} for {after_reply.san(follow_up)}.",
         ))
 
-    if reply_piece_before is not None and follow_is_capture:
+    if reply_piece_before is not None and follow_is_capture and forcing_payoff:
         defended = [
             square
             for square in after_first.attacks(reply.from_square)
@@ -700,13 +778,14 @@ def _sequence_evidence(
         and board.is_attacked_by(not mover, first.from_square)
         and reply_captures_offer
         and (first_is_capture or board.gives_check(first))
+        and swing >= 0
     ):
         result.append(ThemeEvidence(
             "Desperado",
             f"The attacked {chess.piece_name(first_piece.piece_type)} uses a forcing move before it is captured.",
         ))
 
-    if board.gives_check(first) and follow_is_capture:
+    if board.gives_check(first) and follow_is_capture and forcing_payoff:
         immediate = chess.Move(
             follow_up.from_square,
             follow_up.to_square,
@@ -876,7 +955,15 @@ def verify_tactical_line(
         add("Discovered Check", f"Moving from {chess.square_name(move.from_square)} uncovers check from {_piece_label(after, checkers[0])}.")
 
     discovered = _new_slider_attacks(board, after, mover, move.to_square)
-    if discovered and not any(item.theme == "Discovered Check" for item in evidence):
+    if (
+        discovered
+        and not any(item.theme == "Discovered Check" for item in evidence)
+        and _line_exploits_targets(
+            board,
+            line,
+            [discovered[0][1]],
+        )
+    ):
         slider, target = discovered[0]
         add("Discovered Attack", f"The move uncovers {_piece_label(after, slider)} against {_piece_label(after, target)}.")
 
@@ -889,7 +976,11 @@ def verify_tactical_line(
             and after.is_pinned(enemy, square)
         )
     ]
-    if newly_pinned:
+    if newly_pinned and _line_exploits_targets(
+        board,
+        line,
+        newly_pinned,
+    ):
         add("Pin", f"{san} pins {_piece_label(after, newly_pinned[0])} to the king.")
 
     significant_targets = [
@@ -900,7 +991,15 @@ def verify_tactical_line(
             and PIECE_VALUES[target.piece_type] >= 3
         )
     ]
-    if len(targets) >= 2 and significant_targets:
+    if (
+        len(targets) >= 2
+        and significant_targets
+        and _line_exploits_targets(
+            board,
+            line,
+            targets,
+        )
+    ):
         described = " and ".join(
             _piece_label(after, square)
             for square in targets[:2]
@@ -908,9 +1007,21 @@ def verify_tactical_line(
         add("Fork / Double Attack", f"{_piece_label(after, moved_square)} attacks {described} at the same time.")
 
     skewer, xray = _skewer_and_xray(after, moved_square, enemy)
-    if skewer is not None:
+    if skewer is not None and _line_exploits_targets(
+        board,
+        line,
+        skewer,
+    ):
         add("Skewer", f"{_piece_label(after, skewer[0])} is attacked in front of {_piece_label(after, skewer[1])} on the same line.")
-    elif xray is not None and not newly_pinned:
+    elif (
+        xray is not None
+        and not newly_pinned
+        and _line_exploits_targets(
+            board,
+            line,
+            xray,
+        )
+    ):
         add("X-Ray Attack", f"{_piece_label(after, moved_square)} lines up with {_piece_label(after, xray[1])} through one intervening piece.")
 
     if is_capture and captured_piece is not None:
@@ -923,12 +1034,24 @@ def verify_tactical_line(
             add("Hanging Piece", f"{san} wins the {_piece_label(board, move.to_square)} without a legal recapture.")
 
     trapped = _newly_trapped_target(after, targets, mover)
-    if trapped is not None:
+    if trapped is not None and _line_exploits_targets(
+        board,
+        line,
+        [trapped],
+    ):
         add("Trapped Piece", f"{_piece_label(after, trapped)} is attacked and has no safe legal escape.")
 
     if moved_after is not None:
         f_pawn_square = chess.F7 if enemy == chess.BLACK else chess.F2
-        if f_pawn_square in after.attacks(moved_square) and after.piece_at(f_pawn_square) is not None:
+        if (
+            f_pawn_square in after.attacks(moved_square)
+            and after.piece_at(f_pawn_square) is not None
+            and _line_exploits_targets(
+                board,
+                line,
+                [f_pawn_square],
+            )
+        ):
             add("Attack on f7 / f2", f"{_piece_label(after, moved_square)} directly attacks the pawn on {chess.square_name(f_pawn_square)}.")
 
         if (
@@ -963,7 +1086,17 @@ def verify_tactical_line(
         if all(
             (piece := after.piece_at(square)) is not None and piece.color == enemy
             for square in front_squares
-        ) and (after.is_check() or zone_hits >= 2):
+        ) and (
+            (
+                mate_in is not None
+                and mate_in > 0
+            )
+            or _line_has_forcing_payoff(
+                board,
+                line,
+                mate_in=mate_in,
+            )
+        ):
             add("Back-Rank Weakness", "The king is confined on its back rank by its own pieces while a rook or queen line applies pressure.")
 
     if before_in_check and not after.is_check():
@@ -986,10 +1119,20 @@ def verify_tactical_line(
         add("Opposition", "The kings face each other with exactly one square between them in a king-and-pawn ending.")
 
     interference = _interference_evidence(board, move)
-    if interference is not None:
+    if interference is not None and _line_has_forcing_payoff(
+        board,
+        line,
+        mate_in=mate_in,
+    ):
         evidence.append(interference)
 
-    evidence.extend(_sequence_evidence(board, line))
+    evidence.extend(
+        _sequence_evidence(
+            board,
+            line,
+            mate_in=mate_in,
+        )
+    )
     evidence.extend(_perpetual_or_windmill(board, line))
 
     line_end = board.copy(stack=False)

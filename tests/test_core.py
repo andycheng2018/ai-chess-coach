@@ -22,23 +22,65 @@ from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, critical_positio
 class CoreTests(unittest.TestCase):
     def test_puzzle_labels_are_verified_from_the_answer_move(self) -> None:
         fork_board = chess.Board(
-            "r3k3/8/8/1N6/8/8/8/4K3 w - - 0 1"
+            "4k3/8/5q2/2p5/8/8/3N4/4K3 w - - 0 1"
         )
         self.assertIn(
             "Fork / Double Attack",
-            verified_move_themes(
-                fork_board,
-                chess.Move.from_uci("b5c7"),
-            ),
+            {
+                item.theme
+                for item in verify_tactical_line(
+                    fork_board,
+                    [
+                        chess.Move.from_uci("d2e4"),
+                        chess.Move.from_uci("f6g6"),
+                        chess.Move.from_uci("e4c5"),
+                    ],
+                )
+            },
+        )
+
+        defended_fork_board = chess.Board(
+            "4k3/8/5q2/2pp4/8/8/3N4/4K3 w - - 0 1"
+        )
+        self.assertNotIn(
+            "Fork / Double Attack",
+            {
+                item.theme
+                for item in verify_tactical_line(
+                    defended_fork_board,
+                    [
+                        chess.Move.from_uci("d2e4"),
+                        chess.Move.from_uci("d5e4"),
+                    ],
+                )
+            },
         )
 
         pin_board = chess.Board(
-            "4k3/8/2n5/8/2B5/8/8/4K3 w - - 0 1"
+            "4k3/p7/2n5/8/2B5/8/8/4K3 w - - 0 1"
         )
         self.assertIn(
             "Pin",
+            {
+                item.theme
+                for item in verify_tactical_line(
+                    pin_board,
+                    [
+                        chess.Move.from_uci("c4b5"),
+                        chess.Move.from_uci("a7a6"),
+                        chess.Move.from_uci("b5c6"),
+                    ],
+                )
+            },
+        )
+
+        geometric_pin_only = chess.Board(
+            "4k3/8/2n5/8/2B5/8/8/4K3 w - - 0 1"
+        )
+        self.assertNotIn(
+            "Pin",
             verified_move_themes(
-                pin_board,
+                geometric_pin_only,
                 chess.Move.from_uci("c4b5"),
             ),
         )
@@ -75,7 +117,7 @@ class CoreTests(unittest.TestCase):
         queen_and_pawn_board = chess.Board(
             "4k3/8/5q2/2p5/8/8/3N4/4K3 w - - 0 1"
         )
-        self.assertIn(
+        self.assertNotIn(
             "Fork / Double Attack",
             verified_move_themes(
                 queen_and_pawn_board,
@@ -169,31 +211,31 @@ class CoreTests(unittest.TestCase):
     def test_line_verifier_names_slider_tactics_with_evidence(self) -> None:
         cases = [
             (
-                "r3k3/q7/8/8/8/8/R7/4K3 w - - 0 1",
-                "a2a6",
+                "r3k3/q7/8/8/8/8/R7/R3K3 w - - 0 1",
+                ["a2a6", "a7b7", "a6a8", "b7a8", "a1a8"],
                 "Skewer",
                 "queen on a7",
             ),
             (
-                "q3k3/p7/8/8/8/8/R7/4K3 w - - 0 1",
-                "a2a6",
+                "q3k3/p7/8/8/8/8/R7/R3K3 w - - 0 1",
+                ["a2a6", "e8f7", "a6a7", "a8a7", "a1a7"],
                 "X-Ray Attack",
                 "queen on a8",
             ),
             (
-                "4k3/8/8/8/4r3/3N4/8/KB6 w - - 0 1",
-                "d3f4",
+                "8/8/6k1/8/4r3/3N4/8/KB6 w - - 0 1",
+                ["d3f4", "g6f7", "b1e4"],
                 "Discovered Attack",
                 "bishop on b1",
             ),
         ]
 
-        for fen, uci, expected_theme, reason_text in cases:
+        for fen, ucis, expected_theme, reason_text in cases:
             with self.subTest(theme=expected_theme):
                 board = chess.Board(fen)
                 evidence = verify_tactical_line(
                     board,
-                    [chess.Move.from_uci(uci)],
+                    [chess.Move.from_uci(uci) for uci in ucis],
                 )
                 match = next(
                     item
@@ -335,6 +377,46 @@ class CoreTests(unittest.TestCase):
         )
         self.assertTrue(rook["defended"])
         self.assertIn("Nxa1", rook["legal_recaptures"])
+
+    def test_forced_mate_threat_is_explicit_and_prioritized(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeAnalyzer:
+            def analyze_critical_position(self, board, **kwargs):
+                return {
+                    "is_critical": True,
+                    "kind": "threat",
+                    "in_check": False,
+                    "threat_is_capture": False,
+                    "threat_gives_check": False,
+                    "threat_is_mate": True,
+                    "threat_mate_in": 2,
+                    "threat_move": "Qh2+",
+                    "threat_line": ["Qh2+", "Kf1", "Qh1#"],
+                }
+
+        class FakeCoach:
+            def create_critical_question(self, position, **kwargs):
+                captured.update(position)
+                return {
+                    "title": "Opponent idea",
+                    "question": "What mating line is your opponent threatening?",
+                }
+
+        with (
+            patch("app.get_analyzer", return_value=FakeAnalyzer()),
+            patch("app.get_llm_coach", return_value=FakeCoach()),
+        ):
+            result = critical_position_question({
+                "fen": chess.STARTING_FEN,
+                "detail": "balanced",
+            })
+
+        self.assertTrue(result["isCritical"])
+        self.assertTrue(result["mateThreat"])
+        self.assertEqual(result["title"], "Mate threat")
+        self.assertTrue(captured["threat_is_mate"])
+        self.assertEqual(captured["threat_mate_in"], 2)
 
     def test_disconnected_client_does_not_raise_a_second_response_error(self) -> None:
         handler = Handler.__new__(Handler)

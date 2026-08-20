@@ -82,6 +82,7 @@ type PuzzleState =
   | 'revealed';
 
 type CriticalPrompt = {
+  mateThreat?: boolean;
   kind:
     | 'threat'
     | 'opportunity'
@@ -2330,7 +2331,11 @@ export default function App() {
       if (criticalPromptRef.current !== prompt) return;
 
       const spokenQuestion =
-        language === 'zh-CN'
+        prompt.mateThreat
+          ? language === 'zh-CN'
+            ? `注意，将杀威胁。${prompt.question}`
+            : `Careful, mate threat. ${prompt.question}`
+          : language === 'zh-CN'
           ? `先想一想。${prompt.question}`
           : `Think first. ${prompt.question}`;
 
@@ -2871,6 +2876,8 @@ export default function App() {
         }
 
         const nextPrompt: CriticalPrompt = {
+          mateThreat:
+            prompt.mateThreat,
           kind:
             promptKind,
           title:
@@ -3611,6 +3618,24 @@ const puzzleMovableColor:
       : 'black'
     : undefined;
 
+// Keep the camera fixed to the side that was to move when the puzzle opened.
+// puzzleFen advances after a correct move, so deriving orientation from it
+// caused opponent-turn puzzles to flip back after every ply.
+const puzzleStartingColor:
+  | 'white'
+  | 'black'
+  | undefined = (() => {
+  if (!activePuzzle) return undefined;
+
+  try {
+    return new Chess(activePuzzle.fenBefore).turn() === 'w'
+      ? 'white'
+      : 'black';
+  } catch {
+    return activePuzzle.playerColor;
+  }
+})();
+
   const focusLessons = Array.from(new Set(coachNotes.map((note) => note.lesson).filter(Boolean))).slice(0, 3);
   const botLabel = bot.connected ? 'Coach bot ready' : bot.running ? 'Coach bot connecting' : 'Coach bot offline';
   const selectedLevel = LEVELS.find((item) => item.id === level) || LEVELS[2];
@@ -4146,15 +4171,23 @@ function handlePuzzleMove(
               <div className="coach-heading">
                 <strong>{criticalPrompt.title}</strong>
                 <span className="quality-badge inaccuracy">
-                  {coachLanguage === 'zh-CN'
-                    ? '先想一想'
-                    : 'Think first'}
+                  {criticalPrompt.mateThreat
+                    ? coachLanguage === 'zh-CN'
+                      ? '将杀威胁'
+                      : 'Mate threat'
+                    : coachLanguage === 'zh-CN'
+                      ? '先想一想'
+                      : 'Think first'}
                 </span>
               </div>
 
               <div className="coach-question">
                 <span>
-                  {criticalPrompt.kind === 'opportunity'
+                  {criticalPrompt.mateThreat
+                    ? coachLanguage === 'zh-CN'
+                      ? '优先处理'
+                      : 'Priority'
+                    : criticalPrompt.kind === 'opportunity'
                     ? coachLanguage === 'zh-CN'
                       ? '机会'
                       : 'Opportunity'
@@ -4853,7 +4886,7 @@ function handlePuzzleMove(
               }
               orientation={
                 activePuzzle.puzzleMode === 'punish-mistake'
-                  ? puzzleMovableColor || activePuzzle.playerColor
+                  ? puzzleStartingColor || activePuzzle.playerColor
                   : activePuzzle.playerColor
               }
               movableColor={

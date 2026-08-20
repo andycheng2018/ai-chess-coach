@@ -1212,13 +1212,23 @@ def critical_position_question(
 
     return {
         "isCritical": True,
+        "mateThreat": bool(
+            position.get("threat_is_mate")
+        ),
         "kind": position.get(
             "kind",
             "threat",
         ),
-        "title": wording.get(
-            "title",
-            "",
+        "title": (
+            "将杀威胁"
+            if language == "zh-CN"
+            and position.get("threat_is_mate")
+            else "Mate threat"
+            if position.get("threat_is_mate")
+            else wording.get(
+                "title",
+                "",
+            )
         ),
         "question": wording.get(
             "question",

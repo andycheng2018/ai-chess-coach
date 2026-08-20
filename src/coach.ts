@@ -256,6 +256,7 @@ export async function explainMove(
 
 export type CriticalPositionPrompt = {
   isCritical: boolean;
+  mateThreat?: boolean;
   kind?: 'threat' | 'opportunity' | 'decision' | 'check';
   title?: string;
   question?: string;

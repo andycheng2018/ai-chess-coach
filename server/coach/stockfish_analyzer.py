@@ -766,6 +766,7 @@ class StockfishAnalyzer:
         threat_is_capture = False
         threat_gives_check = False
         threat_is_mate = False
+        threat_mate_in = None
 
         if (
             not board.is_check()
@@ -808,6 +809,25 @@ class StockfishAnalyzer:
                     or []
                 )
 
+                threat_score_object = threat_info.get(
+                    "score"
+                )
+
+                if threat_score_object is not None:
+                    try:
+                        threat_mate_in = (
+                            threat_score_object
+                            .pov(null_board.turn)
+                            .mate()
+                        )
+                    except Exception:
+                        threat_mate_in = None
+
+                threat_is_mate = (
+                    threat_mate_in is not None
+                    and threat_mate_in > 0
+                )
+
                 if threat_pv:
                     threat_move = threat_pv[0]
 
@@ -844,7 +864,8 @@ class StockfishAnalyzer:
                         )
 
                         threat_is_mate = (
-                            "#" in threat_move_san
+                            threat_is_mate
+                            or "#" in threat_move_san
                         )
 
             except (
@@ -869,10 +890,15 @@ class StockfishAnalyzer:
         )
 
         has_forcing_threat = (
-            threat_is_capture
-            or threat_gives_check
-            or threat_is_mate
-        ) and best_gap >= 50
+            threat_is_mate
+            or (
+                (
+                    threat_is_capture
+                    or threat_gives_check
+                )
+                and best_gap >= 50
+            )
+        )
 
         has_clear_only_move_feel = (
             best_gap >= 100
@@ -892,6 +918,8 @@ class StockfishAnalyzer:
 
         if in_check:
             kind = "check"
+        elif threat_is_mate:
+            kind = "threat"
         elif has_forcing_opportunity:
             kind = "opportunity"
         elif has_forcing_threat:
@@ -927,6 +955,7 @@ class StockfishAnalyzer:
             "threat_is_capture": threat_is_capture,
             "threat_gives_check": threat_gives_check,
             "threat_is_mate": threat_is_mate,
+            "threat_mate_in": threat_mate_in,
             "diagnostics": {
                 "profile": profile,
                 "budgetMs": critical_ms,

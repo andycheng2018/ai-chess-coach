@@ -955,6 +955,18 @@ class LLMCoach:
                 "threat_line",
                 [],
             )[:5],
+            "threat_is_capture": position.get(
+                "threat_is_capture"
+            ),
+            "threat_gives_check": position.get(
+                "threat_gives_check"
+            ),
+            "threat_is_mate": position.get(
+                "threat_is_mate"
+            ),
+            "threat_mate_in": position.get(
+                "threat_mate_in"
+            ),
             "recent_questions": recent,
             "language": normalized_language,
         }
@@ -997,6 +1009,11 @@ Use ONLY supplied facts:
 
 Never invent a pin, target, threat, or plan.
 
+If threat_is_mate is true, the forced checkmate threat outranks every other
+idea. Ask directly what checkmate the opponent is threatening or how soon it
+lands. Do not dilute it with a pin, material target, or general plan, and do
+not reveal Stockfish's defensive move.
+
 An attacked target is not automatically hanging. attacked_target_details tells
 you whether that piece is defended and lists legal recaptures after a
 hypothetical capture. If legal_recaptures is non-empty, do NOT imply that the
@@ -1007,7 +1024,8 @@ Only ask about a specific capture as an immediate threat when threat_move is
 that capture and threat_line supports the consequence. Otherwise ask what the
 opponent's move pressures, prepares, pins, or improves.
 
-If newly_pinned_squares is non-empty, prefer asking about the new pin.
+If threat_is_mate is true, ask about the checkmate threat first.
+Otherwise, if newly_pinned_squares is non-empty, prefer asking about the new pin.
 If the opponent just gave check, ask what their checking move is trying
 to gain or force.
 Otherwise ask about the concrete opponent threat or target.
