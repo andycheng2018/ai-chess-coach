@@ -209,6 +209,10 @@ header {
 .under-board-meta .opening-badge {
   min-width: 0;
 }
+.coach-theme-tags { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px; }
+.coach-theme-tag { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid rgba(104, 168, 218, .3); border-radius: 999px; background: rgba(74, 137, 192, .11); color: #9bc7e8; font-size: 10px; font-weight: 850; letter-spacing: .02em; }
+.coach-prior-feedback { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.coach-next-decision { margin: 12px 0 8px; color: #8f8982; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .1em; }
 .coach-question { margin-top: 10px; padding: 9px 10px; border-left: 2px solid #548fc2; background: rgba(74, 137, 192, .09); color: #c9dceb; }
 .coach-question span { display: block; margin-bottom: 2px; color: #7fb2dd; font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: .08em; }
 .coach-lesson { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); color: #b8d99c; font-size: 12px; font-weight: 700; }
@@ -218,6 +222,19 @@ header {
 .coach-actions { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; }
 .coach-actions label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 .coach-actions input { accent-color: var(--green); }
+.voice-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tts-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid rgba(255, 255, 255, .1); border-radius: 999px; background: #302e2b; color: #aaa49d; font: inherit; cursor: pointer; }
+.tts-status:hover { background: #393632; color: #ddd8d2; }
+.tts-status i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #88827b; }
+.tts-status.ready, .tts-status.online, .tts-status.idle, .tts-status.speaking, .tts-status.played { color: #bddd9f; border-color: rgba(129, 182, 76, .3); background: rgba(129, 182, 76, .09); }
+.tts-status.ready i, .tts-status.online i, .tts-status.idle i, .tts-status.speaking i, .tts-status.played i { background: var(--green); box-shadow: 0 0 0 3px rgba(129, 182, 76, .12); }
+.tts-status.speaking i { animation: tts-pulse .7s ease-in-out infinite; }
+.tts-status.checking i { background: #d4ad5f; animation: tts-pulse 1.1s ease-in-out infinite; }
+.tts-status.blocked { color: #e6c47e; border-color: rgba(207, 159, 70, .35); background: rgba(207, 159, 70, .1); }
+.tts-status.blocked i { background: #cf9f46; }
+.tts-status.offline { color: #f09b95; border-color: rgba(215, 77, 69, .35); background: rgba(215, 77, 69, .1); }
+.tts-status.offline i { background: #d74d45; }
+@keyframes tts-pulse { 50% { opacity: .35; transform: scale(.8); } }
 .hint-legend { margin-top: 8px; display: flex; align-items: center; gap: 12px; color: #88827b; font-size: 10px; }
 .hint-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .legend-line { width: 15px; height: 3px; border-radius: 99px; background: #69b749; }
@@ -587,6 +604,15 @@ header {
   box-shadow:0 3px 12px rgba(0,0,0,.22);
 }
 
+.coach-detail-button small{
+  display:block;
+  margin-top:2px;
+  color:currentColor;
+  font-size:9px;
+  font-weight:650;
+  opacity:.7;
+}
+
 .coach-detail-check{
   display:inline-grid;
   place-items:center;
@@ -911,27 +937,6 @@ header {
 
 .report-card.improve .report-icon {
   color: #c1a464;
-}
-
-.report-takeaway {
-  margin-top: 10px;
-  padding: 13px 14px;
-  border-radius: 9px;
-  background: #1d1c19;
-}
-
-.report-takeaway > span {
-  color: #99938c;
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: .09em;
-}
-
-.report-takeaway p {
-  margin: 5px 0 0;
-  color: #eeeae6;
-  font-size: 13px;
-  line-height: 1.5;
 }
 
 .practice-section {
@@ -1356,25 +1361,6 @@ header {
 
 .report-card.improve .report-icon {
   background: rgba(193, 164, 100, .12);
-}
-
-.report-takeaway {
-  margin-top: 10px;
-  padding: 15px 16px;
-  border: 1px solid rgba(255, 255, 255, .07);
-  border-radius: 13px;
-  background: rgba(0, 0, 0, .13);
-}
-
-.report-takeaway > span {
-  color: #9acb6c;
-  letter-spacing: .10em;
-}
-
-.report-takeaway p {
-  margin-top: 6px;
-  font-size: 13px;
-  line-height: 1.55;
 }
 
 .practice-section {

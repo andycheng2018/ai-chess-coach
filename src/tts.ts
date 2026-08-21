@@ -4,10 +4,147 @@ const CONTROL_URL =
   import.meta.env.VITE_BOT_CONTROL_URL ||
   'http://127.0.0.1:8765';
 
+export type TtsStatus = {
+  state:
+    | 'checking'
+    | 'ready'
+    | 'online'
+    | 'idle'
+    | 'speaking'
+    | 'played'
+    | 'blocked'
+    | 'offline';
+  detail?: string;
+};
+
+let ttsStatus: TtsStatus = {
+  state: 'checking',
+};
+
+const ttsStatusListeners = new Set<
+  (status: TtsStatus) => void
+>();
+
+function publishTtsStatus(status: TtsStatus) {
+  ttsStatus = status;
+
+  for (const listener of ttsStatusListeners) {
+    listener(status);
+  }
+}
+
+export function subscribeTtsStatus(
+  listener: (status: TtsStatus) => void,
+): () => void {
+  ttsStatusListeners.add(listener);
+  listener(ttsStatus);
+
+  return () => {
+    ttsStatusListeners.delete(listener);
+  };
+}
+
+export function markCoachVoiceIdle(detail: string): void {
+  if (
+    ttsStatus.state === 'online' ||
+    ttsStatus.state === 'speaking' ||
+    ttsStatus.state === 'played' ||
+    ttsStatus.state === 'idle'
+  ) {
+    publishTtsStatus({
+      state: 'idle',
+      detail,
+    });
+  }
+}
+
+export async function checkTtsStatus(): Promise<void> {
+  publishTtsStatus({
+    state: 'checking',
+  });
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    TTS_REQUEST_TIMEOUT_MS,
+  );
+
+  try {
+    const response = await fetch(
+      `${CONTROL_URL}/api/health`,
+      {
+        cache: 'no-store',
+        signal: controller.signal,
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Voice server returned HTTP ${response.status}.`,
+      );
+    }
+
+    const health = (await response.json()) as {
+      tts?: {
+        configured?: boolean;
+        provider?: string;
+      };
+    };
+
+    if (!health.tts?.configured) {
+      publishTtsStatus({
+        state: 'offline',
+        detail: 'ElevenLabs is not configured on the server.',
+      });
+      return;
+    }
+
+    // Do not downgrade a real TTS result if the initial health check finishes
+    // after the user has already tapped the voice test.
+    if (
+      ttsStatus.state !== 'online' &&
+      ttsStatus.state !== 'idle' &&
+      ttsStatus.state !== 'speaking' &&
+      ttsStatus.state !== 'played' &&
+      ttsStatus.state !== 'blocked'
+    ) {
+      publishTtsStatus({
+        state: 'ready',
+        detail: 'ElevenLabs is configured. Tap to test playback.',
+      });
+    }
+  } catch (error) {
+    publishTtsStatus({
+      state: 'offline',
+      detail: `Voice status check failed: ${String(error)}`,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 let activeRequest: AbortController | null = null;
 
 let audioContext: AudioContext | null = null;
 let activeSource: AudioBufferSourceNode | null = null;
+let activeAudio: HTMLAudioElement | null = null;
+let unlockedAudio: HTMLAudioElement | null = null;
+let htmlAudioUnlocked = false;
+let htmlAudioUnlocking = false;
+let activeObjectUrl: string | null = null;
+let activeAudioFinish: (() => void) | null = null;
+let activeUtterance: SpeechSynthesisUtterance | null = null;
+
+// Render can need well over 20 seconds to wake a sleeping service. A short
+// timeout made a healthy ElevenLabs response look like a provider failure and
+// immediately switched the user to the system/browser voice.
+const TTS_REQUEST_TIMEOUT_MS = 60_000;
+
+// A tiny valid WAV used only while the user is tapping the Voice control. It
+// unlocks one reusable HTMLAudioElement for iOS/WKWebView; creating a brand-new
+// element after an async TTS request can be rejected as autoplay.
+const SILENT_WAV_DATA_URL =
+  'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQIAAACAgA==';
 
 /**
  * iOS/WKWebView usually wants audio to be unlocked
@@ -21,8 +158,47 @@ export async function unlockCoachAudio(): Promise<void> {
       audioContext = new AudioContext();
     }
 
-    if (audioContext.state === 'suspended') {
+    // iOS also uses a non-standard `interrupted` state after the app returns
+    // from the background. resume() is safe for every non-running state.
+    if (audioContext.state !== 'running') {
       await audioContext.resume();
+    }
+
+    // Starting a tiny silent buffer inside the user's gesture makes the
+    // unlocked state stick much more reliably in iOS Safari/WKWebView.
+    if (audioContext.state === 'running') {
+      const silentBuffer = audioContext.createBuffer(1, 1, 22_050);
+      const silentSource = audioContext.createBufferSource();
+      silentSource.buffer = silentBuffer;
+      silentSource.connect(audioContext.destination);
+      silentSource.start();
+    }
+
+    if (!unlockedAudio) {
+      unlockedAudio = new Audio();
+      unlockedAudio.preload = 'auto';
+      unlockedAudio.setAttribute('playsinline', 'true');
+    }
+
+    if (
+      !htmlAudioUnlocked &&
+      !htmlAudioUnlocking &&
+      activeAudio !== unlockedAudio
+    ) {
+      const audio = unlockedAudio;
+      htmlAudioUnlocking = true;
+      audio.muted = true;
+      audio.src = SILENT_WAV_DATA_URL;
+
+      try {
+        await audio.play();
+        audio.pause();
+        audio.currentTime = 0;
+        htmlAudioUnlocked = true;
+      } finally {
+        audio.muted = false;
+        htmlAudioUnlocking = false;
+      }
     }
 
     console.log(
@@ -64,6 +240,21 @@ const ZH_RANKS: Record<string, string> = {
   '8': '八',
 };
 
+// Isolated Latin letters are ambiguous for Mandarin voices. In particular,
+// ElevenLabs may read the chess file "E" like a Chinese syllable instead of
+// the English letter name. These phonetic spellings keep square names clear
+// and consistent without changing the text shown in the UI.
+const ZH_FILES: Record<string, string> = {
+  A: '诶',
+  B: '比',
+  C: '西',
+  D: '迪',
+  E: '伊',
+  F: '艾弗',
+  G: '吉',
+  H: '艾尺',
+};
+
 function squareForSpeech(
   square: string,
   language: CoachLanguage,
@@ -72,7 +263,7 @@ function squareForSpeech(
   const rank = square[1];
 
   if (language === 'zh-CN') {
-    return `${file} ${ZH_RANKS[rank] || rank}`;
+    return `${ZH_FILES[file] || file}${ZH_RANKS[rank] || rank}`;
   }
 
   // The space makes ElevenLabs say:
@@ -252,6 +443,19 @@ function sanToSpeech(
     );
   }
 
+  // Plain pawn move: e4 -> "E four". Without this branch ElevenLabs may
+  // pronounce the square as a single token or as an unrelated word.
+  if (/^[a-h][1-8]$/i.test(san)) {
+    const destination = squareForSpeech(
+      san,
+      language,
+    );
+
+    return language === 'zh-CN'
+      ? `兵走到${destination}${ending}`
+      : `${destination}${ending}`;
+  }
+
   return rawSan;
 }
 
@@ -273,7 +477,7 @@ function makeSpeechFriendly(
    * O-O-O
    */
   const sanPattern =
-    /(^|[^A-Za-z0-9])((?:O-O-O|O-O|0-0-0|0-0|[KQRBN][a-h1-8]{0,2}x?[a-h][1-8](?:=[QRBN])?[+#]?|[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?|[a-h][1-8]=[QRBN][+#]?))(?=$|[^A-Za-z0-9])/gi;
+    /(^|[^A-Za-z0-9])((?:O-O-O|O-O|0-0-0|0-0|[KQRBN][a-h1-8]{0,2}x?[a-h][1-8](?:=[QRBN])?[+#]?|[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?|[a-h][1-8]=[QRBN][+#]?|[a-h][1-8][+#]?))(?=$|[^A-Za-z0-9])/gi;
 
   return text.replace(
     sanPattern,
@@ -309,6 +513,9 @@ async function browserSpeak(
     const utterance =
       new SpeechSynthesisUtterance(text);
 
+    // Safari can garbage-collect a locally scoped utterance before it ends.
+    activeUtterance = utterance;
+
     utterance.lang =
       language === 'zh-CN'
         ? 'zh-CN'
@@ -338,6 +545,11 @@ async function browserSpeak(
     const finish = () => {
       if (finished) return;
       finished = true;
+
+      if (activeUtterance === utterance) {
+        activeUtterance = null;
+      }
+
       resolve();
     };
 
@@ -375,13 +587,79 @@ async function ensureAudioReady(): Promise<AudioContext> {
       new AudioContext();
   }
 
-  if (
-    audioContext.state === 'suspended'
-  ) {
+  if (audioContext.state !== 'running') {
     await audioContext.resume();
   }
 
+  if (audioContext.state !== 'running') {
+    throw new Error(
+      `WebAudio is ${audioContext.state}; tap the board once to enable sound.`,
+    );
+  }
+
   return audioContext;
+}
+
+async function playHtmlAudio(
+  audioBytes: ArrayBuffer,
+  generation: number,
+): Promise<void> {
+  if (generation !== speechGeneration) return;
+
+  const objectUrl = URL.createObjectURL(
+    new Blob([audioBytes], { type: 'audio/mpeg' }),
+  );
+
+  const audio = unlockedAudio || new Audio();
+  unlockedAudio = audio;
+  audio.src = objectUrl;
+  audio.preload = 'auto';
+  audio.muted = false;
+  audio.setAttribute('playsinline', 'true');
+  activeAudio = audio;
+  activeObjectUrl = objectUrl;
+
+  await new Promise<void>((resolve, reject) => {
+    let finished = false;
+    let playbackTimeout = 0;
+
+    const cleanup = () => {
+      window.clearTimeout(playbackTimeout);
+      if (activeAudio === audio) activeAudio = null;
+      if (activeObjectUrl === objectUrl) activeObjectUrl = null;
+      if (activeAudioFinish === finish) activeAudioFinish = null;
+      audio.onended = null;
+      audio.onerror = null;
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      resolve();
+    };
+
+    const fail = () => {
+      if (finished) return;
+      finished = true;
+      htmlAudioUnlocked = false;
+      cleanup();
+      reject(new Error('HTML audio playback failed.'));
+    };
+
+    audio.onended = finish;
+    audio.onerror = fail;
+    activeAudioFinish = finish;
+    playbackTimeout = window.setTimeout(fail, 30_000);
+
+    void audio.play().then(() => {
+      publishTtsStatus({
+        state: 'speaking',
+        detail: 'Playing ElevenLabs audio through the device player.',
+      });
+    }).catch(fail);
+  });
 }
 
 async function playWebAudio(
@@ -445,6 +723,11 @@ async function playWebAudio(
     source.onended = finish;
     source.start();
 
+    publishTtsStatus({
+      state: 'speaking',
+      detail: 'Playing ElevenLabs audio through WebAudio.',
+    });
+
     window.setTimeout(
       finish,
       Math.ceil(
@@ -472,7 +755,21 @@ async function playSpeechJob(
   const controller =
     new AbortController();
 
+  let timedOut = false;
+
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, TTS_REQUEST_TIMEOUT_MS);
+
   activeRequest = controller;
+  let providerResponded = false;
+  const statusBeforeRequest = ttsStatus;
+
+  publishTtsStatus({
+    state: 'checking',
+    detail: 'Requesting ElevenLabs audio…',
+  });
 
   try {
     const response =
@@ -530,22 +827,62 @@ async function playSpeechJob(
       );
     }
 
-    await playWebAudio(
-      audioBytes,
-      generation,
-    );
+    providerResponded = true;
+    publishTtsStatus({
+      state: 'online',
+      detail: `ElevenLabs returned ${audioBytes.byteLength.toLocaleString()} bytes of audio.`,
+    });
+
+    try {
+      await playWebAudio(
+        audioBytes,
+        generation,
+      );
+    } catch (webAudioError) {
+      console.warn(
+        '[TTS] WebAudio playback failed; trying HTML audio:',
+        webAudioError,
+      );
+
+      await playHtmlAudio(
+        audioBytes,
+        generation,
+      );
+    }
+
+    if (generation === speechGeneration) {
+      publishTtsStatus({
+        state: 'played',
+        detail: 'ElevenLabs audio finished playing.',
+      });
+    }
 
   } catch (error) {
     if (
       error instanceof DOMException &&
-      error.name === 'AbortError'
+      error.name === 'AbortError' &&
+      !timedOut
     ) {
+      publishTtsStatus(statusBeforeRequest);
       return;
     }
 
     console.error(
       '[TTS] ElevenLabs/WebAudio failed:',
       error,
+    );
+
+    publishTtsStatus(
+      providerResponded
+        ? {
+            state: 'blocked',
+            detail:
+              'ElevenLabs returned audio, but this device could not play it. Tap the status to retry.',
+          }
+        : {
+            state: 'offline',
+            detail: `ElevenLabs request failed: ${String(error)}`,
+          },
     );
 
     if (
@@ -559,6 +896,8 @@ async function playSpeechJob(
     }
 
   } finally {
+    window.clearTimeout(timeout);
+
     if (
       activeRequest ===
       controller
@@ -628,12 +967,29 @@ export function stopCoachSpeech() {
     activeSource = null;
   }
 
+  if (activeAudio) {
+    activeAudio.pause();
+    activeAudio.removeAttribute('src');
+    activeAudio.load();
+    activeAudio = null;
+  }
+
+  activeAudioFinish?.();
+  activeAudioFinish = null;
+
+  if (activeObjectUrl) {
+    URL.revokeObjectURL(activeObjectUrl);
+    activeObjectUrl = null;
+  }
+
   if (
     'speechSynthesis'
     in window
   ) {
     window.speechSynthesis.cancel();
   }
+
+  activeUtterance = null;
 
   const queued =
     speechQueue.splice(0);
@@ -676,8 +1032,10 @@ export async function speakCoach(
         resolve,
       });
 
+      // Avoid silently discarding a short burst of real coaching messages on
+      // a slow phone or while the backend is waking up.
       while (
-        speechQueue.length > 3
+        speechQueue.length > 6
       ) {
         const dropped =
           speechQueue.shift();
@@ -688,4 +1046,17 @@ export async function speakCoach(
       void drainSpeechQueue();
     },
   );
+}
+
+/**
+ * Live chess commentary must follow the current board, not finish a backlog.
+ * Cancel any request/playback/queued speech from an older position, then speak
+ * only the newest message.
+ */
+export async function speakCoachLatest(
+  text: string,
+  language: CoachLanguage,
+): Promise<void> {
+  stopCoachSpeech();
+  await speakCoach(text, language);
 }

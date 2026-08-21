@@ -20,7 +20,7 @@ load_dotenv(ROOT / ".env")
 
 from bot_runtime import BOT_LEVELS, runtime
 from coach.opening_recognizer import recognize_opening
-from coach.stockfish_analyzer import StockfishAnalyzer, find_stockfish
+from coach.stockfish_analyzer import StockfishAnalyzer, capture_context, find_stockfish
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 
@@ -39,7 +39,56 @@ PORT = int(
         os.environ.get("CHESS_SERVER_PORT", "8765")
     )
 )
-COACH_TIME_MS = max(200, int(os.environ.get("COACH_TIME_MS", "250")))
+COACH_TIME_MS = max(200, int(os.environ.get("COACH_TIME_MS", "400")))
+
+COACH_ANALYSIS_PROFILES = {
+    "quick": {
+        "time_ms": max(
+            400,
+            int(
+                os.environ.get(
+                    "COACH_TIME_MS_QUICK",
+                    str(COACH_TIME_MS),
+                )
+            ),
+        ),
+        "pv_plies": 8,
+    },
+    "balanced": {
+        "time_ms": max(
+            900,
+            int(
+                os.environ.get(
+                    "COACH_TIME_MS_BALANCED",
+                    "900",
+                )
+            ),
+        ),
+        "pv_plies": 12,
+    },
+    "deep": {
+        "time_ms": max(
+            2200,
+            int(
+                os.environ.get(
+                    "COACH_TIME_MS_DEEP",
+                    "2200",
+                )
+            ),
+        ),
+        "pv_plies": 18,
+    },
+}
+
+# Keep the modes ordered even if only one environment variable is changed.
+COACH_ANALYSIS_PROFILES["balanced"]["time_ms"] = max(
+    COACH_ANALYSIS_PROFILES["quick"]["time_ms"] + 100,
+    COACH_ANALYSIS_PROFILES["balanced"]["time_ms"],
+)
+COACH_ANALYSIS_PROFILES["deep"]["time_ms"] = max(
+    COACH_ANALYSIS_PROFILES["balanced"]["time_ms"] + 100,
+    COACH_ANALYSIS_PROFILES["deep"]["time_ms"],
+)
 MISTAKE_THRESHOLD_CP = int(os.environ.get("COACH_MISTAKE_THRESHOLD_CP", "80"))
 MAX_BODY_BYTES = 64 * 1024
 
@@ -524,6 +573,10 @@ def analyze_move(
     }:
         detail = "balanced"
 
+    analysis_profile = COACH_ANALYSIS_PROFILES[
+        detail
+    ]
+
     if not fen or not move_uci:
         raise ValueError(
             "fen and move are required"
@@ -557,6 +610,13 @@ def analyze_move(
                 .analyze_move(
                     board,
                     move,
+                    time_ms=analysis_profile[
+                        "time_ms"
+                    ],
+                    max_plies=analysis_profile[
+                        "pv_plies"
+                    ],
+                    profile=detail,
                 )
                 .to_dict()
             )
@@ -573,6 +633,13 @@ def analyze_move(
                 .analyze_move(
                     board,
                     move,
+                    time_ms=analysis_profile[
+                        "time_ms"
+                    ],
+                    max_plies=analysis_profile[
+                        "pv_plies"
+                    ],
+                    profile=detail,
                 )
                 .to_dict()
             )
@@ -643,6 +710,30 @@ def analyze_move(
         "opponentReplyUci": analysis[
             "opponent_reply_uci"
         ],
+        "bestMoveVerifiedThemes": analysis.get(
+            "best_move_verified_themes",
+            [],
+        ),
+        "opponentReplyVerifiedThemes": analysis.get(
+            "opponent_reply_verified_themes",
+            [],
+        ),
+        "bestMoveVerifiedThemeEvidence": analysis.get(
+            "best_move_verified_theme_evidence",
+            [],
+        ),
+        "opponentReplyVerifiedThemeEvidence": analysis.get(
+            "opponent_reply_verified_theme_evidence",
+            [],
+        ),
+        "bestMoveFacts": analysis.get(
+            "best_move_facts",
+            {},
+        ),
+        "opponentReplyFacts": analysis.get(
+            "opponent_reply_facts",
+            {},
+        ),
         "fenBefore": analysis[
             "fen_before"
         ],
@@ -904,6 +995,20 @@ def critical_position_question(
         )
     )
 
+    detail = str(
+        payload.get(
+            "detail",
+            "balanced",
+        )
+    ).strip().lower()
+
+    if detail not in COACH_ANALYSIS_PROFILES:
+        detail = "balanced"
+
+    analysis_profile = COACH_ANALYSIS_PROFILES[
+        detail
+    ]
+
     recent_questions: list[str] = []
 
     raw_recent = payload.get(
@@ -928,7 +1033,11 @@ def critical_position_question(
             position = (
                 get_analyzer()
                 .analyze_critical_position(
-                    board
+                    board,
+                    time_ms=analysis_profile[
+                        "time_ms"
+                    ],
+                    profile=detail,
                 )
             )
         except (
@@ -941,13 +1050,20 @@ def critical_position_question(
             position = (
                 get_analyzer()
                 .analyze_critical_position(
-                    board
+                    board,
+                    time_ms=analysis_profile[
+                        "time_ms"
+                    ],
+                    profile=detail,
                 )
             )
 
     moved_piece_name = ""
     newly_pinned_squares: list[str] = []
     attacked_targets: list[str] = []
+    attacked_target_details: list[
+        dict[str, Any]
+    ] = []
 
     if (
         before_board is not None
@@ -1043,6 +1159,69 @@ def critical_position_question(
                             )
                         )
 
+                        target_name = (
+                            f"{chess.piece_name(target.piece_type)} "
+                            f"on {chess.square_name(target_square)}"
+                        )
+
+                        defenders = [
+                            (
+                                f"{chess.piece_name(defender.piece_type)} "
+                                f"on {chess.square_name(defender_square)}"
+                            )
+                            for defender_square in board.attackers(
+                                student_color,
+                                target_square,
+                            )
+                            if (
+                                defender := board.piece_at(
+                                    defender_square
+                                )
+                            ) is not None
+                        ]
+
+                        detail_item: dict[str, Any] = {
+                            "target": target_name,
+                            "defended": bool(defenders),
+                            "defended_by": defenders[:4],
+                            "capture_is_legal_after_pass": False,
+                            "legal_recaptures": [],
+                        }
+
+                        if (
+                            not board.is_check()
+                            and board.ep_square is None
+                        ):
+                            pass_board = board.copy(
+                                stack=False
+                            )
+                            pass_board.push(
+                                chess.Move.null()
+                            )
+                            pass_board.clear_stack()
+
+                            capture_move = chess.Move(
+                                last_move.to_square,
+                                target_square,
+                            )
+
+                            if capture_move in pass_board.legal_moves:
+                                capture_facts = capture_context(
+                                    pass_board,
+                                    capture_move,
+                                )
+                                detail_item.update({
+                                    "capture_is_legal_after_pass": True,
+                                    "legal_recaptures": capture_facts.get(
+                                        "legal_recaptures",
+                                        [],
+                                    ),
+                                })
+
+                        attacked_target_details.append(
+                            detail_item
+                        )
+
         except ValueError:
             pass
 
@@ -1086,6 +1265,10 @@ def critical_position_question(
         "attacked_targets"
     ] = attacked_targets[:4]
 
+    position[
+        "attacked_target_details"
+    ] = attacked_target_details[:4]
+
     try:
         with _llm_lock:
             wording = (
@@ -1109,13 +1292,23 @@ def critical_position_question(
 
     return {
         "isCritical": True,
+        "mateThreat": bool(
+            position.get("threat_is_mate")
+        ),
         "kind": position.get(
             "kind",
             "threat",
         ),
-        "title": wording.get(
-            "title",
-            "",
+        "title": (
+            "将杀威胁"
+            if language == "zh-CN"
+            and position.get("threat_is_mate")
+            else "Mate threat"
+            if position.get("threat_is_mate")
+            else wording.get(
+                "title",
+                "",
+            )
         ),
         "question": wording.get(
             "question",
@@ -1149,18 +1342,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, payload: dict[str, Any]) -> None:
         body = b"" if status == 204 else json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Access-Control-Allow-Origin", self._cors_origin())
-        self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Cache-Control", "no-store")
-        if status != 204:
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        if body:
-            self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Access-Control-Allow-Origin", self._cors_origin())
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Cache-Control", "no-store")
+            if status != 204:
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+        except (
+            BrokenPipeError,
+            ConnectionAbortedError,
+            ConnectionResetError,
+        ):
+            # Mobile clients intentionally cancel stale coach requests when a
+            # newer move arrives. The response is no longer deliverable, so do
+            # not turn that normal disconnect into another attempted 503.
+            self.close_connection = True
 
     def _send_bytes(
         self,
@@ -1168,47 +1371,56 @@ class Handler(BaseHTTPRequestHandler):
         body: bytes,
         content_type: str,
     ) -> None:
-        self.send_response(status)
+        try:
+            self.send_response(status)
 
-        self.send_header(
-            "Access-Control-Allow-Origin",
-            self._cors_origin(),
-        )
+            self.send_header(
+                "Access-Control-Allow-Origin",
+                self._cors_origin(),
+            )
 
-        self.send_header(
-            "Vary",
-            "Origin",
-        )
+            self.send_header(
+                "Vary",
+                "Origin",
+            )
 
-        self.send_header(
-            "Access-Control-Allow-Methods",
-            "GET, POST, OPTIONS",
-        )
+            self.send_header(
+                "Access-Control-Allow-Methods",
+                "GET, POST, OPTIONS",
+            )
 
-        self.send_header(
-            "Access-Control-Allow-Headers",
-            "Content-Type",
-        )
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type",
+            )
 
-        self.send_header(
-            "Cache-Control",
-            "no-store",
-        )
+            self.send_header(
+                "Cache-Control",
+                "no-store",
+            )
 
-        self.send_header(
-            "Content-Type",
-            content_type,
-        )
+            self.send_header(
+                "Content-Type",
+                content_type,
+            )
 
-        self.send_header(
-            "Content-Length",
-            str(len(body)),
-        )
+            self.send_header(
+                "Content-Length",
+                str(len(body)),
+            )
 
-        self.end_headers()
+            self.end_headers()
 
-        if body:
-            self.wfile.write(body)
+            if body:
+                self.wfile.write(body)
+        except (
+            BrokenPipeError,
+            ConnectionAbortedError,
+            ConnectionResetError,
+        ):
+            # Audio requests can also be canceled when newer speech takes
+            # priority. A closed socket is not a provider or TTS failure.
+            self.close_connection = True
 
     def _json_body(self) -> dict[str, Any]:
         try:
@@ -1243,6 +1455,17 @@ class Handler(BaseHTTPRequestHandler):
                 "stockfish": stockfish,
                 "bot": runtime.status(),
                 "coachTimeMs": COACH_TIME_MS,
+                "coachAnalysisProfiles": {
+                    name: {
+                        "timeMs": profile[
+                            "time_ms"
+                        ],
+                        "pvPlies": profile[
+                            "pv_plies"
+                        ],
+                    }
+                    for name, profile in COACH_ANALYSIS_PROFILES.items()
+                },
                 "mistakeThresholdCp": MISTAKE_THRESHOLD_CP,
 
                 "tts": {
@@ -1392,7 +1615,14 @@ if __name__ == "__main__":
         print(f"Stockfish: {find_stockfish()}")
     except Exception as exc:
         print(f"Stockfish warning: {exc}")
-    print(f"Coach analysis budget: {COACH_TIME_MS} ms per position")
+    print(
+        "Coach analysis profiles: "
+        + ", ".join(
+            f"{name}={profile['time_ms']} ms"
+            for name, profile in COACH_ANALYSIS_PROFILES.items()
+        )
+        + " per search"
+    )
     print(f"Coach trigger: {MISTAKE_THRESHOLD_CP} cp")
     threading.Thread(target=bootstrap_bot, name="bot-bootstrap", daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)

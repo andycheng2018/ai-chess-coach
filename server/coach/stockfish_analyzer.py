@@ -9,6 +9,14 @@ from typing import Any
 import chess
 import chess.engine
 
+from coach.tactic_verifier import (
+    ThemeEvidence,
+    prioritize_theme_evidence,
+    verified_move_facts,
+    verified_move_themes,
+    verify_tactical_line,
+)
+
 
 @dataclass
 class MoveAnalysis:
@@ -21,6 +29,13 @@ class MoveAnalysis:
     best_move_uci: str
     opponent_reply: str
     opponent_reply_uci: str
+    opponent_reply_context: dict[str, Any]
+    best_move_verified_themes: list[str]
+    opponent_reply_verified_themes: list[str]
+    best_move_verified_theme_evidence: list[dict[str, str]]
+    opponent_reply_verified_theme_evidence: list[dict[str, str]]
+    best_move_facts: dict[str, object]
+    opponent_reply_facts: dict[str, object]
     evaluation_before: int
     evaluation_after: int
     centipawn_loss: int
@@ -131,6 +146,80 @@ def pv_to_san(
     return result
 
 
+def capture_context(
+    board: chess.Board,
+    move: chess.Move,
+) -> dict[str, Any]:
+    """Describe whether an engine capture can be legally recaptured."""
+    if (
+        move not in board.legal_moves
+        or not board.is_capture(move)
+    ):
+        return {
+            "is_capture": False,
+            "legal_recaptures": [],
+        }
+
+    capturing_piece = board.piece_at(
+        move.from_square
+    )
+    captured_piece = board.piece_at(
+        move.to_square
+    )
+
+    if board.is_en_passant(move):
+        captured_square = (
+            move.to_square - 8
+            if board.turn == chess.WHITE
+            else move.to_square + 8
+        )
+        captured_piece = board.piece_at(
+            captured_square
+        )
+
+    destination = chess.square_name(
+        move.to_square
+    )
+    after = board.copy(
+        stack=False
+    )
+    capture_san = board.san(move)
+    after.push(move)
+
+    legal_recaptures = [
+        after.san(reply)
+        for reply in after.legal_moves
+        if (
+            reply.to_square == move.to_square
+            and after.is_capture(reply)
+        )
+    ][:4]
+
+    return {
+        "is_capture": True,
+        "move": capture_san,
+        "capturing_piece": (
+            chess.piece_name(
+                capturing_piece.piece_type
+            )
+            if capturing_piece is not None
+            else ""
+        ),
+        "captured_piece": (
+            chess.piece_name(
+                captured_piece.piece_type
+            )
+            if captured_piece is not None
+            else ""
+        ),
+        "destination": destination,
+        "legally_recapturable": bool(
+            legal_recaptures
+        ),
+        "legal_recaptures": legal_recaptures,
+    }
+
+
 def infer_theme(
     board_before: chess.Board,
     board_after: chess.Board,
@@ -199,10 +288,81 @@ class StockfishAnalyzer:
             except Exception:
                 pass
 
+    def _verify_zugzwang(
+        self,
+        board: chess.Board,
+        move: chess.Move,
+        *,
+        profile: str,
+    ) -> ThemeEvidence | None:
+        """Use a null-move comparison to confirm rare endgame zugzwangs."""
+        if profile not in {"balanced", "deep"}:
+            return None
+        if (
+            move not in board.legal_moves
+            or board.is_capture(move)
+            or board.gives_check(move)
+            or move.promotion is not None
+        ):
+            return None
+
+        after = board.copy(stack=False)
+        after.push(move)
+        non_king_pieces = sum(
+            1
+            for piece in after.piece_map().values()
+            if piece.piece_type != chess.KING
+        )
+        legal_replies = list(after.legal_moves)
+        if (
+            non_king_pieces > 6
+            or len(legal_replies) < 2
+            or len(legal_replies) > 8
+            or after.is_check()
+        ):
+            return None
+
+        opponent = after.turn
+        passed = after.copy(stack=False)
+        passed.push(chess.Move.null())
+        verification_ms = 90 if profile == "balanced" else 160
+        limit = chess.engine.Limit(
+            time=verification_ms / 1000.0
+        )
+
+        try:
+            forced_info = self.engine.analyse(after, limit)
+            passed_info = self.engine.analyse(passed, limit)
+        except (
+            chess.engine.EngineError,
+            chess.engine.EngineTerminatedError,
+            BrokenPipeError,
+        ):
+            return None
+
+        forced_score = forced_info.get("score")
+        passed_score = passed_info.get("score")
+        if forced_score is None or passed_score is None:
+            return None
+
+        forced_eval = score_cp(forced_score, opponent)
+        passed_eval = score_cp(passed_score, opponent)
+        if passed_eval - forced_eval < 180:
+            return None
+
+        return ThemeEvidence(
+            "Zugzwang",
+            "In this low-material position, Stockfish evaluates every legal move much worse than the otherwise identical null-move position.",
+        )
+
     def analyze_move(
         self,
         board_before: chess.Board,
         played_move: chess.Move,
+        *,
+        time_ms: int | None = None,
+        max_plies: int = 6,
+        profile: str = "balanced",
     ) -> MoveAnalysis:
         if played_move not in board_before.legal_moves:
             raise ValueError(f"Illegal move: {played_move.uci()}")
@@ -211,8 +371,21 @@ class StockfishAnalyzer:
         fen_before = board_before.fen()
         played_san = board_before.san(played_move)
 
+        search_time_ms = max(
+            200,
+            int(
+                self.time_ms
+                if time_ms is None
+                else time_ms
+            ),
+        )
+        line_plies = max(
+            4,
+            min(20, int(max_plies)),
+        )
+
         limit = chess.engine.Limit(
-            time=self.time_ms / 1000.0
+            time=search_time_ms / 1000.0
         )
 
         # Search the original position for Stockfish's actual top choice.
@@ -237,8 +410,40 @@ class StockfishAnalyzer:
             )
 
         best_san = board_before.san(best_move)
+        best_mate_in = before_score.pov(player).mate()
+        best_move_theme_evidence: list[ThemeEvidence] = (
+            verify_tactical_line(
+                board_before,
+                before_pv,
+                mate_in=best_mate_in,
+            )
+        )
+        best_zugzwang = self._verify_zugzwang(
+            board_before,
+            best_move,
+            profile=profile,
+        )
+        if best_zugzwang is not None:
+            best_move_theme_evidence = (
+                prioritize_theme_evidence([
+                    *best_move_theme_evidence,
+                    best_zugzwang,
+                ])
+            )
+        best_move_verified_themes = [
+            item.theme
+            for item in best_move_theme_evidence
+        ]
+        best_move_facts = verified_move_facts(
+            board_before,
+            best_move,
+        )
         eval_before = score_cp(before_score, player)
-        best_line = pv_to_san(board_before, before_pv, 6)
+        best_line = pv_to_san(
+            board_before,
+            before_pv,
+            line_plies,
+        )
 
         board_after = board_before.copy()
         board_after.push(played_move)
@@ -247,6 +452,7 @@ class StockfishAnalyzer:
             # Reuse the best search instead of running Stockfish again.
             played_info = before_info
             played_pv = before_pv
+            played_score = before_score
             eval_played = eval_before
             cp_loss = 0
         else:
@@ -284,6 +490,13 @@ class StockfishAnalyzer:
 
         reply_san = ""
         reply_uci = ""
+        reply_context: dict[str, Any] = {
+            "is_capture": False,
+            "legal_recaptures": [],
+        }
+        opponent_reply_verified_themes: list[str] = []
+        opponent_reply_theme_evidence: list[ThemeEvidence] = []
+        opponent_reply_facts: dict[str, object] = {}
 
         if continuation:
             reply = continuation[0]
@@ -291,15 +504,51 @@ class StockfishAnalyzer:
             if reply in board_after.legal_moves:
                 reply_san = board_after.san(reply)
                 reply_uci = reply.uci()
+                reply_context = capture_context(
+                    board_after,
+                    reply,
+                )
+                reply_mate_in = played_score.pov(
+                    not player
+                ).mate()
+                opponent_reply_theme_evidence = (
+                    verify_tactical_line(
+                        board_after,
+                        continuation,
+                        mate_in=reply_mate_in,
+                    )
+                )
+                reply_zugzwang = self._verify_zugzwang(
+                    board_after,
+                    reply,
+                    profile=profile,
+                )
+                if reply_zugzwang is not None:
+                    opponent_reply_theme_evidence = (
+                        prioritize_theme_evidence([
+                            *opponent_reply_theme_evidence,
+                            reply_zugzwang,
+                        ])
+                    )
+                opponent_reply_verified_themes = [
+                    item.theme
+                    for item in opponent_reply_theme_evidence
+                ]
+                opponent_reply_facts = verified_move_facts(
+                    board_after,
+                    reply,
+                )
 
         refutation = pv_to_san(
             board_after,
             continuation,
-            6,
+            line_plies,
         )
 
         diagnostics = {
-            "budgetMs": self.time_ms,
+            "profile": profile,
+            "budgetMs": search_time_ms,
+            "pvPlies": line_plies,
             "bestSearch": info_diagnostics(before_info),
             "playedSearch": {
                 **info_diagnostics(played_info),
@@ -331,6 +580,19 @@ class StockfishAnalyzer:
             best_move_uci=best_move.uci(),
             opponent_reply=reply_san,
             opponent_reply_uci=reply_uci,
+            opponent_reply_context=reply_context,
+            best_move_verified_themes=best_move_verified_themes,
+            opponent_reply_verified_themes=opponent_reply_verified_themes,
+            best_move_verified_theme_evidence=[
+                item.to_dict()
+                for item in best_move_theme_evidence
+            ],
+            opponent_reply_verified_theme_evidence=[
+                item.to_dict()
+                for item in opponent_reply_theme_evidence
+            ],
+            best_move_facts=best_move_facts,
+            opponent_reply_facts=opponent_reply_facts,
             evaluation_before=eval_before,
             evaluation_after=eval_played,
             centipawn_loss=cp_loss,
@@ -350,6 +612,9 @@ class StockfishAnalyzer:
     def analyze_critical_position(
         self,
         board: chess.Board,
+        *,
+        time_ms: int | None = None,
+        profile: str = "balanced",
     ) -> dict[str, Any]:
         """
         Decide whether the side to move is facing a genuinely useful
@@ -368,12 +633,19 @@ class StockfishAnalyzer:
 
         player = board.turn
 
-        # This feature must never slow the main coaching pipeline very much.
+        requested_ms = (
+            self.time_ms
+            if time_ms is None
+            else int(time_ms)
+        )
+
+        # Respect the selected detail mode while keeping pre-move questions
+        # responsive enough for live play.
         critical_ms = max(
-            120,
+            300,
             min(
-                180,
-                self.time_ms,
+                1200,
+                requested_ms,
             ),
         )
 
@@ -494,6 +766,7 @@ class StockfishAnalyzer:
         threat_is_capture = False
         threat_gives_check = False
         threat_is_mate = False
+        threat_mate_in = None
 
         if (
             not board.is_check()
@@ -507,12 +780,17 @@ class StockfishAnalyzer:
                 chess.Move.null()
             )
 
+            # Stockfish only needs the resulting position. Keeping the
+            # synthetic null move in python-chess history causes a noisy UCI
+            # warning even though the position is transmitted correctly.
+            null_board.clear_stack()
+
             threat_limit = chess.engine.Limit(
                 time=max(
-                    90,
+                    150,
                     min(
-                        120,
-                        critical_ms,
+                        350,
+                        critical_ms // 2,
                     ),
                 )
                 / 1000.0
@@ -529,6 +807,25 @@ class StockfishAnalyzer:
                         "pv"
                     )
                     or []
+                )
+
+                threat_score_object = threat_info.get(
+                    "score"
+                )
+
+                if threat_score_object is not None:
+                    try:
+                        threat_mate_in = (
+                            threat_score_object
+                            .pov(null_board.turn)
+                            .mate()
+                        )
+                    except Exception:
+                        threat_mate_in = None
+
+                threat_is_mate = (
+                    threat_mate_in is not None
+                    and threat_mate_in > 0
                 )
 
                 if threat_pv:
@@ -567,7 +864,8 @@ class StockfishAnalyzer:
                         )
 
                         threat_is_mate = (
-                            "#" in threat_move_san
+                            threat_is_mate
+                            or "#" in threat_move_san
                         )
 
             except (
@@ -592,10 +890,15 @@ class StockfishAnalyzer:
         )
 
         has_forcing_threat = (
-            threat_is_capture
-            or threat_gives_check
-            or threat_is_mate
-        ) and best_gap >= 50
+            threat_is_mate
+            or (
+                (
+                    threat_is_capture
+                    or threat_gives_check
+                )
+                and best_gap >= 50
+            )
+        )
 
         has_clear_only_move_feel = (
             best_gap >= 100
@@ -615,6 +918,8 @@ class StockfishAnalyzer:
 
         if in_check:
             kind = "check"
+        elif threat_is_mate:
+            kind = "threat"
         elif has_forcing_opportunity:
             kind = "opportunity"
         elif has_forcing_threat:
@@ -650,7 +955,9 @@ class StockfishAnalyzer:
             "threat_is_capture": threat_is_capture,
             "threat_gives_check": threat_gives_check,
             "threat_is_mate": threat_is_mate,
+            "threat_mate_in": threat_mate_in,
             "diagnostics": {
+                "profile": profile,
                 "budgetMs": critical_ms,
                 "bestGapCp": best_gap,
                 "search": info_diagnostics(

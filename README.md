@@ -1115,9 +1115,19 @@ OPENAI_MODEL=
 # Optional tuning
 STOCKFISH_PATH=/opt/homebrew/bin/stockfish
 CHESS_SERVER_PORT=8765
-COACH_TIME_MS=180
+COACH_TIME_MS=250
+COACH_TIME_MS_QUICK=250
+COACH_TIME_MS_BALANCED=800
+COACH_TIME_MS_DEEP=2000
 COACH_MISTAKE_THRESHOLD_CP=80
 ```
+
+Coach detail controls both Stockfish strength and explanation depth. Quick
+uses the shortest search for responsive live feedback, Balanced spends more
+time validating the best move and the played move, and Deep uses the longest
+search plus a longer principal variation. Each non-best move can require two
+Stockfish searches, so total analysis time can be roughly twice the configured
+per-search budget.
 
 ## Frontend variables
 

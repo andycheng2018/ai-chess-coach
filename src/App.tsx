@@ -9,13 +9,19 @@ import {
   checkCriticalPosition,
   explainMove,
   fetchOpeningStatus,
+  type ChessTheme,
   type CoachLanguage,
   type CoachResult,
   type OpeningState,
 } from './coach';
 import {
+  checkTtsStatus,
+  markCoachVoiceIdle,
   speakCoach,
+  speakCoachLatest,
   stopCoachSpeech,
+  subscribeTtsStatus,
+  type TtsStatus,
   unlockCoachAudio,
 } from './tts';
 import {
@@ -125,7 +131,6 @@ type StoredEvaluationSession = {
 type GameReport = {
   strengths: string[];
   improvements: string[];
-  takeaway: string;
 };
 
 type PuzzleState =
@@ -135,6 +140,7 @@ type PuzzleState =
   | 'revealed';
 
 type CriticalPrompt = {
+  mateThreat?: boolean;
   kind:
     | 'threat'
     | 'opportunity'
@@ -235,7 +241,102 @@ type PracticePuzzle =
   CoachNote & {
     puzzleMode: PracticePuzzleMode;
     sourcePly: number;
+    puzzleTheme: ChessTheme;
   };
+
+const PRACTICE_THEME_PRIORITY: ChessTheme[] = [
+  'Mate in One',
+  'Mate in Two',
+  'Mate in Three or More',
+  'Forced Mate',
+  'Back-Rank Mate',
+  'Smothered Mate',
+  'Support Mate',
+  'Mating Net',
+  'Fork / Double Attack',
+  'Pin',
+  'Skewer',
+  'Discovered Check',
+  'Discovered Attack',
+  'Double Check',
+  'X-Ray Attack',
+  'Deflection',
+  'Decoy',
+  'Removal of the Defender',
+  'Overloading',
+  'Interference',
+  'Clearance Sacrifice',
+  'Clearance',
+  'Queen Sacrifice',
+  'Exchange Sacrifice',
+  'Sacrifice',
+  'Zwischenzug',
+  'Desperado',
+  'Windmill',
+  'Hanging Piece',
+  'Trapped Piece',
+  'Back-Rank Weakness',
+  'Perpetual Check',
+  'Attack on f7 / f2',
+  'Attacking the Castled King',
+  'Vulnerable King',
+  'Promotion',
+  'Underpromotion',
+  'Zugzwang',
+  'Stalemate',
+  'Passed Pawn',
+  'Opposition',
+  'Endgame Tactic',
+  'Simplification',
+  'Defense',
+  'King Safety',
+  'Open File',
+  'Weak Square',
+  'Checkmate Pattern',
+  'En Passant',
+];
+
+const KING_PUZZLE_THEMES = new Set<ChessTheme>([
+  'Mating Net',
+  'Smothered Mate',
+  'Support Mate',
+  'Checkmate Pattern',
+  'Mate in One',
+  'Mate in Two',
+  'Mate in Three or More',
+  'Forced Mate',
+  'Back-Rank Mate',
+  'Back-Rank Weakness',
+  'Attacking the Castled King',
+  'Vulnerable King',
+  'King Safety',
+]);
+
+const ENDGAME_PUZZLE_THEMES = new Set<ChessTheme>([
+  'Promotion',
+  'Underpromotion',
+  'Stalemate',
+  'Zugzwang',
+  'Endgame Tactic',
+  'Passed Pawn',
+  'Opposition',
+]);
+
+function selectPuzzleTheme(
+  note: CoachNote,
+  mode: PracticePuzzleMode,
+): ChessTheme | null {
+  const themes =
+    mode === 'punish-mistake'
+      ? note.opponentReplyVerifiedThemes || []
+      : note.bestMoveVerifiedThemes || [];
+
+  return (
+    PRACTICE_THEME_PRIORITY.find(
+      (theme) => themes.includes(theme),
+    ) || null
+  );
+}
 
 function forcingMoveStrength(
   fen: string,
@@ -278,71 +379,19 @@ function forcingMoveStrength(
 }
 
 function puzzleThemeKey(
-  note: CoachNote,
+  puzzle: PracticePuzzle,
 ): string | null {
-  const text = [
-    note.title,
-    note.lesson,
-    note.feedback,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+  const theme = puzzle.puzzleTheme;
 
-  const hasAny = (words: string[]) =>
-    words.some((word) => text.includes(word));
-
-  if (
-    hasAny([
-      'fork',
-      'pin',
-      'skewer',
-      'tactic',
-      'combination',
-      'hanging',
-      'loose piece',
-      'undefended',
-      'unprotected',
-      '双攻',
-      '牵制',
-      '串击',
-      '战术',
-      '组合',
-      '挂子',
-      '未保护',
-      '没有保护',
-    ])
-  ) {
-    return 'tactics';
-  }
-
-  if (
-    hasAny([
-      'mating threat',
-      'checkmate',
-      'king safety',
-      '王的安全',
-      '王安全',
-      '将杀',
-    ])
-  ) {
+  if (KING_PUZZLE_THEMES.has(theme)) {
     return 'king-safety';
   }
 
-  if (
-    hasAny([
-      'endgame',
-      'promotion',
-      'king and pawn',
-      '残局',
-      '升变',
-      '兵残局',
-    ])
-  ) {
+  if (ENDGAME_PUZZLE_THEMES.has(theme)) {
     return 'endgame';
   }
 
-  return null;
+  return 'tactics';
 }
 
 function buildPracticePuzzle(
@@ -357,23 +406,9 @@ function buildPracticePuzzle(
     return null;
   }
 
-  if (note.bestMoveUci.length > 4) {
+  if (note.bestMoveUci.length > 5) {
     return null;
   }
-
-  const severeEnough =
-    note.classification === 'mistake' ||
-    note.classification === 'blunder' ||
-    note.centipawnLoss >= 120;
-
-  if (!severeEnough) return null;
-
-  const replyStrength =
-    forcingMoveStrength(
-      note.fenAfter,
-      note.opponentReplyUci,
-      note.opponentReply,
-    );
 
   const bestStrength =
     forcingMoveStrength(
@@ -382,24 +417,80 @@ function buildPracticePuzzle(
       note.bestMove,
     );
 
-  const theme =
-    puzzleThemeKey(note);
+  const replyPuzzleTheme =
+    selectPuzzleTheme(
+      note,
+      'punish-mistake',
+    );
+
+  const bestPuzzleTheme =
+    selectPuzzleTheme(
+      note,
+      'find-better',
+    );
+
+  const replyThemePriority =
+    replyPuzzleTheme
+      ? PRACTICE_THEME_PRIORITY.indexOf(
+          replyPuzzleTheme,
+        )
+      : Number.POSITIVE_INFINITY;
+
+  const bestThemePriority =
+    bestPuzzleTheme
+      ? PRACTICE_THEME_PRIORITY.indexOf(
+          bestPuzzleTheme,
+        )
+      : Number.POSITIVE_INFINITY;
+
+  const preferReplyPuzzle =
+    Boolean(replyPuzzleTheme) &&
+    replyThemePriority <= bestThemePriority;
+
+  const severeEnough =
+    note.classification === 'mistake' ||
+    note.classification === 'blunder' ||
+    note.centipawnLoss >= 120;
+
+  // A verified tactical reply is itself a useful practice position, even
+  // when it is a quiet fork or pin and even when the preceding evaluation
+  // loss did not cross the old 120-centipawn cutoff.
+  if (!severeEnough && !replyPuzzleTheme) {
+    return null;
+  }
 
   const clearPositionalLesson =
+    Boolean(bestPuzzleTheme) &&
     note.moveNumber > 8 &&
     note.centipawnLoss >= 250 &&
     (
-      theme === 'king-safety' ||
-      theme === 'endgame'
+      KING_PUZZLE_THEMES.has(
+        bestPuzzleTheme as ChessTheme,
+      ) ||
+      ENDGAME_PUZZLE_THEMES.has(
+        bestPuzzleTheme as ChessTheme,
+      )
     );
 
-  // Strong preference: if the student's move allowed a clear tactical
-  // punishment, make them PLAY that punishment from the opponent side.
+  const clearVerifiedTactic =
+    Boolean(bestPuzzleTheme) &&
+    !KING_PUZZLE_THEMES.has(
+      bestPuzzleTheme as ChessTheme,
+    ) &&
+    !ENDGAME_PUZZLE_THEMES.has(
+      bestPuzzleTheme as ChessTheme,
+    );
+
+  // Prefer the opponent's punishment when it is at least as important as the
+  // missed best-move theme. A concrete missed win, such as a hanging piece,
+  // should not be replaced by a lower-priority positional reply theme.
   if (
-    replyStrength >= 3 &&
+    replyPuzzleTheme &&
+    preferReplyPuzzle &&
     note.opponentReply &&
     note.opponentReplyUci &&
-    note.opponentReplyUci.length === 4
+    note.opponentReplyUci.length >= 4 &&
+    note.opponentReplyUci.length <= 5
   ) {
     return {
       ...note,
@@ -407,6 +498,7 @@ function buildPracticePuzzle(
         'punish-mistake',
       sourcePly:
         note.ply,
+      puzzleTheme: replyPuzzleTheme,
       fenBefore:
         note.fenAfter,
       bestMove:
@@ -419,8 +511,12 @@ function buildPracticePuzzle(
   // Otherwise only accept an original-position puzzle when there is
   // a forcing answer or a very large, clearly themed positional miss.
   if (
-    bestStrength >= 3 ||
-    clearPositionalLesson
+    bestPuzzleTheme &&
+    (
+      bestStrength >= 3 ||
+      clearVerifiedTactic ||
+      clearPositionalLesson
+    )
   ) {
     return {
       ...note,
@@ -428,6 +524,7 @@ function buildPracticePuzzle(
         'find-better',
       sourcePly:
         note.ply,
+      puzzleTheme: bestPuzzleTheme,
     };
   }
 
@@ -539,21 +636,24 @@ function selectPracticePuzzles(
 }
 
 
-type PraiseMoment = 'streak' | 'recovery';
+type PraiseMoment = 'strong' | 'streak' | 'recovery';
 
 function personalityPraise(
   result: CoachResult,
   language: CoachLanguage,
   moment: PraiseMoment,
+  variant: number,
 ): Pick<CoachResult, 'title' | 'feedback'> {
-  const index = Math.abs(result.ply) % 4;
-
   if (language === 'zh-CN') {
     const recovery = [
       ['稳住了', '很好，你马上重新稳住了节奏。'],
       ['调整得不错', '不错，上一处问题之后你很快调整回来了。'],
       ['重新找回节奏', '这步很稳。继续用刚才这种检查方式。'],
       ['处理得很冷静', '很好，没有被前面的失误影响到这一手。'],
+      ['反应很成熟', '你及时调整了思路，这就是很好的比赛心态。'],
+      ['重新站稳了', '这一手处理得很冷静，局面又稳住了。'],
+      ['恢复得很快', '不错，你没有纠结上一手，而是专注在当前局面。'],
+      ['保持住了', '这一步很有韧性。继续一手一手地检查。'],
     ] as const;
 
     const streak = [
@@ -561,10 +661,31 @@ function personalityPraise(
       ['思路很稳', '不错，你现在的落子很有耐心。'],
       ['继续这样想', '这几步的判断都很稳，别急，保持这个过程。'],
       ['状态不错', '你正在连续做出合理的决定。继续专注。'],
+      ['判断很连贯', '你这几步的思路很清楚，继续按这个节奏来。'],
+      ['掌控得不错', '你没有急着出手，每一步都很有分寸。'],
+      ['下得很踏实', '连续几步都很可靠，保持现在的专注度。'],
+      ['耐心有回报', '你正在把稳健的判断一手一手连起来。'],
     ] as const;
 
+    const strong = [
+      ['判断得漂亮', `这手 ${result.playedMove} 下得很干净，继续相信你的检查过程。`],
+      ['好眼力', `不错，${result.playedMove} 是个很稳的决定。`],
+      ['这手很扎实', `漂亮，${result.playedMove} 处理得简单又稳健。`],
+      ['选择得很好', `这手 ${result.playedMove} 很有分寸，保持这样的耐心。`],
+      ['看得很准', `${result.playedMove} 抓住了局面的重点，很不错。`],
+      ['处理得很漂亮', `我喜欢 ${result.playedMove}，思路清楚而且很稳。`],
+      ['很有质量的一手', `${result.playedMove} 兼顾得很好，继续这样检查。`],
+      ['决定很成熟', `这手 ${result.playedMove} 不急不躁，判断很到位。`],
+    ] as const;
+
+    const choices =
+      moment === 'recovery'
+        ? recovery
+        : moment === 'strong'
+          ? strong
+          : streak;
     const [title, feedback] =
-      (moment === 'recovery' ? recovery : streak)[index];
+      choices[Math.abs(variant) % choices.length];
 
     return { title, feedback };
   }
@@ -574,6 +695,10 @@ function personalityPraise(
     ['Back on track', 'Good adjustment. You did not let the last mistake affect this move.'],
     ['Good reset', 'That was a composed response. Keep checking the position this way.'],
     ['Steady again', 'Nice recovery — you got right back to making solid decisions.'],
+    ['Calm response', 'You adjusted right away and handled the new position well.'],
+    ['Nicely recovered', 'Good resilience. You focused on the position in front of you.'],
+    ['Fresh start', 'That was a thoughtful response. Keep taking it one move at a time.'],
+    ['Composed chess', 'You steadied the position and got your decision-making back on track.'],
   ] as const;
 
   const streak = [
@@ -581,12 +706,58 @@ function personalityPraise(
     ['Settling in', 'Your last few moves have been patient and sensible. Keep going.'],
     ['Nice process', 'You are making consistently solid choices right now. Stay focused.'],
     ['Looking steady', 'A good run of decisions. Keep thinking before you commit.'],
+    ['Clear thinking', 'Your decisions have been measured and consistent. Keep it up.'],
+    ['In control', 'You are giving each move the attention it deserves. Nice work.'],
+    ['Patient chess', 'That is another reliable decision in a strong sequence.'],
+    ['Good momentum', 'You are stringing together sensible moves without rushing.'],
   ] as const;
 
+  const strong = [
+    ['Sharp choice', `Nice one — ${result.playedMove} was a clean, confident decision.`],
+    ['Good eye', `${result.playedMove} was a solid choice. Trust that careful process.`],
+    ['Well played', `That was steady chess — ${result.playedMove} kept things simple and sound.`],
+    ['Strong decision', `I like ${result.playedMove}. Calm, clear, and no overthinking.`],
+    ['Nicely judged', `${result.playedMove} fits the position well. Good judgment.`],
+    ['Clean move', `${result.playedMove} was precise and purposeful. Nicely done.`],
+    ['Quality choice', `You found ${result.playedMove} and handled the position with confidence.`],
+    ['Good awareness', `${result.playedMove} shows that you understood what the position needed.`],
+  ] as const;
+
+  const choices =
+    moment === 'recovery'
+      ? recovery
+      : moment === 'strong'
+        ? strong
+        : streak;
   const [title, feedback] =
-    (moment === 'recovery' ? recovery : streak)[index];
+    choices[Math.abs(variant) % choices.length];
 
   return { title, feedback };
+}
+
+function fallbackCoachWording(
+  result: CoachResult,
+  language: CoachLanguage,
+): Pick<CoachResult, 'title' | 'feedback' | 'lesson' | 'question'> {
+  if (language === 'zh-CN') {
+    return {
+      title: '记住这个局面',
+      feedback: result.opponentReply
+        ? `小心，${result.playedMove} 之后要特别注意对手的 ${result.opponentReply}。${result.bestMove} 是更好的选择。`
+        : `${result.playedMove} 错过了局面里的关键机会。对比一下 ${result.bestMove}，看看它解决了什么问题。`,
+      lesson: '落子前，先检查对手最强的强制回应。',
+      question: '',
+    };
+  }
+
+  return {
+    title: 'One to remember',
+    feedback: result.opponentReply
+      ? `Careful — after ${result.playedMove}, ${result.opponentReply} is the reply to notice. ${result.bestMove} was the stronger choice.`
+      : `${result.playedMove} missed the position's key opportunity. Compare it with ${result.bestMove} and look for what that move solves.`,
+    lesson: "Before moving, check your opponent's strongest forcing reply.",
+    question: '',
+  };
 }
 
 type ReportTheme = {
@@ -595,10 +766,177 @@ type ReportTheme = {
   advice: string;
 };
 
+const CHINESE_THEME_LABELS: Record<
+  ChessTheme,
+  string
+> = {
+  'Fork / Double Attack': '叉攻 / 双攻',
+  Pin: '牵制',
+  Skewer: '串击',
+  'Discovered Attack': '闪击',
+  'Discovered Check': '闪将',
+  'Double Check': '双将',
+  'X-Ray Attack': 'X 射线攻击',
+  Defense: '防守',
+  'Back-Rank Weakness': '后排弱点',
+  'Back-Rank Mate': '后排将杀',
+  Deflection: '引离',
+  Decoy: '诱离',
+  'Removal of the Defender': '消除防守子',
+  Overloading: '过载',
+  Interference: '干扰',
+  Clearance: '腾挪',
+  'Clearance Sacrifice': '腾挪弃子',
+  Sacrifice: '弃子',
+  'Exchange Sacrifice': '弃质量',
+  'Queen Sacrifice': '弃后',
+  Zwischenzug: '中间着',
+  Desperado: '亡命攻击',
+  'Hanging Piece': '悬子',
+  'Trapped Piece': '困子',
+  'Mating Net': '将杀网',
+  'Smothered Mate': '闷杀',
+  'Support Mate': '保护式将杀',
+  'Checkmate Pattern': '基本将杀型',
+  'Mate in One': '一步将杀',
+  'Mate in Two': '两步将杀',
+  'Mate in Three or More': '三步以上将杀',
+  'Forced Mate': '强制将杀',
+  'Perpetual Check': '长将',
+  Windmill: '风车战术',
+  'Attack on f7 / f2': '攻击 f7 / f2',
+  'Attacking the Castled King': '进攻易位后的王',
+  'Vulnerable King': '王位脆弱',
+  'King Safety': '王的安全',
+  Simplification: '简化局面',
+  Promotion: '升变',
+  Underpromotion: '低级升变',
+  'En Passant': '吃过路兵',
+  Stalemate: '逼和',
+  Zugzwang: '无着可动',
+  'Endgame Tactic': '残局战术',
+  'Passed Pawn': '通路兵',
+  Opposition: '对王',
+  'Open File': '开放线',
+  'Weak Square': '弱格',
+};
+
+function themeLabel(
+  theme: ChessTheme,
+  language: CoachLanguage,
+): string {
+  return language === 'zh-CN'
+    ? CHINESE_THEME_LABELS[theme]
+    : theme;
+}
+
+function namedThemeReport(
+  theme: ChessTheme,
+  language: CoachLanguage,
+): ReportTheme {
+  const isChinese = language === 'zh-CN';
+  const label = themeLabel(theme, language);
+
+  const adviceGroups: Array<{
+    themes: ChessTheme[];
+    en: string;
+    zh: string;
+  }> = [
+    {
+      themes: ['Fork / Double Attack', 'Double Check'],
+      en: 'Watch for one move attacking two targets at once, especially with checks.',
+      zh: '留意一步同时攻击两个目标的机会，尤其是带将军的双攻。',
+    },
+    {
+      themes: ['Pin', 'Skewer', 'X-Ray Attack'],
+      en: 'Scan every rank, file, and diagonal for pieces lined up behind one another.',
+      zh: '沿横线、直线和斜线检查棋子是否前后排成一线。',
+    },
+    {
+      themes: ['Discovered Attack', 'Discovered Check', 'Windmill'],
+      en: 'Before moving a piece, check whether it uncovers an attack from behind it.',
+      zh: '移动棋子前，检查它是否会为后方棋子打开攻击线路。',
+    },
+    {
+      themes: ['Hanging Piece', 'Trapped Piece'],
+      en: 'Check loose pieces and escape squares before committing to your move.',
+      zh: '落子前检查没有保护的棋子，以及受攻棋子是否还有退路。',
+    },
+    {
+      themes: ['Deflection', 'Decoy', 'Removal of the Defender', 'Overloading', 'Interference'],
+      en: 'Identify the key defender, then look for a forcing way to distract or remove it.',
+      zh: '先找出关键防守子，再寻找强制手段将它引开或消除。',
+    },
+    {
+      themes: ['Back-Rank Weakness', 'Back-Rank Mate', 'Mating Net', 'Smothered Mate', 'Support Mate', 'Checkmate Pattern', 'Mate in One', 'Mate in Two', 'Mate in Three or More', 'Forced Mate'],
+      en: 'When the king has limited escape squares, calculate every check before choosing another move.',
+      zh: '当王缺少逃跑格时，先算清所有将军，再考虑其他走法。',
+    },
+    {
+      themes: ['Sacrifice', 'Exchange Sacrifice', 'Queen Sacrifice', 'Clearance Sacrifice', 'Clearance', 'Desperado'],
+      en: 'Do not judge the material immediately; calculate the forcing payoff and resulting position.',
+      zh: '不要只看眼前子力，要算清强制收益和弃子后的局面。',
+    },
+    {
+      themes: ['Zwischenzug', 'Perpetual Check'],
+      en: 'Before an automatic recapture, look for an in-between check, capture, or forcing threat.',
+      zh: '自动回吃前，先找中间将军、吃子或其他强制威胁。',
+    },
+    {
+      themes: ['Attack on f7 / f2', 'Attacking the Castled King', 'Vulnerable King', 'King Safety'],
+      en: 'Count attackers, defenders, and escape squares before opening lines around either king.',
+      zh: '打开王周围线路前，数清进攻子、防守子和逃跑格。',
+    },
+    {
+      themes: ['Defense', 'Simplification'],
+      en: 'When under pressure, neutralize the concrete threat and consider favorable exchanges.',
+      zh: '受到压力时，先化解具体威胁，再考虑有利的交换和简化。',
+    },
+    {
+      themes: ['Open File', 'Weak Square'],
+      en: 'Notice which files and squares cannot be protected by a pawn, then improve the piece that can use them.',
+      zh: '留意兵无法保护的开放线和弱格，再改善能够利用它们的棋子。',
+    },
+    {
+      themes: ['En Passant'],
+      en: 'After a two-square pawn move, check the en passant option before the one-move window closes.',
+      zh: '对方兵走两格后，立刻检查是否能吃过路兵，因为机会只有一回合。',
+    },
+    {
+      themes: ['Promotion', 'Underpromotion', 'Passed Pawn', 'Opposition', 'Zugzwang', 'Stalemate', 'Endgame Tactic'],
+      en: 'In the endgame, calculate pawn races, king access, and every forcing move precisely.',
+      zh: '残局中要精确计算兵的竞速、王的路线和所有强制着。',
+    },
+  ];
+
+  const group = adviceGroups.find(
+    (entry) => entry.themes.includes(theme),
+  );
+
+  return {
+    key: `named:${theme}`,
+    label,
+    advice: group
+      ? isChinese
+        ? group.zh
+        : group.en
+      : isChinese
+        ? `留意“${label}”这个主题，并用引擎变化图确认具体走法。`
+        : `Watch for ${label.toLowerCase()} and verify the concrete idea in the engine line.`,
+  };
+}
+
 function reportThemeFor(
   note: CoachNote,
   language: CoachLanguage,
 ): ReportTheme {
+  if (note.themes?.length) {
+    return namedThemeReport(
+      note.themes[0],
+      language,
+    );
+  }
+
   const isChinese = language === 'zh-CN';
 
   const text = [
@@ -768,59 +1106,30 @@ function practicePuzzleTitle(
   note: PracticePuzzle,
   language: CoachLanguage,
 ): string {
-  const isChinese =
-    language === 'zh-CN';
+  return themeLabel(
+    note.puzzleTheme,
+    language,
+  );
+}
 
-  if (
-    note.puzzleMode ===
-    'punish-mistake'
-  ) {
-    return isChinese
-      ? '看清你漏掉的战术'
-      : 'See the tactic you allowed';
-  }
-
-  const theme = reportThemeFor(
-    note,
+function practicePuzzlePrompt(
+  puzzle: PracticePuzzle,
+  language: CoachLanguage,
+): string {
+  const label = themeLabel(
+    puzzle.puzzleTheme,
     language,
   );
 
-  switch (theme.key) {
-    case 'piece-safety':
-      return isChinese
-        ? '保护好你的棋子'
-        : 'Keep your pieces safe';
-
-    case 'tactics':
-      return isChinese
-        ? '找到战术机会'
-        : 'Find the tactical idea';
-
-    case 'king-safety':
-      return isChinese
-        ? '保护你的王'
-        : 'Protect your king';
-
-    case 'opponent-threats':
-      return isChinese
-        ? '发现对手的威胁'
-        : 'Spot the threat';
-
-    case 'opening-habits':
-      return isChinese
-        ? '找到自然的开局走法'
-        : 'Find the clean developing move';
-
-    case 'endgame':
-      return isChinese
-        ? '找到正确的残局计划'
-        : 'Find the best endgame plan';
-
-    default:
-      return isChinese
-        ? '找到更好的走法'
-        : 'Find the better move';
+  if (language === 'zh-CN') {
+    return puzzle.puzzleMode === 'punish-mistake'
+      ? `找出对手可以利用的“${label}”主题。`
+      : `找出你错过的“${label}”主题。`;
   }
+
+  return puzzle.puzzleMode === 'punish-mistake'
+    ? `Find the ${label} idea your move allowed.`
+    : `Find the ${label} idea you missed.`;
 }
 
 
@@ -987,28 +1296,34 @@ function buildGameReport(
   >();
 
   for (const note of notes) {
-    const theme = reportThemeFor(
-      note,
-      language,
-    );
-
     const severity =
       classificationWeight(
         note.classification,
       ) + note.centipawnLoss;
 
-    const current =
-      themes.get(theme.key);
+    const noteThemes = note.themes?.length
+      ? note.themes.map((theme) =>
+          namedThemeReport(
+            theme,
+            language,
+          ),
+        )
+      : [reportThemeFor(note, language)];
 
-    if (current) {
-      current.count += 1;
-      current.score += severity;
-    } else {
-      themes.set(theme.key, {
-        ...theme,
-        count: 1,
-        score: severity,
-      });
+    for (const theme of noteThemes) {
+      const current =
+        themes.get(theme.key);
+
+      if (current) {
+        current.count += 1;
+        current.score += severity;
+      } else {
+        themes.set(theme.key, {
+          ...theme,
+          count: 1,
+          score: severity,
+        });
+      }
     }
   }
 
@@ -1026,8 +1341,15 @@ function buildGameReport(
 
   const improvements =
     improvementThemes.map(
-      (theme) =>
-        `${theme.label}${isChinese ? '：' : ': '}${theme.advice}`,
+      (theme) => {
+        const frequency = isChinese
+          ? `${theme.count} 个关键局面`
+          : `${theme.count} key ${theme.count === 1 ? 'moment' : 'moments'}`;
+
+        return isChinese
+          ? `${theme.label}（${frequency}）：${theme.advice}`
+          : `${theme.label} (${frequency}): ${theme.advice}`;
+      },
     );
 
   if (!improvements.length) {
@@ -1038,22 +1360,10 @@ function buildGameReport(
     );
   }
 
-  const mainTheme =
-    improvementThemes[0];
-
-  const takeaway = mainTheme
-    ? isChinese
-      ? `下一盘棋先专注一个重点：${mainTheme.label}。先把这个习惯练成自然反应，再考虑更多东西。`
-      : `Your main focus next game is ${mainTheme.label.toLowerCase()}. Make that one habit automatic before worrying about anything more advanced.`
-    : isChinese
-      ? '继续保持冷静的思考方式，让好的决定从开局一直延续到最后。'
-      : 'Keep the same calm thinking process and make your solid decisions more consistent from move to move.';
-
   return {
     strengths: strengths.slice(0, 2),
     improvements:
       improvements.slice(0, 2),
-    takeaway,
   };
 }
 
@@ -1088,13 +1398,46 @@ const COACH_LANGUAGE_STORAGE_KEY =
 const VOICE_ENABLED_STORAGE_KEY =
   'ai-chess-coach.voice-enabled.v1';
 
+const VOICE_INTRO_GAME_STORAGE_KEY =
+  'ai-chess-coach.voice-intro-game.v1';
+
+const VOICE_ENDING_GAME_STORAGE_KEY =
+  'ai-chess-coach.voice-ending-game.v1';
+
+function claimGameVoiceMoment(
+  storageKey: string,
+  gameId: string,
+): boolean {
+  try {
+    if (
+      window.localStorage.getItem(storageKey) ===
+      gameId
+    ) {
+      return false;
+    }
+
+    window.localStorage.setItem(
+      storageKey,
+      gameId,
+    );
+  } catch {
+    // The in-memory guards still prevent duplicates when storage is blocked.
+  }
+
+  return true;
+}
+
 function readVoiceEnabled(): boolean {
   try {
-    return window.localStorage.getItem(
+    const stored = window.localStorage.getItem(
       VOICE_ENABLED_STORAGE_KEY,
-    ) === 'true';
+    );
+
+    // Voice coaching is a core part of Chess Buddy. Preserve an explicit
+    // user choice, but enable it for first-time users and cleared storage.
+    return stored == null ? true : stored === 'true';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -1303,6 +1646,111 @@ function gameEndReason(
   }
 }
 
+function gameVoiceIntroduction(
+  myColor: 'white' | 'black',
+  language: CoachLanguage,
+): string {
+  if (language === 'zh-CN') {
+    const color =
+      myColor === 'white'
+        ? '白方'
+        : '黑方';
+
+    return (
+      '你好，我是棋伴，你的国际象棋教练。' +
+      '我会帮你留意战术和关键时刻。' +
+      `你执${color}，慢慢想，我们开始吧。`
+    );
+  }
+
+  const color =
+    myColor === 'white'
+      ? 'White'
+      : 'Black';
+
+  return (
+    "Hey, I'm Chess Buddy. " +
+    "I'll watch for tactics and important moments while you play. " +
+    `You're ${color}. Take your time, and let's have a good game.`
+  );
+}
+
+function gameVoiceEnding(
+  status: string,
+  winner: Winner,
+  myColor: 'white' | 'black',
+  language: CoachLanguage,
+): string | null {
+  if (
+    status === 'aborted' ||
+    status === 'noStart'
+  ) {
+    return null;
+  }
+
+  const draw = [
+    'stalemate',
+    'draw',
+    'insufficientMaterialClaim',
+  ].includes(status);
+
+  if (language === 'zh-CN') {
+    if (winner === myColor) {
+      return (
+        '对局结束，赢得漂亮！' +
+        '你抓住了自己的机会。' +
+        '准备好后，我们一起复盘关键时刻。'
+      );
+    }
+
+    if (winner) {
+      return (
+        '对局结束。没关系，这盘棋里有很多值得学习的地方。' +
+        '我们一起看看转折点，再把它们变成练习。'
+      );
+    }
+
+    if (draw) {
+      return (
+        '对局结束，和棋。下得很顽强！' +
+        '我们一起复盘关键时刻，看看还能怎样提高。'
+      );
+    }
+
+    return (
+      '对局结束。辛苦了！' +
+      '准备好后，我们一起复盘这盘棋。'
+    );
+  }
+
+  if (winner === myColor) {
+    return (
+      "That's the game—well played! " +
+      'You made your chances count. ' +
+      "When you're ready, let's review the key moments together."
+    );
+  }
+
+  if (winner) {
+    return (
+      "That's the game. No worries—there are useful lessons here. " +
+      "Let's review the turning points and turn them into practice."
+    );
+  }
+
+  if (draw) {
+    return (
+      "That's the game—a draw. Nice fight! " +
+      "Let's review the key moments and see what we can sharpen."
+    );
+  }
+
+  return (
+    "That's the game. Good work staying with it. " +
+    "When you're ready, let's review the important moments."
+  );
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
@@ -1360,6 +1808,9 @@ export default function App() {
   const [puzzleState, setPuzzleState] = useState<PuzzleState>('solving');
   const [puzzleRollbackSignal, setPuzzleRollbackSignal] = useState(0);
   const [voiceEnabled, setVoiceEnabled] = useState(readVoiceEnabled);
+  const [ttsStatus, setTtsStatus] = useState<TtsStatus>({
+    state: 'checking',
+  });
   const [hintsEnabled, setHintsEnabled] = useState(true);
 
   const [coachDetail, setCoachDetail] = useState<CoachDetail>(readCoachDetail);
@@ -1369,18 +1820,26 @@ export default function App() {
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
   const [historyPly, setHistoryPly] = useState<number | null>(null);
   type CoachJob = {
+    id: number;
     fenBefore: string;
     uci: string;
     moves: string[];
+    detail: CoachDetail;
+    language: CoachLanguage;
   };
 
   const coachAbortRef = useRef<AbortController | null>(null);
   const coachQueueRef = useRef<CoachJob[]>([]);
+  const latestCoachJobIdRef = useRef(0);
   const coachProcessingRef = useRef(false);
   const observedCoachPlyRef = useRef<number | null>(null);
   const goodMoveRunRef = useRef(0);
   const lastMistakePlyRef = useRef<number | null>(null);
   const lastPraisePlyRef = useRef<number | null>(null);
+  // Unlike a ply-based selector, this advances by exactly one whenever praise
+  // is used. Spaced-out comments therefore rotate through the full phrase bank
+  // instead of bouncing between the same two entries.
+  const praiseVariantRef = useRef(0);
 
   // Last few REAL LLM explanations from this game.
   // Sent back to the next wording request only to reduce repetition.
@@ -1393,6 +1852,8 @@ export default function App() {
   const lastCriticalQuestionPlyRef = useRef(-999);
   const recentCriticalQuestionsRef = useRef<string[]>([]);
   const criticalPromptRef = useRef<CriticalPrompt | null>(null);
+  const spokenIntroGameRef = useRef<string | null>(null);
+  const spokenEndingGameRef = useRef<string | null>(null);
   const reviewTouchStart = useRef<{ x: number; y: number } | null>(null);
   const [reviewDragX, setReviewDragX] = useState(0);
   const [reviewDragging, setReviewDragging] = useState(false);
@@ -1477,6 +1938,71 @@ export default function App() {
   }, [movesText]);
 
   useEffect(() => {
+    if (
+      !voiceEnabled ||
+      !gameId ||
+      !activeGame ||
+      !isCoachGame
+    ) {
+      return;
+    }
+
+    if (spokenIntroGameRef.current === gameId) {
+      return;
+    }
+
+    // Do not greet in the middle of a recovered game. A newly connected game
+    // can already be at ply one when the bot has White and moves immediately.
+    if (position.plyCount > 1) {
+      spokenIntroGameRef.current = gameId;
+      claimGameVoiceMoment(
+        VOICE_INTRO_GAME_STORAGE_KEY,
+        gameId,
+      );
+      return;
+    }
+
+    spokenIntroGameRef.current = gameId;
+
+    if (
+      !claimGameVoiceMoment(
+        VOICE_INTRO_GAME_STORAGE_KEY,
+        gameId,
+      )
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (
+        gameIdRef.current !== gameId ||
+        !voiceEnabled
+      ) {
+        return;
+      }
+
+      void speakCoachLatest(
+        gameVoiceIntroduction(
+          myColor,
+          coachLanguage,
+        ),
+        coachLanguage,
+      );
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    voiceEnabled,
+    gameId,
+    activeGame,
+    isCoachGame,
+    myColor,
+    coachLanguage,
+  ]);
+
+  useEffect(() => {
     try {
       window.localStorage.setItem(
         COACH_DETAIL_STORAGE_KEY,
@@ -1508,6 +2034,13 @@ export default function App() {
       // no-op
     }
   }, [voiceEnabled]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeTtsStatus(setTtsStatus);
+    void checkTtsStatus();
+
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     if (!voiceEnabled) return;
@@ -1972,6 +2505,7 @@ export default function App() {
   useEffect(() => {
     coachAbortRef.current?.abort();
     coachQueueRef.current = [];
+    latestCoachJobIdRef.current += 1;
     coachProcessingRef.current = false;
     observedCoachPlyRef.current = null;
     goodMoveRunRef.current = 0;
@@ -2036,7 +2570,45 @@ export default function App() {
 
     const timer =
       window.setTimeout(
-        () => setGameOverOpen(true),
+        () => {
+          setGameOverOpen(true);
+
+          if (
+            !voiceEnabled ||
+            !isCoachGame ||
+            !gameId ||
+            spokenEndingGameRef.current === gameId
+          ) {
+            return;
+          }
+
+          spokenEndingGameRef.current = gameId;
+
+          if (
+            !claimGameVoiceMoment(
+              VOICE_ENDING_GAME_STORAGE_KEY,
+              gameId,
+            )
+          ) {
+            return;
+          }
+
+          const ending = gameVoiceEnding(
+            gameStatus,
+            winner,
+            myColor,
+            coachLanguage,
+          );
+
+          if (ending) {
+            // Preserve any final-move explanation already playing. The
+            // sign-off is lower priority and belongs behind that lesson.
+            void speakCoach(
+              ending,
+              coachLanguage,
+            );
+          }
+        },
         450,
       );
 
@@ -2049,6 +2621,11 @@ export default function App() {
     coachThinking,
     coachExplanationPending,
     playerMoveAnalysisPending,
+    voiceEnabled,
+    isCoachGame,
+    winner,
+    myColor,
+    coachLanguage,
   ]);
 
   useEffect(() => {
@@ -2075,14 +2652,95 @@ export default function App() {
     moveEvaluations,
   ]);
 
-  function speak(text: string) {
+  function speak(
+    text: string,
+    language: CoachLanguage = coachLanguage,
+  ) {
     if (!voiceEnabled) return;
 
-    void speakCoach(
+    void speakCoachLatest(
       text,
-      coachLanguage,
+      language,
     );
   }
+
+  function speakCriticalQuestion(
+    prompt: CriticalPrompt,
+    language: CoachLanguage = coachLanguage,
+    afterMistake = false,
+  ) {
+    if (!voiceEnabled) return;
+
+    // Preserve a real mistake explanation and queue the current-position
+    // question behind it. Praise is lower priority and can still be replaced.
+    if (!afterMistake) {
+      stopCoachSpeech();
+    }
+
+    window.setTimeout(() => {
+      // The player may have moved during the transition.
+      if (criticalPromptRef.current !== prompt) return;
+
+      const spokenQuestion =
+        prompt.mateThreat
+          ? language === 'zh-CN'
+            ? `注意，将杀威胁。${prompt.question}`
+            : `Careful, mate threat. ${prompt.question}`
+          : language === 'zh-CN'
+          ? `先想一想。${prompt.question}`
+          : `Think first. ${prompt.question}`;
+
+      if (afterMistake) {
+        void speakCoach(
+          spokenQuestion,
+          language,
+        );
+      } else {
+        void speakCoachLatest(
+          spokenQuestion,
+          language,
+        );
+      }
+    }, 250);
+  }
+
+  function testCoachVoice() {
+    if (!voiceEnabled) {
+      setVoiceEnabled(true);
+    }
+
+    void unlockCoachAudio().then(() =>
+      speakCoach(
+        coachLanguage === 'zh-CN'
+          ? 'ElevenLabs 语音测试成功。测试棋步 e4。'
+          : 'ElevenLabs voice test successful. Testing the move e4.',
+        coachLanguage,
+      ),
+    );
+  }
+
+  const ttsStatusLabel =
+    coachLanguage === 'zh-CN'
+      ? {
+          checking: '正在检查语音',
+          ready: 'ElevenLabs 已就绪',
+          online: 'ElevenLabs 在线',
+          idle: '在线 · 此步无需讲解',
+          speaking: '正在播放语音',
+          played: '语音播放完成',
+          blocked: '音频被阻止，点击重试',
+          offline: 'ElevenLabs 离线',
+        }[ttsStatus.state]
+      : {
+          checking: 'Checking voice',
+          ready: 'ElevenLabs ready',
+          online: 'ElevenLabs online',
+          idle: 'Online · no comment this move',
+          speaking: 'Speaking…',
+          played: 'Voice played',
+          blocked: 'Audio blocked — tap to retry',
+          offline: 'ElevenLabs offline',
+        }[ttsStatus.state];
 
   const processCoachQueue = useCallback(async () => {
     if (coachProcessingRef.current) return;
@@ -2105,11 +2763,17 @@ export default function App() {
           const result = await analyzeMove(
             job.fenBefore,
             job.uci,
-            coachDetail,
+            job.detail,
             controller.signal,
-            coachLanguage,
+            job.language,
             job.moves,
           );
+
+          // A newer board position arrived while this Stockfish request was
+          // running. Do not display or speak analysis for the old position.
+          if (job.id !== latestCoachJobIdRef.current) {
+            continue;
+          }
 
           const analysisGameId = gameId;
 
@@ -2145,22 +2809,38 @@ export default function App() {
               result.centipawnLoss < 25;
 
             const streak =
-              goodMoveRunRef.current >= 4 &&
-              goodMoveRunRef.current % 4 === 0;
+              result.moveNumber >= 4 &&
+              goodMoveRunRef.current >= 3;
+
+            const strongMove =
+              result.moveNumber >= 4 &&
+              result.classification === 'good' &&
+              result.centipawnLoss <= 15;
 
             const praiseIsSpacedOut =
               lastPraisePlyRef.current == null ||
-              result.ply - lastPraisePlyRef.current >= 8;
+              result.ply - lastPraisePlyRef.current >= 6;
 
-            // Routine good moves are intentionally silent. The coach speaks
-            // when the praise actually means something: a recovery or a run
-            // of consistently strong decisions.
-            if ((recovery || streak) && praiseIsSpacedOut) {
+            // Praise strong decisions often enough for the coach to feel
+            // present, while skipping routine opening moves and spacing out
+            // comments so the same compliment never fires every turn.
+            if (
+              (recovery || strongMove || streak) &&
+              praiseIsSpacedOut
+            ) {
+              const praiseMoment: PraiseMoment = recovery
+                ? 'recovery'
+                : strongMove
+                  ? 'strong'
+                  : 'streak';
+
               const praise = personalityPraise(
                 result,
-                coachLanguage,
-                recovery ? 'recovery' : 'streak',
+                job.language,
+                praiseMoment,
+                praiseVariantRef.current,
               );
+              praiseVariantRef.current += 1;
 
               const praisedResult: CoachResult = {
                 ...result,
@@ -2171,9 +2851,14 @@ export default function App() {
 
               lastPraisePlyRef.current = result.ply;
               setCoachResult(praisedResult);
-              speak(praise.feedback);
+              speak(praise.feedback, job.language);
             } else {
               setCoachResult(null);
+              markCoachVoiceIdle(
+                job.language === 'zh-CN'
+                  ? '这一着没有需要语音讲解的重要内容。'
+                  : 'No important voice comment was scheduled for this move.',
+              );
             }
 
             continue;
@@ -2194,7 +2879,7 @@ export default function App() {
           const fastResult: CoachResult = {
             ...result,
             title:
-              coachLanguage === 'zh-CN'
+              job.language === 'zh-CN'
                 ? result.classification === 'blunder'
                   ? '关键失误'
                   : '值得看一看'
@@ -2202,7 +2887,7 @@ export default function App() {
                   ? 'Critical miss'
                   : 'Worth a look',
             feedback:
-              coachLanguage === 'zh-CN'
+              job.language === 'zh-CN'
                 ? '这里有一个重要的学习点，正在整理最关键的原因…'
                 : 'There is an important idea here. I’m checking the clearest reason…',
             lesson: '',
@@ -2216,7 +2901,7 @@ export default function App() {
                 gameId: analysisGameId || '',
                 savedAt: Date.now(),
                 playerColor: myColor,
-                language: coachLanguage,
+                language: job.language,
               };
 
               return [
@@ -2241,11 +2926,15 @@ export default function App() {
 
             void explainMove(
               result.analysisId,
-              coachDetail,
-              coachLanguage,
+              job.detail,
+              job.language,
               recentFeedback,
             )
               .then((wording) => {
+                if (job.id !== latestCoachJobIdRef.current) {
+                  return;
+                }
+
                 if (
                   analysisGameId &&
                   gameIdRef.current !== analysisGameId
@@ -2295,9 +2984,13 @@ export default function App() {
                 }
 
                 setCoachExplanationPending(false);
-                speak(enriched.feedback);
+                speak(enriched.feedback, job.language);
               })
               .catch((error) => {
+                if (job.id !== latestCoachJobIdRef.current) {
+                  return;
+                }
+
                 if (isAbortError(error)) {
                   return;
                 }
@@ -2309,19 +3002,15 @@ export default function App() {
                   error,
                 );
 
+                const fallback = fallbackCoachWording(
+                  result,
+                  job.language,
+                );
+
                 const unavailable: CoachResult = {
                   ...fastResult,
+                  ...fallback,
                   explanationPending: false,
-                  title:
-                    coachLanguage === 'zh-CN'
-                      ? '解释暂时不可用'
-                      : 'Explanation unavailable',
-                  feedback:
-                    coachLanguage === 'zh-CN'
-                      ? `棋局分析已经完成，建议走 ${result.bestMove}，但 AI 解释这次没有加载成功。`
-                      : `The chess analysis is ready and the suggested move is ${result.bestMove}, but the AI explanation did not load.`,
-                  lesson: '',
-                  question: '',
                 };
 
                 saveNote(unavailable);
@@ -2332,7 +3021,9 @@ export default function App() {
                     : current,
                 );
 
-                // Deliberately do NOT speak a canned replacement.
+                // A temporary OpenAI wording failure must never make voice
+                // coaching disappear. This fallback uses only engine facts.
+                speak(unavailable.feedback, job.language);
               });
           } else {
             console.error(
@@ -2340,26 +3031,27 @@ export default function App() {
               'The frontend/backend versions are out of sync.',
             );
 
+            const fallback = fallbackCoachWording(
+              result,
+              job.language,
+            );
+
             const unavailable: CoachResult = {
               ...fastResult,
+              ...fallback,
               explanationPending: false,
-              title:
-                coachLanguage === 'zh-CN'
-                  ? '解释连接错误'
-                  : 'Explanation connection error',
-              feedback:
-                coachLanguage === 'zh-CN'
-                  ? '棋局分析完成了，但 AI 解释接口没有正确连接。'
-                  : 'The chess analysis completed, but the AI explanation endpoint is not connected correctly.',
-              lesson: '',
-              question: '',
             };
 
             setCoachExplanationPending(false);
             saveNote(unavailable);
             setCoachResult(unavailable);
+            speak(unavailable.feedback, job.language);
           }
         } catch (error) {
+          if (job.id !== latestCoachJobIdRef.current) {
+            continue;
+          }
+
           setPlayerMoveAnalysisPending(false);
           setCoachExplanationPending(false);
 
@@ -2376,8 +3068,6 @@ export default function App() {
       setCoachThinking(false);
     }
   }, [
-    coachDetail,
-    coachLanguage,
     gameId,
     myColor,
     voiceEnabled,
@@ -2497,6 +3187,7 @@ export default function App() {
       lastOpponentMove,
       lastOpponentMoveUci,
       coachLanguage,
+      coachDetail,
       recentQuestions,
       controller.signal,
     )
@@ -2519,10 +3210,30 @@ export default function App() {
           return;
         }
 
+        const promptKind =
+          prompt.kind || 'decision';
+
+        const followsFreshMistake = Boolean(
+          coachResult?.shouldCoach &&
+          coachResult.ply === currentPly - 1,
+        );
+
+        // A fresh mistake is the stronger teaching moment. Add a second
+        // question only when the current board contains a forcing check or
+        // concrete threat; quieter ideas can wait for another move.
+        if (
+          followsFreshMistake &&
+          promptKind !== 'check' &&
+          promptKind !== 'threat'
+        ) {
+          return;
+        }
+
         const nextPrompt: CriticalPrompt = {
+          mateThreat:
+            prompt.mateThreat,
           kind:
-            prompt.kind ||
-            'decision',
+            promptKind,
           title:
             prompt.title ||
             (
@@ -2555,8 +3266,10 @@ export default function App() {
             prompt.question,
           ].slice(-4);
 
-        speak(
-          prompt.question
+        speakCriticalQuestion(
+          nextPrompt,
+          coachLanguage,
+          followsFreshMistake,
         );
       })
       .catch((error) => {
@@ -2581,9 +3294,11 @@ export default function App() {
     position,
     initialFen,
     coachLanguage,
+    coachDetail,
     voiceEnabled,
     coachExplanationPending,
     playerMoveAnalysisPending,
+    coachResult,
   ]);
 
 
@@ -2592,6 +3307,7 @@ const analyzeStudentMove = useCallback(
     if (!isCoachGame) return;
 
     setPlayerMoveAnalysisPending(true);
+    setCoachExplanationPending(false);
     setCoachError('');
     setCoachResult(null);
 
@@ -2599,15 +3315,31 @@ const analyzeStudentMove = useCallback(
     criticalPromptRef.current = null;
     setCriticalPrompt(null);
 
-    coachQueueRef.current.push({
+    // The player has moved on, so old spoken commentary is no longer useful.
+    stopCoachSpeech();
+
+    const jobId = latestCoachJobIdRef.current + 1;
+    latestCoachJobIdRef.current = jobId;
+
+    // Keep the running analysis, if any, but coalesce every waiting request to
+    // the newest position. This bounds lag to at most one obsolete search.
+    coachQueueRef.current = [{
+      id: jobId,
       fenBefore,
       uci,
       moves,
-    });
+      detail: coachDetail,
+      language: coachLanguage,
+    }];
 
     void processCoachQueue();
   },
-  [isCoachGame, processCoachQueue],
+  [
+    coachDetail,
+    coachLanguage,
+    isCoachGame,
+    processCoachQueue,
+  ],
 );
   useEffect(() => {
     // Normal phone games use the exact local pre-move FEN captured when the
@@ -3067,6 +3799,7 @@ const analyzeStudentMove = useCallback(
     criticalPromptRef.current = null;
     setCriticalPrompt(null);
     coachQueueRef.current = [];
+    latestCoachJobIdRef.current += 1;
     coachProcessingRef.current = false;
 
     forgetStoredGame();
@@ -3177,8 +3910,7 @@ const reportText = isChinese
       puzzles: '练习题',
 
       whatWorked: '做得好的地方',
-      nextFocus: '下一步重点',
-      remember: '记住这一点',
+      nextFocus: '需要复习的主题',
 
       personalized: '个性化练习',
       practiceHeading: '练习这盘棋里的关键局面',
@@ -3199,9 +3931,7 @@ const reportText = isChinese
       moveSuffix: '回合',
       tryAgain: '重新挑战这个局面',
       closePuzzle: '关闭',
-      puzzlePrompt: '找到最佳走法。',
       puzzlePromptDetail: '这个局面就来自你刚才的对局。',
-      punishPrompt: '站在对手角度，找到最强的惩罚手段。',
       punishPromptDetail: '这是你刚才那步棋给对手留下的战术机会。',
       yourMove: '轮到你走。',
       incorrect:
@@ -3221,8 +3951,7 @@ const reportText = isChinese
       puzzles: 'practice puzzles',
 
       whatWorked: 'WHAT WORKED',
-      nextFocus: 'YOUR NEXT FOCUS',
-      remember: 'ONE THING TO REMEMBER',
+      nextFocus: 'PATTERNS TO REVIEW',
 
       personalized: 'PERSONALIZED PRACTICE',
       practiceHeading: 'Practice the key moments from this game',
@@ -3244,9 +3973,7 @@ const reportText = isChinese
       moveSuffix: '',
       tryAgain: 'Try the position again',
       closePuzzle: 'Close',
-      puzzlePrompt: 'Find the best move.',
       puzzlePromptDetail: 'This position came directly from your game.',
-      punishPrompt: "Play your opponent's strongest reply.",
       punishPromptDetail: 'This is the tactical idea your move allowed.',
       yourMove: 'Your move.',
       incorrect:
@@ -3283,6 +4010,24 @@ const puzzleMovableColor:
       ? 'white'
       : 'black'
     : undefined;
+
+// Keep the camera fixed to the side that was to move when the puzzle opened.
+// puzzleFen advances after a correct move, so deriving orientation from it
+// caused opponent-turn puzzles to flip back after every ply.
+const puzzleStartingColor:
+  | 'white'
+  | 'black'
+  | undefined = (() => {
+  if (!activePuzzle) return undefined;
+
+  try {
+    return new Chess(activePuzzle.fenBefore).turn() === 'w'
+      ? 'white'
+      : 'black';
+  } catch {
+    return activePuzzle.playerColor;
+  }
+})();
 
   const focusLessons = Array.from(new Set(coachNotes.map((note) => note.lesson).filter(Boolean))).slice(0, 3);
   const botLabel = bot.connected ? 'Coach bot ready' : bot.running ? 'Coach bot connecting' : 'Coach bot offline';
@@ -3782,18 +4527,74 @@ function handlePuzzleMove(
           ) : null}
           <div className={`coach-bubble ${coachResult?.classification || ''}`}>
             {criticalPrompt && isMyTurn ? <>
+              {coachResult?.shouldCoach &&
+              coachResult.ply === criticalPrompt.ply - 1 ? (
+                <div className="coach-prior-feedback">
+                  <div className="coach-heading">
+                    <strong>{coachResult.title}</strong>
+                    <span className={`quality-badge ${coachResult.classification}`}>
+                      {coachResult.classification}
+                    </span>
+                  </div>
+
+                  <div>{coachResult.feedback}</div>
+
+                  {coachResult.themes?.length ? (
+                    <div className="coach-theme-tags">
+                      {coachResult.themes.map((theme) => (
+                        <span
+                          className="coach-theme-tag"
+                          key={theme}
+                        >
+                          {themeLabel(theme, coachLanguage)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <button
+                    className="coach-review-button"
+                    onClick={() => {
+                      setReviewTarget(coachResult);
+                      setReviewMode('better');
+                    }}
+                  >
+                    {coachLanguage === 'zh-CN'
+                      ? '复盘这个局面'
+                      : 'Review this position'}
+                  </button>
+                </div>
+              ) : null}
+
+              {coachResult?.shouldCoach &&
+              coachResult.ply === criticalPrompt.ply - 1 ? (
+                <div className="coach-next-decision">
+                  {coachLanguage === 'zh-CN'
+                    ? '现在，落子之前'
+                    : 'Now, before you move'}
+                </div>
+              ) : null}
+
               <div className="coach-heading">
                 <strong>{criticalPrompt.title}</strong>
                 <span className="quality-badge inaccuracy">
-                  {coachLanguage === 'zh-CN'
-                    ? '先想一想'
-                    : 'Think first'}
+                  {criticalPrompt.mateThreat
+                    ? coachLanguage === 'zh-CN'
+                      ? '将杀威胁'
+                      : 'Mate threat'
+                    : coachLanguage === 'zh-CN'
+                      ? '先想一想'
+                      : 'Think first'}
                 </span>
               </div>
 
               <div className="coach-question">
                 <span>
-                  {criticalPrompt.kind === 'opportunity'
+                  {criticalPrompt.mateThreat
+                    ? coachLanguage === 'zh-CN'
+                      ? '优先处理'
+                      : 'Priority'
+                    : criticalPrompt.kind === 'opportunity'
                     ? coachLanguage === 'zh-CN'
                       ? '机会'
                       : 'Opportunity'
@@ -3818,6 +4619,23 @@ function handlePuzzleMove(
                 ) : null}
               </div>
               <div>{coachResult.feedback}</div>
+              {coachResult.themes?.length ? (
+                <div
+                  className="coach-theme-tags"
+                  aria-label={coachLanguage === 'zh-CN'
+                    ? '棋局主题'
+                    : 'Chess themes'}
+                >
+                  {coachResult.themes.map((theme) => (
+                    <span
+                      className="coach-theme-tag"
+                      key={theme}
+                    >
+                      {themeLabel(theme, coachLanguage)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {coachResult.question ? (
                 <div className="coach-question">
                   <span>
@@ -3902,11 +4720,11 @@ function handlePuzzleMove(
             <div className="coach-detail-options">
               {(
                 [
-                  ['quick', 'Quick'],
-                  ['balanced', 'Balanced'],
-                  ['deep', 'Deep'],
+                  ['quick', 'Quick', 'Fast'],
+                  ['balanced', 'Balanced', 'Stronger'],
+                  ['deep', 'Deep', 'Deepest'],
                 ] as const
-              ).map(([value, label]) => (
+              ).map(([value, label, strength]) => (
                 <button
                   key={value}
                   type="button"
@@ -3917,6 +4735,7 @@ function handlePuzzleMove(
                   onClick={() => setCoachDetail(value)}
                 >
                   <span>{label}</span>
+                  <small>{strength} Stockfish</small>
                   {coachDetail === value ? (
                     <span className="coach-detail-check" aria-hidden="true">✓</span>
                   ) : null}
@@ -3925,33 +4744,52 @@ function handlePuzzleMove(
             </div>
           </div>
           <div className="coach-actions">
-            <label>
-              <input
-                type="checkbox"
-                checked={voiceEnabled}
-                onChange={(event) => {
-                  const enabled =
-                    event.target.checked;
+            <div className="voice-controls">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={voiceEnabled}
+                  onChange={(event) => {
+                    const enabled =
+                      event.target.checked;
 
-                  setVoiceEnabled(enabled);
+                    setVoiceEnabled(enabled);
 
-                  if (enabled) {
-                    /*
-                    * IMPORTANT:
-                    * This happens directly inside a user click,
-                    * so iOS can unlock audio playback.
-                    */
-                    void unlockCoachAudio();
-                  } else {
-                    stopCoachSpeech();
-                  }
-                }}
-              />
+                    if (enabled) {
+                      /*
+                      * IMPORTANT:
+                      * This happens directly inside a user click,
+                      * so iOS can unlock audio playback.
+                      */
+                      void unlockCoachAudio().then(() =>
+                        speakCoach(
+                          coachLanguage === 'zh-CN'
+                            ? '语音教练已开启。关键时刻我会提醒你。'
+                            : "Voice coach is on. I'll speak up at the right moments.",
+                          coachLanguage,
+                        ),
+                      );
+                    } else {
+                      stopCoachSpeech();
+                    }
+                  }}
+                />
 
-              {coachLanguage === 'zh-CN'
-                ? ' 语音'
-                : ' Voice'}
-            </label>
+                {coachLanguage === 'zh-CN'
+                  ? ' 语音'
+                  : ' Voice'}
+              </label>
+
+              <button
+                type="button"
+                className={`tts-status ${ttsStatus.state}`}
+                title={ttsStatus.detail || ttsStatusLabel}
+                onClick={testCoachVoice}
+              >
+                <i aria-hidden="true" />
+                {ttsStatusLabel}
+              </button>
+            </div>
             <label><input type="checkbox" checked={hintsEnabled} onChange={(event) => setHintsEnabled(event.target.checked)} /> Board hints</label>
           </div>
           <div className="hint-legend"><span><i className="legend-line best" />best</span><span><i className="legend-line danger" />threat</span><span><i className="legend-square" />key square</span></div>
@@ -4134,6 +4972,24 @@ function handlePuzzleMove(
 
           <p>{reviewTarget.feedback}</p>
 
+          {reviewTarget.themes?.length ? (
+            <div
+              className="coach-theme-tags"
+              aria-label={coachLanguage === 'zh-CN'
+                ? '棋局主题'
+                : 'Chess themes'}
+            >
+              {reviewTarget.themes.map((theme) => (
+                <span
+                  className="coach-theme-tag"
+                  key={theme}
+                >
+                  {themeLabel(theme, coachLanguage)}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
           <div className="review-analysis-moves">
             <span>
               <small>You played</small>
@@ -4269,11 +5125,6 @@ function handlePuzzleMove(
             </section>
           </div>
 
-          <div className="report-takeaway">
-            <span>{reportText.remember}</span>
-            <p>{gameReport.takeaway}</p>
-          </div>
-
           <div className="practice-section">
             <div className="practice-heading">
               <div>
@@ -4294,7 +5145,7 @@ function handlePuzzleMove(
                 {practicePuzzles.map(
                   (puzzle, index) => (
                     <button
-                      key={`${puzzle.sourcePly}-${puzzle.puzzleMode}`}
+                      key={`${puzzle.sourcePly}-${puzzle.puzzleMode}-${puzzle.puzzleTheme}`}
                       className="practice-card"
                       onClick={() => openPuzzle(index)}
                     >
@@ -4421,9 +5272,10 @@ function handlePuzzleMove(
 
           <div className="puzzle-prompt">
             <strong>
-              {activePuzzle.puzzleMode === 'punish-mistake'
-                ? reportText.punishPrompt
-                : reportText.puzzlePrompt}
+              {practicePuzzlePrompt(
+                activePuzzle,
+                coachLanguage,
+              )}
             </strong>
 
             <span>
@@ -4440,7 +5292,9 @@ function handlePuzzleMove(
                 activePuzzle.fenBefore
               }
               orientation={
-                activePuzzle.playerColor
+                activePuzzle.puzzleMode === 'punish-mistake'
+                  ? puzzleStartingColor || activePuzzle.playerColor
+                  : activePuzzle.playerColor
               }
               movableColor={
                 puzzleState === 'correct' ||

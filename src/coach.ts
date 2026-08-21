@@ -16,11 +16,19 @@ export type CoachResult = {
   bestMoveUci: string;
   opponentReply?: string;
   opponentReplyUci?: string;
+  bestMoveVerifiedThemes?: ChessTheme[];
+  opponentReplyVerifiedThemes?: ChessTheme[];
+  bestMoveVerifiedThemeEvidence?: ThemeEvidence[];
+  opponentReplyVerifiedThemeEvidence?: ThemeEvidence[];
+  bestMoveFacts?: VerifiedMoveFacts;
+  opponentReplyFacts?: VerifiedMoveFacts;
   evaluationBefore?: number;
   evaluationAfter?: number;
 
   engineDiagnostics?: {
+    profile?: 'quick' | 'balanced' | 'deep';
     budgetMs?: number;
+    pvPlies?: number;
     bestSearch?: {
       depth?: number;
       seldepth?: number;
@@ -53,6 +61,7 @@ export type CoachResult = {
   highlightsAfter?: string[];
 
   themeHint?: string;
+  themes?: ChessTheme[];
   bestLine?: string[];
   refutationLine?: string[];
 
@@ -84,10 +93,79 @@ export type OpeningState = {
   transposed?: boolean;
 };
 
+export type ThemeEvidence = {
+  theme: ChessTheme;
+  reason: string;
+};
+
+export type VerifiedMoveFacts = {
+  move: string;
+  move_uci: string;
+  moved_piece: string;
+  from: string;
+  to: string;
+  is_capture: boolean;
+  captured_piece: string;
+  gives_check: boolean;
+  is_checkmate: boolean;
+  attacked_enemy_pieces: string[];
+};
+
 export type CoachDetail =
   | 'quick'
   | 'balanced'
   | 'deep';
+
+export type ChessTheme =
+  | 'Fork / Double Attack'
+  | 'Pin'
+  | 'Skewer'
+  | 'Discovered Attack'
+  | 'Discovered Check'
+  | 'Double Check'
+  | 'X-Ray Attack'
+  | 'Defense'
+  | 'Back-Rank Weakness'
+  | 'Back-Rank Mate'
+  | 'Deflection'
+  | 'Decoy'
+  | 'Removal of the Defender'
+  | 'Overloading'
+  | 'Interference'
+  | 'Clearance'
+  | 'Clearance Sacrifice'
+  | 'Sacrifice'
+  | 'Exchange Sacrifice'
+  | 'Queen Sacrifice'
+  | 'Zwischenzug'
+  | 'Desperado'
+  | 'Hanging Piece'
+  | 'Trapped Piece'
+  | 'Mating Net'
+  | 'Smothered Mate'
+  | 'Support Mate'
+  | 'Checkmate Pattern'
+  | 'Mate in One'
+  | 'Mate in Two'
+  | 'Mate in Three or More'
+  | 'Forced Mate'
+  | 'Perpetual Check'
+  | 'Windmill'
+  | 'Attack on f7 / f2'
+  | 'Attacking the Castled King'
+  | 'Vulnerable King'
+  | 'King Safety'
+  | 'Simplification'
+  | 'Promotion'
+  | 'Underpromotion'
+  | 'En Passant'
+  | 'Stalemate'
+  | 'Zugzwang'
+  | 'Endgame Tactic'
+  | 'Passed Pawn'
+  | 'Opposition'
+  | 'Open File'
+  | 'Weak Square';
 
 export type CoachLanguage =
   | 'en'
@@ -98,6 +176,7 @@ export type CoachWording = {
   feedback: string;
   lesson: string;
   question: string;
+  themes: ChessTheme[];
 };
 
 const CONTROL_URL =
@@ -232,6 +311,7 @@ export async function fetchOpeningStatus(
 
 export type CriticalPositionPrompt = {
   isCritical: boolean;
+  mateThreat?: boolean;
   kind?: 'threat' | 'opportunity' | 'decision' | 'check';
   title?: string;
   question?: string;
@@ -243,6 +323,7 @@ export async function checkCriticalPosition(
   lastOpponentMove: string,
   lastOpponentMoveUci: string,
   language: CoachLanguage = 'en',
+  detail: CoachDetail = 'balanced',
   recentQuestions: string[] = [],
   signal?: AbortSignal,
 ): Promise<CriticalPositionPrompt> {
@@ -259,6 +340,7 @@ export async function checkCriticalPosition(
         lastOpponentMove,
         lastOpponentMoveUci,
         language,
+        detail,
         recentQuestions,
       }),
       signal,
