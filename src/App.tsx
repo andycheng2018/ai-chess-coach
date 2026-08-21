@@ -8,9 +8,11 @@ import {
   analyzeMove,
   checkCriticalPosition,
   explainMove,
+  fetchOpeningStatus,
   type ChessTheme,
   type CoachLanguage,
   type CoachResult,
+  type OpeningState,
 } from './coach';
 import {
   checkTtsStatus,
@@ -27,7 +29,7 @@ import {
   challengeBot,
   getAccount,
   getPlayingGames,
-  handleTakeback,
+  requestTakeback as requestTakebackOffer,
   LichessHttpError,
   makeMove,
   resignGame,
@@ -37,6 +39,62 @@ import {
   type Account,
   type StreamEvent,
 } from './lichess';
+
+function moveListIncluding(
+  movesText: string,
+  uci?: string,
+): string[] {
+  const moves = movesText.trim()
+    ? movesText.trim().split(/\s+/)
+    : [];
+
+  if (!uci) {
+    return moves;
+  }
+
+  if (moves[moves.length - 1] === uci) {
+    return moves;
+  }
+
+  return [...moves, uci];
+}
+
+function formatOpeningLabel(
+  opening: OpeningState,
+): string {
+  const parts = [
+    opening.name,
+    opening.variation,
+  ].filter(Boolean);
+
+  const label = parts.join(': ');
+  return opening.eco ? `${label} · ${opening.eco}` : label;
+}
+
+function formatOpeningStatus(
+  opening: OpeningState,
+  language: CoachLanguage,
+): string {
+  if (opening.inBook) {
+    if (opening.transposed) {
+      return language === 'zh-CN'
+        ? '在谱 · 转置'
+        : 'In book · transposed';
+    }
+
+    return language === 'zh-CN'
+      ? '在谱'
+      : 'In book';
+  }
+
+  if (opening.leftBookAt != null) {
+    return language === 'zh-CN'
+      ? `第 ${opening.leftBookAt} 手出谱`
+      : `Left book on move ${opening.leftBookAt}`;
+  }
+
+  return '';
+}
 
 const BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'bot_2435';
 const ACTIVE_GAME_STORAGE_KEY = 'ai-chess-coach.active-game.v1';
@@ -1757,6 +1815,7 @@ export default function App() {
 
   const [coachDetail, setCoachDetail] = useState<CoachDetail>(readCoachDetail);
   const [coachLanguage, setCoachLanguage] = useState<CoachLanguage>(readCoachLanguage);
+  const [openingState, setOpeningState] = useState<OpeningState | null>(null);
   const [reviewMode, setReviewMode] = useState<CoachReviewMode | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
   const [historyPly, setHistoryPly] = useState<number | null>(null);
@@ -1764,6 +1823,7 @@ export default function App() {
     id: number;
     fenBefore: string;
     uci: string;
+    moves: string[];
     detail: CoachDetail;
     language: CoachLanguage;
   };
@@ -2459,6 +2519,7 @@ export default function App() {
     recentCriticalQuestionsRef.current = [];
     criticalPromptRef.current = null;
     setCriticalPrompt(null);
+    setOpeningState(null);
     setCoachResult(null);
     setCoachError('');
     setCoachThinking(false);
@@ -2705,6 +2766,7 @@ export default function App() {
             job.detail,
             controller.signal,
             job.language,
+            job.moves,
           );
 
           // A newer board position arrived while this Stockfish request was
@@ -3241,7 +3303,7 @@ export default function App() {
 
 
 const analyzeStudentMove = useCallback(
-  (fenBefore: string, uci: string) => {
+  (fenBefore: string, uci: string, moves: string[]) => {
     if (!isCoachGame) return;
 
     setPlayerMoveAnalysisPending(true);
@@ -3265,6 +3327,7 @@ const analyzeStudentMove = useCallback(
       id: jobId,
       fenBefore,
       uci,
+      moves,
       detail: coachDetail,
       language: coachLanguage,
     }];
@@ -3360,6 +3423,7 @@ const analyzeStudentMove = useCallback(
     analyzeStudentMove(
       beforePosition.chess.fen(),
       uci,
+      moves.slice(0, latestStudentMoveIndex + 1),
     );
   }, [
     gameId,
@@ -3405,7 +3469,11 @@ const analyzeStudentMove = useCallback(
 
       // Restore the earlier, more reliable coaching path for normal games:
       // analyze the exact board position that existed when the move was made.
-      analyzeStudentMove(fenBefore, uci);
+      analyzeStudentMove(
+        fenBefore,
+        uci,
+        moveListIncluding(movesText, uci),
+      );
     } catch (error) {
       if (pendingMoveRef.current?.uci === uci) {
         pendingMoveRef.current = null;
@@ -3415,7 +3483,39 @@ const analyzeStudentMove = useCallback(
       setRollbackSignal((value) => value + 1);
       setStatus(`Move failed: ${String(error)}`);
     }
-  }, [token, gameId, activeGame, analyzeStudentMove]);
+  }, [token, gameId, activeGame, analyzeStudentMove, movesText]);
+
+  useEffect(() => {
+    if (!gameId || !isCoachGame) {
+      setOpeningState(null);
+      return;
+    }
+
+    const moves = movesText.trim()
+      ? movesText.trim().split(/\s+/)
+      : [];
+
+    if (!moves.length) {
+      setOpeningState(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetchOpeningStatus(moves, controller.signal)
+        .then(setOpeningState)
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setOpeningState(null);
+          }
+        });
+    }, 200);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [gameId, isCoachGame, movesText]);
 
     const handleBoardMove = useCallback((from: string, to: string) => {
       if (
@@ -3671,7 +3771,7 @@ const analyzeStudentMove = useCallback(
 
   function requestTakeback() {
     if (!token || !gameId) return;
-    handleTakeback(token, gameId, true)
+    requestTakebackOffer(token, gameId)
       .then(() => setStatus('Takeback requested. The training bot will accept it.'))
       .catch((error) => setStatus(`Takeback failed: ${String(error)}`));
   }
@@ -3728,6 +3828,7 @@ const analyzeStudentMove = useCallback(
     setCoachResult(null);
     setCoachNotes([]);
     setCoachError('');
+    setOpeningState(null);
     setCoachExplanationPending(false);
     setPlayerMoveAnalysisPending(false);
     setPendingPromotion(null);
@@ -4186,6 +4287,12 @@ function handlePuzzleMove(
                   <small>~{selectedLevel.elo}</small>
                 </span>
                 <span>{currentTimeControlLabel}</span>
+                {openingState?.name ? (
+                  <span className="opening-badge">
+                    <strong>{formatOpeningLabel(openingState)}</strong>
+                    <small>{formatOpeningStatus(openingState, coachLanguage)}</small>
+                  </span>
+                ) : null}
               </span>
             ) : 'No active game'}
           </span>
@@ -4410,6 +4517,14 @@ function handlePuzzleMove(
               ? 'AI 教练'
               : 'Live coach'}
           </div>
+          {openingState?.name ? (
+            <div className="opening-badge coach-opening-badge">
+              <strong>{formatOpeningLabel(openingState)}</strong>
+              {formatOpeningStatus(openingState, coachLanguage) ? (
+                <small>{formatOpeningStatus(openingState, coachLanguage)}</small>
+              ) : null}
+            </div>
+          ) : null}
           <div className={`coach-bubble ${coachResult?.classification || ''}`}>
             {criticalPrompt && isMyTurn ? <>
               {coachResult?.shouldCoach &&
