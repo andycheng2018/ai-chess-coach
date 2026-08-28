@@ -8,7 +8,7 @@ Instead of only telling the player the best move like what chess engines (Stockf
 
 ### Chess Buddy Demo
 
-[![Watch the Chess Buddy demo](https://img.youtube.com/vi/vRGb5EtCH84/maxresdefault.jpg)](https://www.youtube.com/shorts/vRGb5EtCH84)
+https://github.com/user-attachments/assets/dd4badce-0744-49f9-8c4f-fcf5e4a5f380
 
 A quick demo of Chess Buddy providing real-time chess analysis and AI coaching.
 
