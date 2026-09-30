@@ -333,6 +333,7 @@ def generate_llm_coaching(
     detail: str = "balanced",
     language: str = "en",
     recent_feedback: list[str] | None = None,
+    game_id: str = "",
 ) -> dict[str, Any]:
     """
     Generate real LLM wording.
@@ -357,6 +358,7 @@ def generate_llm_coaching(
                 detail=detail,
                 language=language,
                 recent_feedback=recent_feedback or [],
+                game_id=game_id,
             )
 
         print(
@@ -844,11 +846,16 @@ def explain_analysis(
                     value[:600]
                 )
 
+    game_id = str(
+        payload.get("gameId") or payload.get("game_id") or ""
+    ).strip()
+
     return generate_llm_coaching(
         analysis,
         detail=detail,
         language=language,
         recent_feedback=recent_feedback,
+        game_id=game_id,
     )
 
 
@@ -1189,6 +1196,10 @@ def critical_position_question(
         "attacked_target_details"
     ] = attacked_target_details[:4]
 
+    game_id = str(
+        payload.get("gameId") or payload.get("game_id") or ""
+    ).strip()
+
     try:
         with _llm_lock:
             wording = (
@@ -1197,6 +1208,7 @@ def critical_position_question(
                     position,
                     language=language,
                     recent_questions=recent_questions,
+                    game_id=game_id,
                 )
             )
     except Exception as exc:
@@ -1246,6 +1258,8 @@ class Handler(BaseHTTPRequestHandler):
             "capacitor://localhost",
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "http://localhost:3333",
+            "http://127.0.0.1:3333",
         }
 
         allowed_origins.update(EXTRA_CORS_ORIGINS)
@@ -1433,12 +1447,35 @@ class Handler(BaseHTTPRequestHandler):
                     for level in BOT_LEVELS.values()
                 ]
             })
+        elif self.path.startswith("/api/logs"):
+            log_file = ROOT / "logs" / "coach_logs.jsonl"
+            logs_list = []
+            if log_file.is_file():
+                try:
+                    with open(log_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    logs_list.append(json.loads(line))
+                                except json.JSONDecodeError:
+                                    pass
+                except Exception as exc:
+                    self._send(500, {"message": f"Failed to read logs: {exc}"})
+                    return
+            self._send(200, {"logs": logs_list, "total": len(logs_list), "file": str(log_file)})
         else:
             self._send(404, {"message": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         try:
-            if self.path == "/api/bot/start":
+            if self.path == "/api/logs/clear":
+                log_file = ROOT / "logs" / "coach_logs.jsonl"
+                if log_file.is_file():
+                    with open(log_file, "w", encoding="utf-8") as f:
+                        f.write("")
+                self._send(200, {"ok": True, "message": "Logs cleared"})
+            elif self.path == "/api/bot/start":
                 self._send(200, runtime.start())
             elif self.path == "/api/bot/stop":
                 self._send(200, runtime.stop())

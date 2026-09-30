@@ -221,6 +221,7 @@ export async function explainMove(
   language: CoachLanguage = 'en',
   recentFeedback: string[] = [],
   signal?: AbortSignal,
+  gameId?: string,
 ): Promise<CoachWording> {
   const response = await fetch(
     `${CONTROL_URL}/api/coach/explain`,
@@ -234,6 +235,7 @@ export async function explainMove(
         detail,
         language,
         recentFeedback,
+        gameId,
       }),
       signal,
     },
@@ -271,6 +273,7 @@ export async function checkCriticalPosition(
   detail: CoachDetail = 'balanced',
   recentQuestions: string[] = [],
   signal?: AbortSignal,
+  gameId?: string,
 ): Promise<CriticalPositionPrompt> {
   const response = await fetch(
     `${CONTROL_URL}/api/coach/critical-question`,
@@ -287,6 +290,7 @@ export async function checkCriticalPosition(
         language,
         detail,
         recentQuestions,
+        gameId,
       }),
       signal,
     },

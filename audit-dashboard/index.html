@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chess Coach • LLM Audit Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #07090e;
+      --card-bg: rgba(15, 20, 32, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-border-hover: rgba(99, 102, 241, 0.45);
+      --primary: #6366f1;
+      --primary-gradient: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+      --accent: #38bdf8;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --purple: #c084fc;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --code-bg: #0a0d14;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.09) 0px, transparent 50%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header */
+    header {
+      padding: 0.9rem 1.8rem;
+      border-bottom: 1px solid var(--card-border);
+      backdrop-filter: blur(16px);
+      background: rgba(7, 9, 14, 0.85);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      background: var(--primary-gradient);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      box-shadow: 0 4px 18px rgba(99, 102, 241, 0.35);
+    }
+
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #fff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+      font-size: 0.72rem;
+      color: var(--accent);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.3rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+    }
+
+    .badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+    }
+
+    .btn {
+      padding: 0.42rem 0.9rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+      font-family: inherit;
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+      border-color: var(--card-border);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--error);
+      border-color: rgba(239, 68, 68, 0.2);
+    }
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.2);
+    }
+
+    /* Game Selector Ribbon */
+    .game-ribbon {
+      background: rgba(11, 14, 23, 0.7);
+      border-bottom: 1px solid var(--card-border);
+      padding: 0.65rem 1.8rem;
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      overflow-x: auto;
+    }
+
+    .game-ribbon-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-dim);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .game-card-chip {
+      padding: 0.4rem 0.85rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .game-card-chip:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+    }
+
+    .game-card-chip.active {
+      background: rgba(99, 102, 241, 0.15);
+      border-color: var(--primary);
+      color: #fff;
+      box-shadow: 0 0 16px rgba(99, 102, 241, 0.25);
+    }
+
+    .chip-count {
+      font-size: 0.68rem;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+    }
+
+    /* Main Container */
+    .app-container {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      flex: 1;
+      height: calc(100vh - 118px);
+      overflow: hidden;
+    }
+
+    /* Sidebar list */
+    .sidebar {
+      border-right: 1px solid var(--card-border);
+      display: flex;
+      flex-direction: column;
+      background: rgba(11, 14, 23, 0.5);
+      backdrop-filter: blur(12px);
+    }
+
+    .sidebar-controls {
+      padding: 1rem;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .search-input {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-sm);
+      padding: 0.5rem 0.8rem;
+      color: var(--text-main);
+      font-size: 0.82rem;
+      outline: none;
+      transition: border 0.2s;
+    }
+    .search-input:focus {
+      border-color: var(--primary);
+    }
+
+    .category-pills {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+    }
+
+    .cat-pill {
+      font-size: 0.7rem;
+      padding: 0.25rem 0.55rem;
+      border-radius: 6px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      font-weight: 600;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .cat-pill:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .cat-pill.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    .theme-filters-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+    }
+
+    .theme-select {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 0.2rem 0.4rem;
+      font-size: 0.72rem;
+      outline: none;
+      max-width: 160px;
+    }
+
+    .logs-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.65rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+
+    .log-item {
+      padding: 0.85rem;
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--card-border);
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .log-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.14);
+      transform: translateY(-1px);
+    }
+    .log-item.active {
+      background: rgba(99, 102, 241, 0.12);
+      border-color: var(--primary);
+      box-shadow: 0 0 16px rgba(99, 102, 241, 0.2);
+    }
+
+    .log-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .tag-container {
+      display: flex;
+      gap: 0.35rem;
+      align-items: center;
+    }
+
+    .log-tag {
+      font-size: 0.66rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 0.12rem 0.4rem;
+      border-radius: 4px;
+      letter-spacing: 0.03em;
+    }
+
+    .tag-feedback { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.3); }
+    .tag-critical { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .tag-blunder { background: rgba(239, 68, 68, 0.15); color: var(--error); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+    .status-badge {
+      font-size: 0.68rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+    .status-ok { color: var(--success); }
+    .status-err { color: var(--error); }
+
+    .log-move-headline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .move-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .move-badge-mini {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--accent);
+      background: rgba(0, 0, 0, 0.4);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.76rem;
+    }
+
+    .log-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.68rem;
+      color: var(--text-dim);
+    }
+
+    /* Detail View */
+    .detail-view {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-dim);
+      gap: 0.85rem;
+      text-align: center;
+    }
+    .empty-icon {
+      font-size: 3.5rem;
+      opacity: 0.35;
+    }
+
+    /* Overview Banner */
+    .game-stats-banner {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      padding: 1rem 1.4rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    }
+
+    .banner-metrics {
+      display: flex;
+      gap: 1.8rem;
+    }
+
+    .metric-box {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+
+    .metric-val {
+      font-size: 1.2rem;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      color: #fff;
+    }
+
+    .metric-lbl {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Detail Cards */
+    .move-hero-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .move-hero-left {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    .hero-move-pill {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      padding: 0.4rem 0.9rem;
+      border-radius: var(--radius-md);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .hero-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .hero-main-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+    }
+
+    .hero-sub-text {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .grid-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-header {
+      padding: 0.75rem 1.2rem;
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .card-body {
+      padding: 1.1rem 1.25rem;
+      font-size: 0.86rem;
+      flex: 1;
+    }
+
+    .full-col {
+      grid-column: span 2;
+    }
+
+    /* Speech box */
+    .speech-bubble {
+      background: rgba(99, 102, 241, 0.08);
+      border-left: 3px solid var(--primary);
+      padding: 1rem 1.2rem;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      font-size: 0.95rem;
+      line-height: 1.55;
+      color: #fff;
+    }
+
+    .lesson-box {
+      margin-top: 0.85rem;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius-sm);
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+      font-size: 0.85rem;
+      color: #cbd5e1;
+    }
+
+    .lesson-badge {
+      font-size: 0.7rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .theme-tags-container {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+      margin-top: 0.85rem;
+    }
+
+    .theme-tag {
+      font-size: 0.72rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      background: rgba(168, 85, 247, 0.15);
+      color: var(--purple);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      font-weight: 600;
+    }
+
+    /* Chessboard preview */
+    .board-preview-container {
+      display: flex;
+      gap: 1.25rem;
+      align-items: center;
+    }
+
+    .chess-board {
+      display: grid;
+      grid-template-columns: repeat(8, 26px);
+      grid-template-rows: repeat(8, 26px);
+      border: 2px solid #334155;
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+
+    .board-square {
+      width: 26px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      user-select: none;
+    }
+    .square-light { background-color: #cbd5e1; color: #0f172a; }
+    .square-dark { background-color: #475569; color: #f8fafc; }
+    .square-played { background-color: rgba(99, 102, 241, 0.6) !important; }
+    .square-best { background-color: rgba(16, 185, 129, 0.6) !important; }
+
+    .fen-text {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      background: rgba(0, 0, 0, 0.3);
+      padding: 0.4rem 0.6rem;
+      border-radius: 4px;
+      word-break: break-all;
+      margin-top: 0.5rem;
+    }
+
+    pre {
+      background: var(--code-bg);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.76rem;
+      color: #e2e8f0;
+      overflow-x: auto;
+      max-height: 380px;
+      line-height: 1.45;
+    }
+
+    .copy-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      cursor: pointer;
+      font-size: 0.7rem;
+      transition: all 0.15s;
+    }
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <div class="brand-title">Chess Coach • LLM Audit Studio</div>
+        <div class="brand-subtitle">Categories • Per-Game Log Auditor</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="badge">
+        <span class="badge-dot"></span>
+        <span id="log-count">0 Events</span>
+      </div>
+      <button class="btn btn-secondary" onclick="fetchLogs()">
+        ↻ Refresh
+      </button>
+      <button class="btn btn-danger" onclick="clearLogs()">
+        ✕ Clear
+      </button>
+    </div>
+  </header>
+
+  <!-- Game Selector Ribbon -->
+  <div class="game-ribbon" id="gameRibbon">
+    <div class="game-ribbon-label">
+      <span>🎮 GAME:</span>
+    </div>
+    <div class="game-card-chip active" onclick="selectGame('all', this)">
+      <span>All Games</span>
+      <span class="chip-count" id="chipCountAll">0</span>
+    </div>
+    <!-- Dynamically populated game chips -->
+  </div>
+
+  <div class="app-container">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-controls">
+        <input type="text" id="searchInput" class="search-input" placeholder="Search move, UCI, FEN, model or content..." oninput="filterLogs()">
+        
+        <!-- Category Filter Pills -->
+        <div class="category-pills">
+          <div class="cat-pill active" onclick="setCategory('all', this)">✨ All</div>
+          <div class="cat-pill" onclick="setCategory('blunder', this)">🚨 Blunders</div>
+          <div class="cat-pill" onclick="setCategory('feedback', this)">💡 Feedback</div>
+          <div class="cat-pill" onclick="setCategory('critical_question', this)">❓ Questions</div>
+          <div class="cat-pill" onclick="setCategory('error', this)">⚠️ Errors</div>
+        </div>
+
+        <!-- Tactical Motif Filter -->
+        <div class="theme-filters-wrapper">
+          <span>Motif:</span>
+          <select class="theme-select" id="themeSelect" onchange="filterLogs()">
+            <option value="all">All Tactical Motifs</option>
+            <option value="Pin">Pin</option>
+            <option value="Fork">Fork / Double Attack</option>
+            <option value="Skewer">Skewer</option>
+            <option value="Discovered Attack">Discovered Attack</option>
+            <option value="Back-Rank">Back-Rank Weakness</option>
+            <option value="Hanging Piece">Hanging Piece</option>
+            <option value="Mate">Mate in X / Checkmate</option>
+            <option value="Defense">Defense</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="logs-list" id="logsList">
+        <!-- Rendered items -->
+      </div>
+    </div>
+
+    <!-- Detail Inspector -->
+    <div class="detail-view" id="detailView">
+      <div class="empty-state">
+        <div class="empty-icon">♟️</div>
+        <h3>Select a Log Entry to Audit</h3>
+        <p>Choose any game from the top bar or pick a move from the sidebar to inspect prompts, engine truth & raw model outputs.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allLogs = [];
+    let gameSessions = []; // Array of { id, label, date, logs: [] }
+    let selectedGameId = 'all';
+    let currentCategory = 'all';
+    let selectedLogIndex = null;
+
+    // Piece Unicode Map for FEN Board Preview
+    const PIECE_UNICODE = {
+      'p': '♟', 'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚',
+      'P': '♙', 'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔',
+    };
+
+    async function fetchLogs() {
+      try {
+        const res = await fetch('http://localhost:8765/api/logs');
+        if (!res.ok) throw new Error('Failed to fetch from backend');
+        const data = await res.json();
+        allLogs = (data.logs || []).reverse(); // latest first
+        document.getElementById('log-count').innerText = `${allLogs.length} Events`;
+        
+        partitionGames();
+        renderGameRibbon();
+        renderList();
+
+        if (selectedLogIndex !== null && allLogs[selectedLogIndex]) {
+          renderDetail(selectedLogIndex);
+        } else if (allLogs.length > 0 && selectedLogIndex === null) {
+          selectLog(0);
+        }
+      } catch (err) {
+        console.error('Error fetching logs:', err);
+      }
+    }
+
+    // Partition logs into individual game sessions
+    function partitionGames() {
+      gameSessions = [];
+      if (allLogs.length === 0) return;
+
+      // Group chronologically (oldest to newest for session detection)
+      const chronological = [...allLogs].reverse();
+      let currentGameLogs = [];
+      let currentGameId = null;
+      let lastMoveNum = 0;
+      let lastTime = 0;
+
+      chronological.forEach((log) => {
+        const logTime = new Date(log.timestamp).getTime();
+        const moveNum = log.move_number || 0;
+        const explicitGameId = log.game_id || (log.payload && log.payload.game_id);
+
+        let isNewGame = false;
+
+        if (explicitGameId) {
+          if (currentGameId && currentGameId !== explicitGameId) {
+            isNewGame = true;
+          }
+          currentGameId = explicitGameId;
+        } else {
+          // If no explicit ID, heuristic: move reset or time jump > 3 minutes
+          if (moveNum > 0 && moveNum < lastMoveNum) {
+            isNewGame = true;
+          } else if (lastTime > 0 && (logTime - lastTime) > 3 * 60 * 1000) {
+            isNewGame = true;
+          }
+        }
+
+        if (isNewGame && currentGameLogs.length > 0) {
+          pushGameSession(currentGameLogs);
+          currentGameLogs = [];
+        }
+
+        currentGameLogs.push(log);
+        lastMoveNum = moveNum;
+        lastTime = logTime;
+      });
+
+      if (currentGameLogs.length > 0) {
+        pushGameSession(currentGameLogs);
+      }
+
+      // Reverse so newest game is first
+      gameSessions.reverse();
+    }
+
+    function pushGameSession(logs) {
+      const first = logs[0];
+      const last = logs[logs.length - 1];
+      const blunders = logs.filter(l => (l.classification === 'blunder' || (l.payload && l.payload.classification === 'blunder') || (l.centipawn_loss && l.centipawn_loss >= 150))).length;
+      const gameIdx = gameSessions.length + 1;
+      const id = first.game_id || `game-${gameIdx}`;
+      const dateStr = new Date(first.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      gameSessions.push({
+        id: id,
+        label: `Game #${gameIdx} • ${dateStr}`,
+        date: new Date(first.timestamp),
+        totalMoves: logs.length,
+        blunders: blunders,
+        logs: [...logs].reverse(), // newest move first inside game
+      });
+    }
+
+    function renderGameRibbon() {
+      const ribbon = document.getElementById('gameRibbon');
+      const allChip = ribbon.querySelector('.game-card-chip');
+      document.getElementById('chipCountAll').innerText = allLogs.length;
+
+      // Keep label and "All Games"
+      const chips = [allChip];
+
+      gameSessions.forEach((game, idx) => {
+        const chip = document.createElement('div');
+        chip.className = `game-card-chip ${selectedGameId === game.id ? 'active' : ''}`;
+        chip.onclick = () => selectGame(game.id, chip);
+        chip.innerHTML = `
+          <span>${game.label}</span>
+          <span class="chip-count">${game.logs.length} ${game.blunders > 0 ? `• 🚨 ${game.blunders}` : ''}</span>
+        `;
+        chips.push(chip);
+      });
+
+      // Clear dynamic chips and re-append
+      while (ribbon.children.length > 2) {
+        ribbon.removeChild(ribbon.lastChild);
+      }
+      for (let i = 1; i < chips.length; i++) {
+        ribbon.appendChild(chips[i]);
+      }
+    }
+
+    function selectGame(gameId, el) {
+      document.querySelectorAll('.game-card-chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      selectedGameId = gameId;
+      selectedLogIndex = null;
+      renderList();
+      const currentLogs = getFilteredLogs();
+      if (currentLogs.length > 0) {
+        selectLog(allLogs.indexOf(currentLogs[0]));
+      }
+    }
+
+    function setCategory(cat, el) {
+      document.querySelectorAll('.cat-pill').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+      currentCategory = cat;
+      renderList();
+    }
+
+    function filterLogs() {
+      renderList();
+    }
+
+    function getFilteredLogs() {
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const themeFilter = document.getElementById('themeSelect').value;
+
+      let baseLogs = allLogs;
+      if (selectedGameId !== 'all') {
+        const foundGame = gameSessions.find(g => g.id === selectedGameId);
+        if (foundGame) {
+          baseLogs = foundGame.logs;
+        }
+      }
+
+      return baseLogs.filter(log => {
+        const isError = log.status === 'error';
+        const isBlunder = log.classification === 'blunder' || (log.payload && log.payload.classification === 'blunder') || (log.centipawn_loss && log.centipawn_loss >= 150);
+
+        if (currentCategory === 'blunder' && !isBlunder) return false;
+        if (currentCategory === 'feedback' && log.type !== 'feedback') return false;
+        if (currentCategory === 'critical_question' && log.type !== 'critical_question') return false;
+        if (currentCategory === 'error' && !isError) return false;
+
+        // Theme motif filter
+        if (themeFilter !== 'all') {
+          const strThemes = JSON.stringify(log.payload || {}) + JSON.stringify(log.parsed || {});
+          if (!strThemes.toLowerCase().includes(themeFilter.toLowerCase())) return false;
+        }
+
+        if (query) {
+          const str = JSON.stringify(log).toLowerCase();
+          if (!str.includes(query)) return false;
+        }
+        return true;
+      });
+    }
+
+    function renderList() {
+      const listEl = document.getElementById('logsList');
+      listEl.innerHTML = '';
+      const filtered = getFilteredLogs();
+
+      if (filtered.length === 0) {
+        listEl.innerHTML = '<div style="color:var(--text-dim);text-align:center;padding:2rem;font-size:0.85rem;">No matching logs found in this category</div>';
+        return;
+      }
+
+      filtered.forEach((log) => {
+        const originalIndex = allLogs.indexOf(log);
+        const item = document.createElement('div');
+        item.className = `log-item ${selectedLogIndex === originalIndex ? 'active' : ''}`;
+        item.onclick = () => selectLog(originalIndex);
+
+        const isError = log.status === 'error';
+        const isBlunder = log.classification === 'blunder' || (log.payload && log.payload.classification === 'blunder');
+        const typeClass = log.type === 'feedback' ? 'tag-feedback' : 'tag-critical';
+        const typeLabel = log.type === 'feedback' ? 'Feedback' : 'Critical Q';
+        const moveDisplay = log.played_move ? `${log.played_move} (${log.played_move_uci || ''})` : (log.last_opponent_move || 'Move');
+
+        item.innerHTML = `
+          <div class="log-item-header">
+            <div class="tag-container">
+              <span class="log-tag ${typeClass}">${typeLabel}</span>
+              ${isBlunder ? `<span class="log-tag tag-blunder">Blunder</span>` : ''}
+            </div>
+            <span class="status-badge ${isError ? 'status-err' : 'status-ok'}">
+              ${isError ? '✕ Error' : '✓ OK'}
+            </span>
+          </div>
+          <div class="log-move-headline">
+            <span class="move-title">
+              <span>Move #${log.move_number || '?'}</span>
+              <span class="move-badge-mini">${moveDisplay}</span>
+            </span>
+            ${log.centipawn_loss ? `<span style="font-size:0.75rem;color:var(--warning);font-family:'JetBrains Mono'">-${log.centipawn_loss}cp</span>` : ''}
+          </div>
+          <div class="log-footer">
+            <span>${new Date(log.timestamp).toLocaleTimeString()}</span>
+            <span>${log.model}</span>
+          </div>
+        `;
+        listEl.appendChild(item);
+      });
+    }
+
+    function selectLog(idx) {
+      selectedLogIndex = idx;
+      renderList();
+      renderDetail(idx);
+    }
+
+    function renderDetail(idx) {
+      const log = allLogs[idx];
+      const view = document.getElementById('detailView');
+      if (!log) return;
+
+      const isError = log.status === 'error';
+      const parsed = log.parsed || {};
+      const payload = log.payload || {};
+      const fen = payload.fen_after || payload.fen || payload.fen_before || '';
+
+      view.innerHTML = `
+        <!-- Game Summary Banner if single game selected -->
+        ${renderGameSummaryBanner()}
+
+        <!-- Hero Card -->
+        <div class="move-hero-card">
+          <div class="move-hero-left">
+            <div class="hero-move-pill">${log.played_move || log.last_opponent_move || 'Move'}</div>
+            <div class="hero-title-group">
+              <div class="hero-main-title">${log.type === 'feedback' ? 'Move Coaching Analysis' : 'Socratic Critical Question'}</div>
+              <div class="hero-sub-text">
+                Game Session: <strong>${log.game_id || (selectedGameId !== 'all' ? selectedGameId : 'Default Game')}</strong> • 
+                Model: <strong>${log.model}</strong> • 
+                ${new Date(log.timestamp).toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+          <div>
+            ${log.centipawn_loss !== undefined ? `<div class="badge" style="color:var(--error);border-color:rgba(239,68,68,0.3)">Centipawn Loss: -${log.centipawn_loss}</div>` : ''}
+          </div>
+        </div>
+
+        <div class="grid-layout">
+          <!-- Final Response Card -->
+          <div class="card ${isError ? '' : 'full-col'}">
+            <div class="card-header">
+              <div class="card-title">✨ Final Synthesized Response</div>
+              <button class="copy-btn" onclick="copyText('${escapeQuotes(parsed.feedback || parsed.question || '')}')">Copy Speech</button>
+            </div>
+            <div class="card-body">
+              ${isError ? `
+                <div style="color:var(--error);background:rgba(239,68,68,0.1);padding:1rem;border-radius:var(--radius-sm);border:1px solid rgba(239,68,68,0.2);">
+                  <strong>Execution Failure:</strong> ${log.error || 'Empty or truncated response'}
+                </div>
+              ` : `
+                <div class="speech-bubble">
+                  <div style="font-size:1.1rem;font-weight:800;margin-bottom:0.4rem;color:#fff;">${parsed.title || 'Untitled Advice'}</div>
+                  <div>${parsed.feedback || parsed.question || 'No spoken text returned'}</div>
+                </div>
+                ${parsed.lesson ? `
+                  <div class="lesson-box">
+                    <span class="lesson-badge">Key Takeaway</span>
+                    <span>${parsed.lesson}</span>
+                  </div>
+                ` : ''}
+                ${parsed.themes && parsed.themes.length > 0 ? `
+                  <div class="theme-tags-container">
+                    ${parsed.themes.map(t => `<span class="theme-tag">${t}</span>`).join('')}
+                  </div>
+                ` : ''}
+              `}
+            </div>
+          </div>
+
+          <!-- Board Preview & Engine Facts -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">♟️ Position & Engine Facts</div>
+            </div>
+            <div class="card-body">
+              <div class="board-preview-container">
+                ${renderMiniBoard(fen, log.played_move_uci, payload.best_move_uci)}
+                <div style="font-size:0.8rem;display:flex;flex-direction:column;gap:0.35rem;">
+                  <div><strong>Best Move:</strong> <code style="color:var(--success)">${payload.best_move || '—'} (${payload.best_move_uci || '—'})</code></div>
+                  <div><strong>Opponent Reply:</strong> <code style="color:var(--error)">${payload.opponent_reply || '—'}</code></div>
+                  <div><strong>Eval Classification:</strong> <span style="text-transform:capitalize;color:var(--warning)">${payload.classification || '—'}</span></div>
+                  <div><strong>Stockfish Line:</strong> <code>${(payload.best_line || []).slice(0, 4).join(' ')}</code></div>
+                </div>
+              </div>
+              <div class="fen-text">FEN: ${fen || 'None'}</div>
+            </div>
+          </div>
+
+          <!-- Raw Output JSON -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📥 Model Output (Raw JSON)</div>
+              <button class="copy-btn" onclick="copyText('${escapeQuotes(log.raw_output || '')}')">Copy JSON</button>
+            </div>
+            <div class="card-body">
+              <pre><code>${escapeHtml(log.raw_output || 'No output recorded')}</code></pre>
+            </div>
+          </div>
+
+          <!-- Input Ground Truth Payload -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📦 Ground Truth Input Payload</div>
+            </div>
+            <div class="card-body">
+              <pre><code>${escapeHtml(JSON.stringify(payload, null, 2))}</code></pre>
+            </div>
+          </div>
+
+          <!-- System Prompt & Instructions -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📜 System Prompt & Instructions</div>
+            </div>
+            <div class="card-body">
+              <pre><code>${escapeHtml(log.instructions || 'No instructions captured')}</code></pre>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderGameSummaryBanner() {
+      if (selectedGameId === 'all') return '';
+      const game = gameSessions.find(g => g.id === selectedGameId);
+      if (!game) return '';
+
+      return `
+        <div class="game-stats-banner">
+          <div class="banner-metrics">
+            <div class="metric-box">
+              <span class="metric-val">${game.label.split('•')[0].trim()}</span>
+              <span class="metric-lbl">Active Game</span>
+            </div>
+            <div class="metric-box">
+              <span class="metric-val">${game.totalMoves}</span>
+              <span class="metric-lbl">Audited Moves</span>
+            </div>
+            <div class="metric-box">
+              <span class="metric-val" style="color:var(--error)">${game.blunders}</span>
+              <span class="metric-lbl">Blunders</span>
+            </div>
+          </div>
+          <div class="badge" style="color:var(--accent);border-color:rgba(56,189,248,0.25)">
+            ${game.date.toLocaleDateString()} ${game.date.toLocaleTimeString()}
+          </div>
+        </div>
+      `;
+    }
+
+    // Render 8x8 Mini Chessboard from FEN string
+    function renderMiniBoard(fen, playedUci, bestUci) {
+      if (!fen) return '<div style="color:var(--text-dim)">No FEN</div>';
+      const boardPart = fen.split(' ')[0];
+      const rows = boardPart.split('/');
+      let squaresHtml = '';
+
+      for (let r = 0; r < 8; r++) {
+        const rowStr = rows[r] || '8';
+        let col = 0;
+        for (let char of rowStr) {
+          if (!isNaN(char)) {
+            const emptyCount = parseInt(char, 10);
+            for (let e = 0; e < emptyCount; e++) {
+              squaresHtml += renderSquare(r, col, '');
+              col++;
+            }
+          } else {
+            squaresHtml += renderSquare(r, col, PIECE_UNICODE[char] || char);
+            col++;
+          }
+        }
+      }
+
+      return `<div class="chess-board">${squaresHtml}</div>`;
+    }
+
+    function renderSquare(row, col, piece) {
+      const isLight = (row + col) % 2 === 0;
+      const squareClass = isLight ? 'square-light' : 'square-dark';
+      return `<div class="board-square ${squareClass}">${piece}</div>`;
+    }
+
+    async function clearLogs() {
+      if (!confirm('Are you sure you want to clear all stored coach logs?')) return;
+      try {
+        await fetch('http://localhost:8765/api/logs/clear', { method: 'POST' });
+        selectedLogIndex = null;
+        fetchLogs();
+      } catch (err) {
+        alert('Failed to clear logs');
+      }
+    }
+
+    function copyText(str) {
+      navigator.clipboard.writeText(str);
+      alert('Copied to clipboard!');
+    }
+
+    function escapeHtml(str) {
+      if (typeof str !== 'string') return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function escapeQuotes(str) {
+      if (typeof str !== 'string') return '';
+      return str.replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    }
+
+    // Auto refresh every 2.5s
+    fetchLogs();
+    setInterval(fetchLogs, 2500);
+  </script>
+</body>
+</html>

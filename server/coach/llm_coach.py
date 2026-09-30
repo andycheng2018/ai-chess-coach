@@ -576,6 +576,7 @@ class LLMCoach:
         detail: str = "balanced",
         language: str = "en",
         recent_feedback: list[str] | None = None,
+        game_id: str = "",
     ) -> dict[str, Any]:
         normalized_detail = str(
             detail
@@ -730,60 +731,94 @@ class LLMCoach:
             + recent_instruction
         )
 
+        import time
+        from datetime import datetime
+        log_dir = Path(__file__).resolve().parent.parent.parent / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "coach_logs.jsonl"
+
         def request_data(
             correction: str = "",
         ) -> dict[str, Any]:
-            response = self.client.responses.create(
-                model=self.model,
-
-                instructions=(
-                    combined_instructions
-                    + correction
-                ),
-
-                input=json.dumps(
-                    payload,
-                    ensure_ascii=False,
-                ),
-
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "chess_coach_feedback",
-                        "strict": True,
-                        "schema": COACH_RESPONSE_SCHEMA,
-                    },
-                },
-
-                max_output_tokens=int(
-                    detail_config[
-                        "max_output_tokens"
-                    ]
-                ),
-
-                store=False,
-            )
-
-            text = response.output_text.strip()
-
-            if not text:
-                raise ValueError(
-                    "Coach returned an empty response."
-                )
-
+            instructions_text = combined_instructions + correction
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "type": "feedback",
+                "game_id": game_id,
+                "model": self.model,
+                "move_number": payload.get("move_number"),
+                "played_move": payload.get("played_move"),
+                "played_move_uci": payload.get("played_move_uci"),
+                "best_move": payload.get("best_move"),
+                "best_move_uci": payload.get("best_move_uci"),
+                "classification": payload.get("classification"),
+                "centipawn_loss": payload.get("centipawn_loss"),
+                "instructions": instructions_text,
+                "payload": payload,
+            }
             try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError as error:
-                raise ValueError(
-                    "Coach returned invalid JSON."
-                ) from error
+                response = self.client.responses.create(
+                    model=self.model,
 
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Coach returned an invalid response object."
+                    instructions=instructions_text,
+
+                    input=json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                    ),
+
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": "chess_coach_feedback",
+                            "strict": True,
+                            "schema": COACH_RESPONSE_SCHEMA,
+                        },
+                    },
+
+                    max_output_tokens=max(
+                        2500,
+                        int(
+                            detail_config[
+                                "max_output_tokens"
+                            ]
+                        )
+                        * 5,
+                    ),
+
+                    store=True,
                 )
 
-            return parsed
+                text = response.output_text.strip()
+                log_entry["raw_output"] = text
+
+                if not text:
+                    raise ValueError(
+                        "Coach returned an empty response."
+                    )
+
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        "Coach returned invalid JSON."
+                    ) from error
+
+                if not isinstance(parsed, dict):
+                    raise ValueError(
+                        "Coach returned an invalid response object."
+                    )
+
+                log_entry["status"] = "success"
+                log_entry["parsed"] = parsed
+                return parsed
+            except Exception as e:
+                log_entry["status"] = "error"
+                log_entry["error"] = str(e)
+                raise
+            finally:
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
         data = request_data()
 
@@ -879,6 +914,7 @@ class LLMCoach:
         position: dict[str, Any],
         language: str = "en",
         recent_questions: list[str] | None = None,
+        game_id: str = "",
     ) -> dict[str, str]:
         """
         Turn a Stockfish-confirmed critical position into one short
@@ -1048,41 +1084,73 @@ Return JSON only:
 }
 """.strip()
 
-        response = self.client.responses.create(
-            model=self.model,
-            instructions=(
-                instructions
-                + "\n\n"
-                + LANGUAGE_INSTRUCTIONS[
-                    normalized_language
-                ]
-            ),
-            input=json.dumps(
-                payload,
-                ensure_ascii=False,
-            ),
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "critical_chess_question",
-                    "strict": True,
-                    "schema": CRITICAL_QUESTION_SCHEMA,
-                },
-            },
-            max_output_tokens=160,
-            store=False,
+        import time
+        from datetime import datetime
+        log_dir = Path(__file__).resolve().parent.parent.parent / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "coach_logs.jsonl"
+        
+        instructions_text = (
+            instructions
+            + "\n\n"
+            + LANGUAGE_INSTRUCTIONS[
+                normalized_language
+            ]
         )
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "type": "critical_question",
+            "game_id": game_id,
+            "model": self.model,
+            "move_number": payload.get("move_number"),
+            "played_move": payload.get("played_move"),
+            "last_opponent_move": payload.get("last_opponent_move"),
+            "last_opponent_move_uci": payload.get("last_opponent_move_uci"),
+            "kind": payload.get("kind"),
+            "instructions": instructions_text,
+            "payload": payload,
+        }
 
-        text = response.output_text.strip()
-
-        if not text:
-            raise ValueError(
-                "Critical-question coach returned an empty response."
+        try:
+            response = self.client.responses.create(
+                model=self.model,
+                instructions=instructions_text,
+                input=json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                ),
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "critical_chess_question",
+                        "strict": True,
+                        "schema": CRITICAL_QUESTION_SCHEMA,
+                    },
+                },
+                max_output_tokens=1500,
+                store=True,
             )
 
-        data = json.loads(
-            text
-        )
+            text = response.output_text.strip()
+            log_entry["raw_output"] = text
+
+            if not text:
+                raise ValueError(
+                    "Critical-question coach returned an empty response."
+                )
+
+            data = json.loads(
+                text
+            )
+            log_entry["status"] = "success"
+            log_entry["parsed"] = data
+        except Exception as e:
+            log_entry["status"] = "error"
+            log_entry["error"] = str(e)
+            raise
+        finally:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
         title = str(
             data.get(

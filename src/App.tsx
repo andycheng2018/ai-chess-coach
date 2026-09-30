@@ -38,7 +38,7 @@ import {
   type StreamEvent,
 } from './lichess';
 
-const BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'bot_2435';
+const BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'MonkeyKingZach';
 const ACTIVE_GAME_STORAGE_KEY = 'ai-chess-coach.active-game.v1';
 const LEARNING_LOG_STORAGE_KEY = 'ai-chess-coach.learning-log.v2';
 const TIME_CONTROL_STORAGE_KEY = 'ai-chess-coach.time-control.v1';
@@ -56,8 +56,8 @@ type CoachNote =
     gameId: string;
     savedAt: number;
     playerColor:
-      | 'white'
-      | 'black';
+    | 'white'
+    | 'black';
     language?: CoachLanguage;
   };
 type ReviewTarget = CoachResult & { playerColor?: 'white' | 'black' };
@@ -84,10 +84,10 @@ type PuzzleState =
 type CriticalPrompt = {
   mateThreat?: boolean;
   kind:
-    | 'threat'
-    | 'opportunity'
-    | 'decision'
-    | 'check';
+  | 'threat'
+  | 'opportunity'
+  | 'decision'
+  | 'check';
   title: string;
   question: string;
   ply: number;
@@ -374,15 +374,15 @@ function buildPracticePuzzle(
   const replyThemePriority =
     replyPuzzleTheme
       ? PRACTICE_THEME_PRIORITY.indexOf(
-          replyPuzzleTheme,
-        )
+        replyPuzzleTheme,
+      )
       : Number.POSITIVE_INFINITY;
 
   const bestThemePriority =
     bestPuzzleTheme
       ? PRACTICE_THEME_PRIORITY.indexOf(
-          bestPuzzleTheme,
-        )
+        bestPuzzleTheme,
+      )
       : Number.POSITIVE_INFINITY;
 
   const preferReplyPuzzle =
@@ -784,72 +784,72 @@ function namedThemeReport(
     en: string;
     zh: string;
   }> = [
-    {
-      themes: ['Fork / Double Attack', 'Double Check'],
-      en: 'Watch for one move attacking two targets at once, especially with checks.',
-      zh: '留意一步同时攻击两个目标的机会，尤其是带将军的双攻。',
-    },
-    {
-      themes: ['Pin', 'Skewer', 'X-Ray Attack'],
-      en: 'Scan every rank, file, and diagonal for pieces lined up behind one another.',
-      zh: '沿横线、直线和斜线检查棋子是否前后排成一线。',
-    },
-    {
-      themes: ['Discovered Attack', 'Discovered Check', 'Windmill'],
-      en: 'Before moving a piece, check whether it uncovers an attack from behind it.',
-      zh: '移动棋子前，检查它是否会为后方棋子打开攻击线路。',
-    },
-    {
-      themes: ['Hanging Piece', 'Trapped Piece'],
-      en: 'Check loose pieces and escape squares before committing to your move.',
-      zh: '落子前检查没有保护的棋子，以及受攻棋子是否还有退路。',
-    },
-    {
-      themes: ['Deflection', 'Decoy', 'Removal of the Defender', 'Overloading', 'Interference'],
-      en: 'Identify the key defender, then look for a forcing way to distract or remove it.',
-      zh: '先找出关键防守子，再寻找强制手段将它引开或消除。',
-    },
-    {
-      themes: ['Back-Rank Weakness', 'Back-Rank Mate', 'Mating Net', 'Smothered Mate', 'Support Mate', 'Checkmate Pattern', 'Mate in One', 'Mate in Two', 'Mate in Three or More', 'Forced Mate'],
-      en: 'When the king has limited escape squares, calculate every check before choosing another move.',
-      zh: '当王缺少逃跑格时，先算清所有将军，再考虑其他走法。',
-    },
-    {
-      themes: ['Sacrifice', 'Exchange Sacrifice', 'Queen Sacrifice', 'Clearance Sacrifice', 'Clearance', 'Desperado'],
-      en: 'Do not judge the material immediately; calculate the forcing payoff and resulting position.',
-      zh: '不要只看眼前子力，要算清强制收益和弃子后的局面。',
-    },
-    {
-      themes: ['Zwischenzug', 'Perpetual Check'],
-      en: 'Before an automatic recapture, look for an in-between check, capture, or forcing threat.',
-      zh: '自动回吃前，先找中间将军、吃子或其他强制威胁。',
-    },
-    {
-      themes: ['Attack on f7 / f2', 'Attacking the Castled King', 'Vulnerable King', 'King Safety'],
-      en: 'Count attackers, defenders, and escape squares before opening lines around either king.',
-      zh: '打开王周围线路前，数清进攻子、防守子和逃跑格。',
-    },
-    {
-      themes: ['Defense', 'Simplification'],
-      en: 'When under pressure, neutralize the concrete threat and consider favorable exchanges.',
-      zh: '受到压力时，先化解具体威胁，再考虑有利的交换和简化。',
-    },
-    {
-      themes: ['Open File', 'Weak Square'],
-      en: 'Notice which files and squares cannot be protected by a pawn, then improve the piece that can use them.',
-      zh: '留意兵无法保护的开放线和弱格，再改善能够利用它们的棋子。',
-    },
-    {
-      themes: ['En Passant'],
-      en: 'After a two-square pawn move, check the en passant option before the one-move window closes.',
-      zh: '对方兵走两格后，立刻检查是否能吃过路兵，因为机会只有一回合。',
-    },
-    {
-      themes: ['Promotion', 'Underpromotion', 'Passed Pawn', 'Opposition', 'Zugzwang', 'Stalemate', 'Endgame Tactic'],
-      en: 'In the endgame, calculate pawn races, king access, and every forcing move precisely.',
-      zh: '残局中要精确计算兵的竞速、王的路线和所有强制着。',
-    },
-  ];
+      {
+        themes: ['Fork / Double Attack', 'Double Check'],
+        en: 'Watch for one move attacking two targets at once, especially with checks.',
+        zh: '留意一步同时攻击两个目标的机会，尤其是带将军的双攻。',
+      },
+      {
+        themes: ['Pin', 'Skewer', 'X-Ray Attack'],
+        en: 'Scan every rank, file, and diagonal for pieces lined up behind one another.',
+        zh: '沿横线、直线和斜线检查棋子是否前后排成一线。',
+      },
+      {
+        themes: ['Discovered Attack', 'Discovered Check', 'Windmill'],
+        en: 'Before moving a piece, check whether it uncovers an attack from behind it.',
+        zh: '移动棋子前，检查它是否会为后方棋子打开攻击线路。',
+      },
+      {
+        themes: ['Hanging Piece', 'Trapped Piece'],
+        en: 'Check loose pieces and escape squares before committing to your move.',
+        zh: '落子前检查没有保护的棋子，以及受攻棋子是否还有退路。',
+      },
+      {
+        themes: ['Deflection', 'Decoy', 'Removal of the Defender', 'Overloading', 'Interference'],
+        en: 'Identify the key defender, then look for a forcing way to distract or remove it.',
+        zh: '先找出关键防守子，再寻找强制手段将它引开或消除。',
+      },
+      {
+        themes: ['Back-Rank Weakness', 'Back-Rank Mate', 'Mating Net', 'Smothered Mate', 'Support Mate', 'Checkmate Pattern', 'Mate in One', 'Mate in Two', 'Mate in Three or More', 'Forced Mate'],
+        en: 'When the king has limited escape squares, calculate every check before choosing another move.',
+        zh: '当王缺少逃跑格时，先算清所有将军，再考虑其他走法。',
+      },
+      {
+        themes: ['Sacrifice', 'Exchange Sacrifice', 'Queen Sacrifice', 'Clearance Sacrifice', 'Clearance', 'Desperado'],
+        en: 'Do not judge the material immediately; calculate the forcing payoff and resulting position.',
+        zh: '不要只看眼前子力，要算清强制收益和弃子后的局面。',
+      },
+      {
+        themes: ['Zwischenzug', 'Perpetual Check'],
+        en: 'Before an automatic recapture, look for an in-between check, capture, or forcing threat.',
+        zh: '自动回吃前，先找中间将军、吃子或其他强制威胁。',
+      },
+      {
+        themes: ['Attack on f7 / f2', 'Attacking the Castled King', 'Vulnerable King', 'King Safety'],
+        en: 'Count attackers, defenders, and escape squares before opening lines around either king.',
+        zh: '打开王周围线路前，数清进攻子、防守子和逃跑格。',
+      },
+      {
+        themes: ['Defense', 'Simplification'],
+        en: 'When under pressure, neutralize the concrete threat and consider favorable exchanges.',
+        zh: '受到压力时，先化解具体威胁，再考虑有利的交换和简化。',
+      },
+      {
+        themes: ['Open File', 'Weak Square'],
+        en: 'Notice which files and squares cannot be protected by a pawn, then improve the piece that can use them.',
+        zh: '留意兵无法保护的开放线和弱格，再改善能够利用它们的棋子。',
+      },
+      {
+        themes: ['En Passant'],
+        en: 'After a two-square pawn move, check the en passant option before the one-move window closes.',
+        zh: '对方兵走两格后，立刻检查是否能吃过路兵，因为机会只有一回合。',
+      },
+      {
+        themes: ['Promotion', 'Underpromotion', 'Passed Pawn', 'Opposition', 'Zugzwang', 'Stalemate', 'Endgame Tactic'],
+        en: 'In the endgame, calculate pawn races, king access, and every forcing move precisely.',
+        zh: '残局中要精确计算兵的竞速、王的路线和所有强制着。',
+      },
+    ];
 
   const group = adviceGroups.find(
     (entry) => entry.themes.includes(theme),
@@ -1157,8 +1157,8 @@ function buildGameReport(
     middlegame.count >= 4 &&
     middlegame.majorMisses <= 1 &&
     middlegame.strong /
-      middlegame.count >=
-      0.5
+    middlegame.count >=
+    0.5
   ) {
     strengths.push(
       isChinese
@@ -1171,8 +1171,8 @@ function buildGameReport(
     lateGame.count >= 3 &&
     lateGame.majorMisses <= 1 &&
     lateGame.strong /
-      lateGame.count >=
-      0.5
+    lateGame.count >=
+    0.5
   ) {
     strengths.push(
       isChinese
@@ -1196,12 +1196,12 @@ function buildGameReport(
   if (
     strengths.length < 2 &&
     goodMoves >=
-      Math.max(
-        3,
-        Math.ceil(
-          ordered.length * 0.55,
-        ),
-      )
+    Math.max(
+      3,
+      Math.ceil(
+        ordered.length * 0.55,
+      ),
+    )
   ) {
     strengths.push(
       isChinese
@@ -1245,11 +1245,11 @@ function buildGameReport(
 
     const noteThemes = note.themes?.length
       ? note.themes.map((theme) =>
-          namedThemeReport(
-            theme,
-            language,
-          ),
-        )
+        namedThemeReport(
+          theme,
+          language,
+        ),
+      )
       : [reportThemeFor(note, language)];
 
     for (const theme of noteThemes) {
@@ -1801,9 +1801,9 @@ export default function App() {
   const reviewAnimatingRef = useRef(false);
 
   const position = useMemo(
-  () => replay(initialFen, movesText),
-  [initialFen, movesText],
-);
+    () => replay(initialFen, movesText),
+    [initialFen, movesText],
+  );
 
   const displayPosition = useMemo(() => {
     // null means we are looking at the live/current position.
@@ -1839,7 +1839,7 @@ export default function App() {
     isMyTurn &&
     !moveInFlight &&
     !pendingPromotion;
-    
+
   const isCoachGame = players.white.name.toLowerCase() === BOT_USERNAME.toLowerCase()
     || players.black.name.toLowerCase() === BOT_USERNAME.toLowerCase();
   const coachArrows: Arrow[] = useMemo(() => {
@@ -2214,17 +2214,17 @@ export default function App() {
     };
 
     const applyState = (state: any, clockEnabled?: boolean) => {
-    const nextMoves = String(state?.moves || '');
-    const nextStatus = String(state?.status || 'started');
-    const nextWinner: Winner =
-      state?.winner === 'white' || state?.winner === 'black'
-        ? state.winner
-        : null;
+      const nextMoves = String(state?.moves || '');
+      const nextStatus = String(state?.status || 'started');
+      const nextWinner: Winner =
+        state?.winner === 'white' || state?.winner === 'black'
+          ? state.winner
+          : null;
 
-    // Keep the synchronous ref in lockstep with the
-    // authoritative Lichess stream.
-    movesTextRef.current = nextMoves;
-    setMovesText(nextMoves);
+      // Keep the synchronous ref in lockstep with the
+      // authoritative Lichess stream.
+      movesTextRef.current = nextMoves;
+      setMovesText(nextMoves);
       setGameStatus(nextStatus);
       if (nextWinner) setWinner(nextWinner);
       syncPendingMove(nextMoves);
@@ -2404,7 +2404,7 @@ export default function App() {
           if (
             pendingMove &&
             cachedMoveList.length >
-              pendingMove.basePly
+            pendingMove.basePly
           ) {
             pendingMoveRef.current = null;
             setMoveInFlight(false);
@@ -2626,8 +2626,8 @@ export default function App() {
             ? `注意，将杀威胁。${prompt.question}`
             : `Careful, mate threat. ${prompt.question}`
           : language === 'zh-CN'
-          ? `先想一想。${prompt.question}`
-          : `Think first. ${prompt.question}`;
+            ? `先想一想。${prompt.question}`
+            : `Think first. ${prompt.question}`;
 
       if (afterMistake) {
         void speakCoach(
@@ -2661,25 +2661,25 @@ export default function App() {
   const ttsStatusLabel =
     coachLanguage === 'zh-CN'
       ? {
-          checking: '正在检查语音',
-          ready: 'ElevenLabs 已就绪',
-          online: 'ElevenLabs 在线',
-          idle: '在线 · 此步无需讲解',
-          speaking: '正在播放语音',
-          played: '语音播放完成',
-          blocked: '音频被阻止，点击重试',
-          offline: 'ElevenLabs 离线',
-        }[ttsStatus.state]
+        checking: '正在检查语音',
+        ready: 'ElevenLabs 已就绪',
+        online: 'ElevenLabs 在线',
+        idle: '在线 · 此步无需讲解',
+        speaking: '正在播放语音',
+        played: '语音播放完成',
+        blocked: '音频被阻止，点击重试',
+        offline: 'ElevenLabs 离线',
+      }[ttsStatus.state]
       : {
-          checking: 'Checking voice',
-          ready: 'ElevenLabs ready',
-          online: 'ElevenLabs online',
-          idle: 'Online · no comment this move',
-          speaking: 'Speaking…',
-          played: 'Voice played',
-          blocked: 'Audio blocked — tap to retry',
-          offline: 'ElevenLabs offline',
-        }[ttsStatus.state];
+        checking: 'Checking voice',
+        ready: 'ElevenLabs ready',
+        online: 'ElevenLabs online',
+        idle: 'Online · no comment this move',
+        speaking: 'Speaking…',
+        played: 'Voice played',
+        blocked: 'Audio blocked — tap to retry',
+        offline: 'ElevenLabs offline',
+      }[ttsStatus.state];
 
   const processCoachQueue = useCallback(async () => {
     if (coachProcessingRef.current) return;
@@ -2867,6 +2867,8 @@ export default function App() {
               job.detail,
               job.language,
               recentFeedback,
+              undefined,
+              gameIdRef.current || undefined,
             )
               .then((wording) => {
                 if (job.id !== latestCoachJobIdRef.current) {
@@ -3087,7 +3089,7 @@ export default function App() {
     // At least six plies between questions.
     if (
       currentPly -
-        lastCriticalQuestionPlyRef.current <
+      lastCriticalQuestionPlyRef.current <
       4
     ) {
       return;
@@ -3128,6 +3130,7 @@ export default function App() {
       coachDetail,
       recentQuestions,
       controller.signal,
+      gameIdRef.current || undefined,
     )
       .then((prompt) => {
         if (
@@ -3141,9 +3144,9 @@ export default function App() {
         // were deciding whether this was worth interrupting.
         if (
           gameIdRef.current !==
-            gameSnapshot ||
+          gameSnapshot ||
           movesTextRef.current.trim() !==
-            movesSnapshot
+          movesSnapshot
         ) {
           return;
         }
@@ -3176,7 +3179,7 @@ export default function App() {
             prompt.title ||
             (
               coachLanguage ===
-              'zh-CN'
+                'zh-CN'
                 ? '先想一想'
                 : 'Think first'
             ),
@@ -3240,44 +3243,44 @@ export default function App() {
   ]);
 
 
-const analyzeStudentMove = useCallback(
-  (fenBefore: string, uci: string) => {
-    if (!isCoachGame) return;
+  const analyzeStudentMove = useCallback(
+    (fenBefore: string, uci: string) => {
+      if (!isCoachGame) return;
 
-    setPlayerMoveAnalysisPending(true);
-    setCoachExplanationPending(false);
-    setCoachError('');
-    setCoachResult(null);
+      setPlayerMoveAnalysisPending(true);
+      setCoachExplanationPending(false);
+      setCoachError('');
+      setCoachResult(null);
 
-    criticalQuestionAbortRef.current?.abort();
-    criticalPromptRef.current = null;
-    setCriticalPrompt(null);
+      criticalQuestionAbortRef.current?.abort();
+      criticalPromptRef.current = null;
+      setCriticalPrompt(null);
 
-    // The player has moved on, so old spoken commentary is no longer useful.
-    stopCoachSpeech();
+      // The player has moved on, so old spoken commentary is no longer useful.
+      stopCoachSpeech();
 
-    const jobId = latestCoachJobIdRef.current + 1;
-    latestCoachJobIdRef.current = jobId;
+      const jobId = latestCoachJobIdRef.current + 1;
+      latestCoachJobIdRef.current = jobId;
 
-    // Keep the running analysis, if any, but coalesce every waiting request to
-    // the newest position. This bounds lag to at most one obsolete search.
-    coachQueueRef.current = [{
-      id: jobId,
-      fenBefore,
-      uci,
-      detail: coachDetail,
-      language: coachLanguage,
-    }];
+      // Keep the running analysis, if any, but coalesce every waiting request to
+      // the newest position. This bounds lag to at most one obsolete search.
+      coachQueueRef.current = [{
+        id: jobId,
+        fenBefore,
+        uci,
+        detail: coachDetail,
+        language: coachLanguage,
+      }];
 
-    void processCoachQueue();
-  },
-  [
-    coachDetail,
-    coachLanguage,
-    isCoachGame,
-    processCoachQueue,
-  ],
-);
+      void processCoachQueue();
+    },
+    [
+      coachDetail,
+      coachLanguage,
+      isCoachGame,
+      processCoachQueue,
+    ],
+  );
   useEffect(() => {
     // Normal phone games use the exact local pre-move FEN captured when the
     // player makes the move. Only SenseRobot games need stream-observed
@@ -3371,13 +3374,13 @@ const analyzeStudentMove = useCallback(
     analyzeStudentMove,
   ]);
 
-    const submitMove = useCallback(async (
-      fenBefore: string,
-      basePly: number,
-      from: string,
-      to: string,
-      promotion?: PromotionChoice,
-    ) => {
+  const submitMove = useCallback(async (
+    fenBefore: string,
+    basePly: number,
+    from: string,
+    to: string,
+    promotion?: PromotionChoice,
+  ) => {
     if (!token || !gameId || !activeGame || pendingMoveRef.current) {
       setRollbackSignal((value) => value + 1);
       return;
@@ -3417,17 +3420,17 @@ const analyzeStudentMove = useCallback(
     }
   }, [token, gameId, activeGame, analyzeStudentMove]);
 
-    const handleBoardMove = useCallback((from: string, to: string) => {
-      if (
-        isSenseRobotGame ||
-        !token ||
-        !gameId ||
-        !canMove ||
-        !activeGame
-      ) {
-        setRollbackSignal((value) => value + 1);
-        return;
-      }
+  const handleBoardMove = useCallback((from: string, to: string) => {
+    if (
+      isSenseRobotGame ||
+      !token ||
+      !gameId ||
+      !canMove ||
+      !activeGame
+    ) {
+      setRollbackSignal((value) => value + 1);
+      return;
+    }
 
     const fenBefore = position.chess.fen();
     const basePly = position.plyCount;
@@ -3591,8 +3594,7 @@ const analyzeStudentMove = useCallback(
       setStatus(`Game started against ${BOT_USERNAME}.`);
     } catch (error) {
       setStatus(
-        `Could not start game: ${
-          error instanceof Error ? error.message : String(error)
+        `Could not start game: ${error instanceof Error ? error.message : String(error)
         }`,
       );
     } finally {
@@ -3658,10 +3660,9 @@ const analyzeStudentMove = useCallback(
       );
     } catch (error) {
       setStatus(
-        `Could not join SenseRobot room: ${
-          error instanceof Error
-            ? error.message
-            : String(error)
+        `Could not join SenseRobot room: ${error instanceof Error
+          ? error.message
+          : String(error)
         }`
       );
     } finally {
@@ -3764,43 +3765,43 @@ const analyzeStudentMove = useCallback(
       result.classification === 'good',
   ).length;
 
-const puzzleSourceNotes: CoachNote[] = [
-  ...coachNotes,
-  ...moveEvaluations
-    .filter(
-      (evaluation) =>
-        !coachNotes.some(
-          (note) =>
-            note.ply === evaluation.ply,
-        ),
-    )
-    .map(
-      (evaluation) => ({
-        ...evaluation,
-        gameId: gameId || '',
-        savedAt: 0,
-        playerColor: myColor,
-        language: coachLanguage,
-      }),
-    ),
-];
+  const puzzleSourceNotes: CoachNote[] = [
+    ...coachNotes,
+    ...moveEvaluations
+      .filter(
+        (evaluation) =>
+          !coachNotes.some(
+            (note) =>
+              note.ply === evaluation.ply,
+          ),
+      )
+      .map(
+        (evaluation) => ({
+          ...evaluation,
+          gameId: gameId || '',
+          savedAt: 0,
+          playerColor: myColor,
+          language: coachLanguage,
+        }),
+      ),
+  ];
 
-const practicePuzzles =
-  selectPracticePuzzles(
-    puzzleSourceNotes,
-  );
+  const practicePuzzles =
+    selectPracticePuzzles(
+      puzzleSourceNotes,
+    );
 
-const gameReport =
-  buildGameReport(
-    moveEvaluations,
-    coachNotes,
-    coachLanguage,
-  );
+  const gameReport =
+    buildGameReport(
+      moveEvaluations,
+      coachNotes,
+      coachLanguage,
+    );
 
-const isChinese = coachLanguage === 'zh-CN';
+  const isChinese = coachLanguage === 'zh-CN';
 
-const reportText = isChinese
-  ? {
+  const reportText = isChinese
+    ? {
       report: '对局总结',
       closeAria: '关闭对局总结',
       reviewed: '已分析走法',
@@ -3841,7 +3842,7 @@ const reportText = isChinese
       nextPuzzle: '下一题',
       backToReport: '返回对局总结',
     }
-  : {
+    : {
       report: 'GAME REPORT',
       closeAria: 'Close game report',
       reviewed: 'moves reviewed',
@@ -3884,49 +3885,49 @@ const reportText = isChinese
       backToReport: 'Back to game report',
     };
 
-const activePuzzle =
-  practicePuzzles[puzzleIndex] || null;
+  const activePuzzle =
+    practicePuzzles[puzzleIndex] || null;
 
-const puzzleChess =
-  activePuzzle
-    ? new Chess(
+  const puzzleChess =
+    activePuzzle
+      ? new Chess(
         puzzleFen ||
         activePuzzle.fenBefore,
       )
-    : null;
+      : null;
 
-const puzzleDestinations =
-  puzzleChess
-    ? destinations(puzzleChess)
-    : new Map<string, string[]>();
+  const puzzleDestinations =
+    puzzleChess
+      ? destinations(puzzleChess)
+      : new Map<string, string[]>();
 
-const puzzleMovableColor:
-  | 'white'
-  | 'black'
-  | undefined =
-  puzzleChess
-    ? puzzleChess.turn() === 'w'
-      ? 'white'
-      : 'black'
-    : undefined;
+  const puzzleMovableColor:
+    | 'white'
+    | 'black'
+    | undefined =
+    puzzleChess
+      ? puzzleChess.turn() === 'w'
+        ? 'white'
+        : 'black'
+      : undefined;
 
-// Keep the camera fixed to the side that was to move when the puzzle opened.
-// puzzleFen advances after a correct move, so deriving orientation from it
-// caused opponent-turn puzzles to flip back after every ply.
-const puzzleStartingColor:
-  | 'white'
-  | 'black'
-  | undefined = (() => {
-  if (!activePuzzle) return undefined;
+  // Keep the camera fixed to the side that was to move when the puzzle opened.
+  // puzzleFen advances after a correct move, so deriving orientation from it
+  // caused opponent-turn puzzles to flip back after every ply.
+  const puzzleStartingColor:
+    | 'white'
+    | 'black'
+    | undefined = (() => {
+      if (!activePuzzle) return undefined;
 
-  try {
-    return new Chess(activePuzzle.fenBefore).turn() === 'w'
-      ? 'white'
-      : 'black';
-  } catch {
-    return activePuzzle.playerColor;
-  }
-})();
+      try {
+        return new Chess(activePuzzle.fenBefore).turn() === 'w'
+          ? 'white'
+          : 'black';
+      } catch {
+        return activePuzzle.playerColor;
+      }
+    })();
 
   const focusLessons = Array.from(new Set(coachNotes.map((note) => note.lesson).filter(Boolean))).slice(0, 3);
   const botLabel = bot.connected ? 'Coach bot ready' : bot.running ? 'Coach bot connecting' : 'Coach bot offline';
@@ -3981,55 +3982,55 @@ const puzzleStartingColor:
 
   const reviewIndex = reviewTarget
     ? orderedCoachNotes.findIndex(
-        (note) => note.ply === reviewTarget.ply
-      )
+      (note) => note.ply === reviewTarget.ply
+    )
     : -1;
 
   function openPuzzle(index: number) {
-  const puzzle =
-    practicePuzzles[index];
+    const puzzle =
+      practicePuzzles[index];
 
-  if (!puzzle) return;
+    if (!puzzle) return;
 
-  setPuzzleIndex(index);
-  setPuzzleFen(puzzle.fenBefore);
-  setPuzzleState('solving');
+    setPuzzleIndex(index);
+    setPuzzleFen(puzzle.fenBefore);
+    setPuzzleState('solving');
 
-  setPuzzleRollbackSignal(
-    (value) => value + 1,
-  );
+    setPuzzleRollbackSignal(
+      (value) => value + 1,
+    );
 
-  setGameOverOpen(false);
-  setPuzzleOpen(true);
-}
-
-function handlePuzzleMove(
-  from: string,
-  to: string,
-) {
-  if (!activePuzzle) return;
-
-  if (
-    puzzleState === 'correct' ||
-    puzzleState === 'revealed'
-  ) {
-    return;
+    setGameOverOpen(false);
+    setPuzzleOpen(true);
   }
 
-  const playedUci =
-    `${from}${to}`.toLowerCase();
-
-  const answerUci =
-    activePuzzle.bestMoveUci.toLowerCase();
-
-  // startsWith also handles promotion moves such as e7e8q.
-  if (
-    answerUci.startsWith(playedUci)
+  function handlePuzzleMove(
+    from: string,
+    to: string,
   ) {
-    const chess =
-      new Chess(activePuzzle.fenBefore);
+    if (!activePuzzle) return;
 
-    chess.move({
+    if (
+      puzzleState === 'correct' ||
+      puzzleState === 'revealed'
+    ) {
+      return;
+    }
+
+    const playedUci =
+      `${from}${to}`.toLowerCase();
+
+    const answerUci =
+      activePuzzle.bestMoveUci.toLowerCase();
+
+    // startsWith also handles promotion moves such as e7e8q.
+    if (
+      answerUci.startsWith(playedUci)
+    ) {
+      const chess =
+        new Chess(activePuzzle.fenBefore);
+
+      chess.move({
         from,
         to,
         promotion:
@@ -4288,90 +4289,86 @@ function handlePuzzleMove(
             <b>{gameScore}</b>
           </div> : null}
           <div className="move-list">
-              {position.san.length === 0 ? (
-                <span className="muted">Moves will appear here.</span>
-              ) : (
-                Array.from(
-                  { length: Math.ceil(position.san.length / 2) },
-                  (_, index) => {
-                    const whiteMoveIndex = index * 2;
-                    const blackMoveIndex = index * 2 + 1;
+            {position.san.length === 0 ? (
+              <span className="muted">Moves will appear here.</span>
+            ) : (
+              Array.from(
+                { length: Math.ceil(position.san.length / 2) },
+                (_, index) => {
+                  const whiteMoveIndex = index * 2;
+                  const blackMoveIndex = index * 2 + 1;
 
-                    const whitePly = whiteMoveIndex + 1;
-                    const blackPly = blackMoveIndex + 1;
+                  const whitePly = whiteMoveIndex + 1;
+                  const blackPly = blackMoveIndex + 1;
 
-                    const whiteCoachNote = coachNotes.find(
-                      (note) => note.ply === whitePly
-                    );
+                  const whiteCoachNote = coachNotes.find(
+                    (note) => note.ply === whitePly
+                  );
 
-                    const blackCoachNote = coachNotes.find(
-                      (note) => note.ply === blackPly
-                    );
+                  const blackCoachNote = coachNotes.find(
+                    (note) => note.ply === blackPly
+                  );
 
-                    const whiteMove = position.san[whiteMoveIndex];
-                    const blackMove = position.san[blackMoveIndex];
+                  const whiteMove = position.san[whiteMoveIndex];
+                  const blackMove = position.san[blackMoveIndex];
 
-                    return (
-                      <div className="move-row" key={index}>
-                        <b>{index + 1}.</b>
+                  return (
+                    <div className="move-row" key={index}>
+                      <b>{index + 1}.</b>
 
-                        {whiteMove ? (
-                          <button
-                            type="button"
-                            className={`move-cell ${
-                              historyPly === whitePly ? 'active' : ''
-                            } ${
-                              whiteCoachNote?.classification === 'blunder'
-                                ? 'move-blunder'
-                                : whiteCoachNote?.classification === 'mistake'
-                                  ? 'move-mistake'
-                                  : ''
+                      {whiteMove ? (
+                        <button
+                          type="button"
+                          className={`move-cell ${historyPly === whitePly ? 'active' : ''
+                            } ${whiteCoachNote?.classification === 'blunder'
+                              ? 'move-blunder'
+                              : whiteCoachNote?.classification === 'mistake'
+                                ? 'move-mistake'
+                                : ''
                             }`}
-                            onClick={() => {
-                              setHistoryPly(
-                                whitePly >= position.plyCount
-                                  ? null
-                                  : whitePly
-                              );
-                            }}
-                          >
-                            {whiteMove}
-                          </button>
-                        ) : (
-                          <span />
-                        )}
+                          onClick={() => {
+                            setHistoryPly(
+                              whitePly >= position.plyCount
+                                ? null
+                                : whitePly
+                            );
+                          }}
+                        >
+                          {whiteMove}
+                        </button>
+                      ) : (
+                        <span />
+                      )}
 
-                        {blackMove ? (
-                          <button
-                            type="button"
-                            className={`move-cell ${
-                              historyPly === blackPly ? 'active' : ''
-                            } ${
-                              blackCoachNote?.classification === 'blunder'
-                                ? 'move-blunder'
-                                : blackCoachNote?.classification === 'mistake'
-                                  ? 'move-mistake'
-                                  : ''
+                      {blackMove ? (
+                        <button
+                          type="button"
+                          className={`move-cell ${historyPly === blackPly ? 'active' : ''
+                            } ${blackCoachNote?.classification === 'blunder'
+                              ? 'move-blunder'
+                              : blackCoachNote?.classification === 'mistake'
+                                ? 'move-mistake'
+                                : ''
                             }`}
-                            onClick={() => {
-                              setHistoryPly(
-                                blackPly >= position.plyCount
-                                  ? null
-                                  : blackPly
-                              );
-                            }}
-                          >
-                            {blackMove}
-                          </button>
-                        ) : (
-                          <span />
-                        )}
-                      </div>
-                    );
-                  }
-                )
-              )}
-            </div>
+                          onClick={() => {
+                            setHistoryPly(
+                              blackPly >= position.plyCount
+                                ? null
+                                : blackPly
+                            );
+                          }}
+                        >
+                          {blackMove}
+                        </button>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
+                  );
+                }
+              )
+            )}
+          </div>
           <div className="game-actions">
             {activeGame ? (
               <button
@@ -4413,7 +4410,7 @@ function handlePuzzleMove(
           <div className={`coach-bubble ${coachResult?.classification || ''}`}>
             {criticalPrompt && isMyTurn ? <>
               {coachResult?.shouldCoach &&
-              coachResult.ply === criticalPrompt.ply - 1 ? (
+                coachResult.ply === criticalPrompt.ply - 1 ? (
                 <div className="coach-prior-feedback">
                   <div className="coach-heading">
                     <strong>{coachResult.title}</strong>
@@ -4452,7 +4449,7 @@ function handlePuzzleMove(
               ) : null}
 
               {coachResult?.shouldCoach &&
-              coachResult.ply === criticalPrompt.ply - 1 ? (
+                coachResult.ply === criticalPrompt.ply - 1 ? (
                 <div className="coach-next-decision">
                   {coachLanguage === 'zh-CN'
                     ? '现在，落子之前'
@@ -4480,16 +4477,16 @@ function handlePuzzleMove(
                       ? '优先处理'
                       : 'Priority'
                     : criticalPrompt.kind === 'opportunity'
-                    ? coachLanguage === 'zh-CN'
-                      ? '机会'
-                      : 'Opportunity'
-                    : criticalPrompt.kind === 'threat'
                       ? coachLanguage === 'zh-CN'
-                        ? '对手意图'
-                        : 'Opponent idea'
-                      : coachLanguage === 'zh-CN'
-                        ? '关键局面'
-                        : 'Critical position'}
+                        ? '机会'
+                        : 'Opportunity'
+                      : criticalPrompt.kind === 'threat'
+                        ? coachLanguage === 'zh-CN'
+                          ? '对手意图'
+                          : 'Opponent idea'
+                        : coachLanguage === 'zh-CN'
+                          ? '关键局面'
+                          : 'Critical position'}
                 </span>
 
                 {criticalPrompt.question}
@@ -4533,14 +4530,14 @@ function handlePuzzleMove(
                 </div>
               ) : null}
               {coachResult.lesson ? (
-              <div className="coach-lesson">
-                {coachLanguage === 'zh-CN'
-                  ? '记住：'
-                  : 'Remember: '}
+                <div className="coach-lesson">
+                  {coachLanguage === 'zh-CN'
+                    ? '记住：'
+                    : 'Remember: '}
 
-                {coachResult.lesson}
-              </div>
-            ) : null}
+                  {coachResult.lesson}
+                </div>
+              ) : null}
               {coachResult.shouldCoach ? <button className="coach-review-button" onClick={() => { setReviewTarget(coachResult); setReviewMode('better'); }}>Review this position</button> : null}
             </> : <>
               <strong>
@@ -4572,11 +4569,10 @@ function handlePuzzleMove(
                 <button
                   key={value}
                   type="button"
-                  className={`coach-detail-button ${
-                    coachLanguage === value
-                      ? 'active'
-                      : ''
-                  }`}
+                  className={`coach-detail-button ${coachLanguage === value
+                    ? 'active'
+                    : ''
+                    }`}
                   aria-pressed={
                     coachLanguage === value
                   }
@@ -4613,9 +4609,8 @@ function handlePuzzleMove(
                 <button
                   key={value}
                   type="button"
-                  className={`coach-detail-button ${
-                    coachDetail === value ? 'active' : ''
-                  }`}
+                  className={`coach-detail-button ${coachDetail === value ? 'active' : ''
+                    }`}
                   aria-pressed={coachDetail === value}
                   onClick={() => setCoachDetail(value)}
                 >
@@ -5120,7 +5115,7 @@ function handlePuzzleMove(
       </div>
     )}
 
-{puzzleOpen && activePuzzle && (
+    {puzzleOpen && activePuzzle && (
       <div
         className="modal-backdrop"
         role="dialog"
@@ -5183,13 +5178,13 @@ function handlePuzzleMove(
               }
               movableColor={
                 puzzleState === 'correct' ||
-                puzzleState === 'revealed'
+                  puzzleState === 'revealed'
                   ? undefined
                   : puzzleMovableColor
               }
               destinations={
                 puzzleState === 'correct' ||
-                puzzleState === 'revealed'
+                  puzzleState === 'revealed'
                   ? new Map()
                   : puzzleDestinations
               }
@@ -5197,20 +5192,20 @@ function handlePuzzleMove(
               coachArrows={
                 puzzleState === 'revealed'
                   ? [
-                      {
-                        from:
-                          activePuzzle.bestMoveUci.slice(
-                            0,
-                            2,
-                          ),
-                        to:
-                          activePuzzle.bestMoveUci.slice(
-                            2,
-                            4,
-                          ),
-                        kind: 'best',
-                      },
-                    ]
+                    {
+                      from:
+                        activePuzzle.bestMoveUci.slice(
+                          0,
+                          2,
+                        ),
+                      to:
+                        activePuzzle.bestMoveUci.slice(
+                          2,
+                          4,
+                        ),
+                      kind: 'best',
+                    },
+                  ]
                   : []
               }
               coachHighlights={[]}
@@ -5264,7 +5259,7 @@ function handlePuzzleMove(
 
           <div className="puzzle-actions">
             {puzzleState !== 'correct' &&
-            puzzleState !== 'revealed' ? (
+              puzzleState !== 'revealed' ? (
               <button
                 className="ghost"
                 onClick={
@@ -5277,7 +5272,7 @@ function handlePuzzleMove(
 
             {(puzzleState === 'correct' ||
               puzzleState === 'revealed') &&
-            puzzleIndex <
+              puzzleIndex <
               practicePuzzles.length - 1 ? (
               <button
                 className="primary"
@@ -5293,7 +5288,7 @@ function handlePuzzleMove(
 
             {(puzzleState === 'correct' ||
               puzzleState === 'revealed') &&
-            puzzleIndex ===
+              puzzleIndex ===
               practicePuzzles.length - 1 ? (
               <button
                 className="primary"

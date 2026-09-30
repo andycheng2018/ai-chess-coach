@@ -10,4 +10,4 @@ bot/config.yml
 .pytest_cache/
 vite.config.js
 vite.config.d.ts
-bot/config.yml
+bot/config.ymllogs/
