@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import chess
 import requests
@@ -20,6 +21,7 @@ load_dotenv(ROOT / ".env")
 
 from bot_runtime import BOT_LEVELS, runtime
 from coach.stockfish_analyzer import StockfishAnalyzer, capture_context, find_stockfish
+from coach.history import history
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 
@@ -334,6 +336,7 @@ def generate_llm_coaching(
     language: str = "en",
     recent_feedback: list[str] | None = None,
     game_id: str = "",
+    record_id: str = "",
 ) -> dict[str, Any]:
     """
     Generate real LLM wording.
@@ -359,6 +362,7 @@ def generate_llm_coaching(
                 language=language,
                 recent_feedback=recent_feedback or [],
                 game_id=game_id,
+                record_id=record_id,
             )
 
         print(
@@ -776,6 +780,20 @@ def analyze_move(
                 "explanationPending": False,
             })
 
+    game_id = str(payload.get("gameId") or "").strip()
+    result.update({
+        "recordId": result.get("analysisId") or uuid.uuid4().hex,
+        "gameId": game_id,
+        "savedAt": int(time.time() * 1000),
+        "playerColor": "white" if board.turn == chess.WHITE else "black",
+        "language": language,
+        "wordingSource": "pending" if should_coach else "engine",
+    })
+    # The cached analysis and persisted review refer to the same moment.
+    if should_coach:
+        analysis["_history_record"] = dict(result)
+    if game_id:
+        history.save_records(game_id, [result])
     return result
 
 
@@ -850,13 +868,27 @@ def explain_analysis(
         payload.get("gameId") or payload.get("game_id") or ""
     ).strip()
 
-    return generate_llm_coaching(
+    record = analysis.get("_history_record", {})
+    bound_game_id = record.get("gameId")
+    if bound_game_id and game_id and bound_game_id != game_id:
+        raise ValueError("gameId does not match the cached analysis")
+    game_id = bound_game_id or game_id
+
+    wording = generate_llm_coaching(
         analysis,
         detail=detail,
         language=language,
         recent_feedback=recent_feedback,
         game_id=game_id,
+        record_id=analysis_id,
     )
+    if game_id and record:
+        history.save_records(game_id, [{
+            **record, **wording, "gameId": game_id, "language": language,
+            "explanationPending": False, "wordingSource": "llm",
+            "savedAt": int(time.time() * 1000),
+        }])
+    return wording
 
 
 
@@ -1377,7 +1409,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/api/health":
+        if urlsplit(self.path).path in {"/audit", "/audit/"}:
+            try:
+                self._send_bytes(200, (ROOT / "audit-dashboard" / "index.html").read_bytes(), "text/html; charset=utf-8")
+            except OSError:
+                self._send(404, {"message": "Audit Studio is unavailable"})
+        elif self.path == "/api/health":
             warning = None
             stockfish = None
             try:
@@ -1447,34 +1484,37 @@ class Handler(BaseHTTPRequestHandler):
                     for level in BOT_LEVELS.values()
                 ]
             })
-        elif self.path.startswith("/api/logs"):
-            log_file = ROOT / "logs" / "coach_logs.jsonl"
-            logs_list = []
-            if log_file.is_file():
-                try:
-                    with open(log_file, "r", encoding="utf-8") as f:
-                        for line in f:
-                            line = line.strip()
-                            if line:
-                                try:
-                                    logs_list.append(json.loads(line))
-                                except json.JSONDecodeError:
-                                    pass
-                except Exception as exc:
-                    self._send(500, {"message": f"Failed to read logs: {exc}"})
-                    return
-            self._send(200, {"logs": logs_list, "total": len(logs_list), "file": str(log_file)})
+        elif urlsplit(self.path).path == "/api/coach/history":
+            game_id = parse_qs(urlsplit(self.path).query).get("gameId", [""])[0]
+            if not game_id:
+                self._send(400, {"message": "gameId is required"})
+                return
+            try:
+                self._send(200, {"gameId": game_id, "records": history.session(game_id)})
+            except OSError as exc:
+                self._send(500, {"message": f"Failed to read coach history: {exc}"})
+        elif self.path == "/api/logs":
+            try:
+                logs_list = history.audit_entries()
+                self._send(200, {"logs": logs_list, "total": len(logs_list), "file": str(history.path)})
+            except OSError as exc:
+                self._send(500, {"message": f"Failed to read logs: {exc}"})
         else:
             self._send(404, {"message": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         try:
             if self.path == "/api/logs/clear":
-                log_file = ROOT / "logs" / "coach_logs.jsonl"
-                if log_file.is_file():
-                    with open(log_file, "w", encoding="utf-8") as f:
-                        f.write("")
-                self._send(200, {"ok": True, "message": "Logs cleared"})
+                history.clear_attempts()
+                self._send(200, {"ok": True, "message": "Model attempts cleared; learning records preserved"})
+            elif self.path == "/api/coach/history":
+                payload = self._json_body()
+                records = payload.get("records")
+                if not isinstance(records, list):
+                    raise ValueError("records must be an array")
+                game_id = str(payload.get("gameId") or "").strip()
+                saved = history.save_records(game_id, records)
+                self._send(200, {"gameId": game_id, "records": saved})
             elif self.path == "/api/bot/start":
                 self._send(200, runtime.start())
             elif self.path == "/api/bot/stop":

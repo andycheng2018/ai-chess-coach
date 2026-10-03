@@ -11,6 +11,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server ./server
+COPY audit-dashboard ./audit-dashboard
 COPY bot ./bot
 
 ENV PYTHONUNBUFFERED=1

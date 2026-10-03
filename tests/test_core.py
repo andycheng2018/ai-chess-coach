@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,7 @@ if str(SERVER) not in sys.path:
     sys.path.insert(0, str(SERVER))
 
 from bot_runtime import BOT_LEVELS, LichessBotRuntime  # noqa: E402
+from coach.history import CoachHistory  # noqa: E402
 from coach.llm_coach import (  # noqa: E402
     LLMCoach,
     ensure_primary_theme_named,
@@ -27,6 +29,15 @@ from app import COACH_ANALYSIS_PROFILES, Handler, analyze_move, critical_positio
 
 
 class CoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        journal = CoachHistory(Path(directory.name) / "history.jsonl")
+        for target in ("coach.history.history", "app.history"):
+            patcher = patch(target, journal)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_puzzle_labels_are_verified_from_the_answer_move(self) -> None:
         fork_board = chess.Board(
             "4k3/8/5q2/2p5/8/8/3N4/4K3 w - - 0 1"

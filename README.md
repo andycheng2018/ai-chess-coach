@@ -37,6 +37,27 @@ Stockfish is responsible for evaluations, best moves, tactics, and move classifi
 * **Adjustable opponent strength**: Stockfish-based opponent with multiple practice levels.
 * **iOS + web**: built as a React web app and packaged for iPhone using Capacitor.
 
+Learning notes, game evaluations, and model audits share one coaching history in
+`logs/coach_logs.jsonl`. The Learning log and game reports read the latest move
+records; Audit Studio links those records to each raw model attempt, including
+correction drafts, failures, and the validated wording returned by the coach.
+Open **Inspect coaching record** in a position review, or visit
+`http://localhost:8765/audit` with the backend running. No separate dashboard
+server is needed.
+
+On macOS, double-click **Open Chess Coach.command** in Finder to start the app
+and open it in your browser. Keep its Terminal window open while playing;
+Control-C stops the servers it started. Running app servers are reused.
+
+The browser keeps one offline history cache and migrates the older Learning log
+and game evaluation storage automatically. Pending uploads remain cached until
+the backend acknowledges them. Historical notes without a captured model call
+remain reviewable, but cannot supply missing raw prompts or responses. Clearing
+model attempts in Audit Studio preserves Learning records and reports. The
+journal is ignored by Git; preserve the `logs/` directory when moving or
+redeploying the backend. OpenAI calls use `store=False` because the application
+keeps its audit records in this journal.
+
 ## How it works
 
 A typical game looks like this:

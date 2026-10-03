@@ -5,6 +5,12 @@ export type CoachArrow = {
 };
 
 export type CoachResult = {
+  recordId?: string;
+  gameId?: string;
+  savedAt?: number;
+  playerColor?: 'white' | 'black';
+  language?: CoachLanguage;
+  wordingSource?: 'pending' | 'engine' | 'llm' | 'fallback' | 'legacy';
   shouldCoach: boolean;
   moveNumber: number;
   ply: number;
@@ -150,6 +156,7 @@ export type CoachLanguage =
   | 'zh-CN';
 
 export type CoachWording = {
+  recordId?: string;
   title: string;
   feedback: string;
   lesson: string;
@@ -157,7 +164,7 @@ export type CoachWording = {
   themes: ChessTheme[];
 };
 
-const CONTROL_URL =
+export const CONTROL_URL =
   import.meta.env.VITE_BOT_CONTROL_URL ||
   'http://127.0.0.1:8765';
 
@@ -168,6 +175,7 @@ export async function analyzeMove(
   detailOrSignal: CoachDetail | AbortSignal = 'balanced',
   maybeSignal?: AbortSignal,
   language: CoachLanguage = 'en',
+  gameId?: string,
 ): Promise<CoachResult> {
   const detail: CoachDetail =
     typeof detailOrSignal === 'string'
@@ -191,6 +199,7 @@ export async function analyzeMove(
         move,
         detail,
         language,
+        gameId,
       }),
       signal,
     },

@@ -669,6 +669,21 @@
       background: rgba(255, 255, 255, 0.1);
       color: #fff;
     }
+    .detail-view, .card { min-width: 0; }
+    @media (max-width: 900px) {
+      header { padding: 0.8rem 1rem; flex-wrap: wrap; gap: 0.8rem; }
+      .header-actions { flex-wrap: wrap; gap: 0.5rem; }
+      .brand-title { font-size: 1rem; }
+      .app-container { display: flex; height: auto; overflow: visible; flex-direction: column; }
+      .sidebar { width: 100%; border-right: 0; }
+      .logs-list { max-height: 220px; flex: none; }
+      .detail-view { padding: 1rem; overflow: visible; }
+      .grid-layout { grid-template-columns: minmax(0, 1fr); }
+      .full-col { grid-column: auto; }
+      .move-hero-card, .board-preview-container { flex-wrap: wrap; }
+      .hero-sub-text { overflow-wrap: anywhere; }
+      .card-header { flex-wrap: wrap; gap: 0.5rem; }
+    }
   </style>
 </head>
 <body>
@@ -691,7 +706,7 @@
         ↻ Refresh
       </button>
       <button class="btn btn-danger" onclick="clearLogs()">
-        ✕ Clear
+        ✕ Clear model attempts
       </button>
     </div>
   </header>
@@ -761,6 +776,10 @@
     let selectedGameId = 'all';
     let currentCategory = 'all';
     let selectedLogIndex = null;
+    const auditParameters = new URLSearchParams(window.location.search);
+    const requestedRecordId = auditParameters.get('record');
+    const auditApiBase = auditParameters.get('server') ||
+      (window.location.pathname.startsWith('/audit') ? window.location.origin : 'http://localhost:8765');
 
     // Piece Unicode Map for FEN Board Preview
     const PIECE_UNICODE = {
@@ -770,10 +789,23 @@
 
     async function fetchLogs() {
       try {
-        const res = await fetch('http://localhost:8765/api/logs');
+        const res = await fetch(`${auditApiBase}/api/logs`);
         if (!res.ok) throw new Error('Failed to fetch from backend');
         const data = await res.json();
+        const selected = allLogs[selectedLogIndex];
+        const selectionKey = selected ? (selected.attempt_id || selected.record_id || selected.timestamp) : null;
         allLogs = (data.logs || []).reverse(); // latest first
+        if (selectionKey) {
+          const index = allLogs.findIndex(log => (log.attempt_id || log.record_id || log.timestamp) === selectionKey);
+          selectedLogIndex = index >= 0 ? index : null;
+        }
+        if (selectedLogIndex === null && requestedRecordId) {
+          const index = allLogs.findIndex(log => log.record_id === requestedRecordId);
+          if (index >= 0) {
+            selectedLogIndex = index;
+            selectedGameId = allLogs[index].game_id || 'all';
+          }
+        }
         document.getElementById('log-count').innerText = `${allLogs.length} Events`;
         
         partitionGames();
@@ -795,65 +827,43 @@
       gameSessions = [];
       if (allLogs.length === 0) return;
 
-      // Group chronologically (oldest to newest for session detection)
-      const chronological = [...allLogs].reverse();
-      let currentGameLogs = [];
-      let currentGameId = null;
-      let lastMoveNum = 0;
+      // Real game IDs always identify one session, even when calls interleave.
+      // Heuristics apply only to historical entries that have no game ID.
+      const groups = new Map();
+      let legacyGroup = 0;
+      let lastMove = 0;
       let lastTime = 0;
-
-      chronological.forEach((log) => {
-        const logTime = new Date(log.timestamp).getTime();
-        const moveNum = log.move_number || 0;
-        const explicitGameId = log.game_id || (log.payload && log.payload.game_id);
-
-        let isNewGame = false;
-
-        if (explicitGameId) {
-          if (currentGameId && currentGameId !== explicitGameId) {
-            isNewGame = true;
-          }
-          currentGameId = explicitGameId;
-        } else {
-          // If no explicit ID, heuristic: move reset or time jump > 3 minutes
-          if (moveNum > 0 && moveNum < lastMoveNum) {
-            isNewGame = true;
-          } else if (lastTime > 0 && (logTime - lastTime) > 3 * 60 * 1000) {
-            isNewGame = true;
-          }
+      [...allLogs].reverse().forEach(log => {
+        const time = new Date(log.timestamp).getTime();
+        const move = log.move_number || 0;
+        let id = log.game_id || (log.payload && log.payload.game_id);
+        if (!id) {
+          if ((move > 0 && move < lastMove) || (lastTime && time - lastTime > 180000)) legacyGroup++;
+          id = `legacy-${legacyGroup}`;
+          lastMove = move;
+          lastTime = time;
         }
-
-        if (isNewGame && currentGameLogs.length > 0) {
-          pushGameSession(currentGameLogs);
-          currentGameLogs = [];
-        }
-
-        currentGameLogs.push(log);
-        lastMoveNum = moveNum;
-        lastTime = logTime;
+        if (!groups.has(id)) groups.set(id, []);
+        groups.get(id).push(log);
       });
-
-      if (currentGameLogs.length > 0) {
-        pushGameSession(currentGameLogs);
-      }
+      for (const [id, logs] of groups) pushGameSession(logs, id);
 
       // Reverse so newest game is first
       gameSessions.reverse();
     }
 
-    function pushGameSession(logs) {
+    function pushGameSession(logs, id) {
       const first = logs[0];
-      const last = logs[logs.length - 1];
-      const blunders = logs.filter(l => (l.classification === 'blunder' || (l.payload && l.payload.classification === 'blunder') || (l.centipawn_loss && l.centipawn_loss >= 150))).length;
+      const moments = [...new Map(logs.map(log => [log.record_id || `${log.move_number}:${log.played_move_uci || log.type}`, log])).values()];
+      const blunders = moments.filter(l => (l.classification === 'blunder' || (l.payload && l.payload.classification === 'blunder') || (l.centipawn_loss && l.centipawn_loss >= 150))).length;
       const gameIdx = gameSessions.length + 1;
-      const id = first.game_id || `game-${gameIdx}`;
       const dateStr = new Date(first.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
       gameSessions.push({
         id: id,
         label: `Game #${gameIdx} • ${dateStr}`,
         date: new Date(first.timestamp),
-        totalMoves: logs.length,
+        totalMoves: moments.length,
         blunders: blunders,
         logs: [...logs].reverse(), // newest move first inside game
       });
@@ -862,6 +872,7 @@
     function renderGameRibbon() {
       const ribbon = document.getElementById('gameRibbon');
       const allChip = ribbon.querySelector('.game-card-chip');
+      allChip.classList.toggle('active', selectedGameId === 'all');
       document.getElementById('chipCountAll').innerText = allLogs.length;
 
       // Keep label and "All Games"
@@ -923,7 +934,7 @@
       }
 
       return baseLogs.filter(log => {
-        const isError = log.status === 'error';
+        const isError = log.status === 'error' || Boolean(log.validation_error);
         const isBlunder = log.classification === 'blunder' || (log.payload && log.payload.classification === 'blunder') || (log.centipawn_loss && log.centipawn_loss >= 150);
 
         if (currentCategory === 'blunder' && !isBlunder) return false;
@@ -933,7 +944,7 @@
 
         // Theme motif filter
         if (themeFilter !== 'all') {
-          const strThemes = JSON.stringify(log.payload || {}) + JSON.stringify(log.parsed || {});
+          const strThemes = JSON.stringify(log.payload || {}) + JSON.stringify(log.final_output || log.parsed || {}) + JSON.stringify(log.learning_record || {});
           if (!strThemes.toLowerCase().includes(themeFilter.toLowerCase())) return false;
         }
 
@@ -961,7 +972,7 @@
         item.className = `log-item ${selectedLogIndex === originalIndex ? 'active' : ''}`;
         item.onclick = () => selectLog(originalIndex);
 
-        const isError = log.status === 'error';
+        const isError = log.status === 'error' || Boolean(log.validation_error);
         const isBlunder = log.classification === 'blunder' || (log.payload && log.payload.classification === 'blunder');
         const typeClass = log.type === 'feedback' ? 'tag-feedback' : 'tag-critical';
         const typeLabel = log.type === 'feedback' ? 'Feedback' : 'Critical Q';
@@ -974,7 +985,7 @@
               ${isBlunder ? `<span class="log-tag tag-blunder">Blunder</span>` : ''}
             </div>
             <span class="status-badge ${isError ? 'status-err' : 'status-ok'}">
-              ${isError ? '✕ Error' : '✓ OK'}
+              ${isError ? '✕ Error' : log.outcome === 'rejected' ? '↻ Superseded draft' : log.outcome === 'accepted' ? '✓ Accepted' : log.learning_record ? '✓ Saved' : '✓ Returned'}
             </span>
           </div>
           <div class="log-move-headline">
@@ -1004,8 +1015,10 @@
       const view = document.getElementById('detailView');
       if (!log) return;
 
-      const isError = log.status === 'error';
-      const parsed = log.parsed || {};
+      const isError = log.status === 'error' || Boolean(log.validation_error);
+      const learning = log.learning_record;
+      const output = learning || log.final_output || log.parsed || {};
+      const outputLabel = learning ? (learning.shouldCoach ? 'Player Learning Record' : 'Game Evaluation Record') : log.final_output ? 'Accepted Coach Wording' : 'Model Draft';
       const payload = log.payload || {};
       const fen = payload.fen_after || payload.fen || payload.fen_before || '';
 
@@ -1032,34 +1045,24 @@
         </div>
 
         <div class="grid-layout">
-          <!-- Final Response Card -->
-          <div class="card ${isError ? '' : 'full-col'}">
+          <!-- This is the same record used by the player's Learning log. -->
+          <div class="card full-col">
             <div class="card-header">
-              <div class="card-title">✨ Final Synthesized Response</div>
-              <button class="copy-btn" onclick="copyText('${escapeQuotes(parsed.feedback || parsed.question || '')}')">Copy Speech</button>
+              <div class="card-title">✨ ${outputLabel}</div>
+              <button class="copy-btn" data-copy="speech">Copy Text</button>
             </div>
             <div class="card-body">
-              ${isError ? `
-                <div style="color:var(--error);background:rgba(239,68,68,0.1);padding:1rem;border-radius:var(--radius-sm);border:1px solid rgba(239,68,68,0.2);">
-                  <strong>Execution Failure:</strong> ${log.error || 'Empty or truncated response'}
-                </div>
-              ` : `
-                <div class="speech-bubble">
-                  <div style="font-size:1.1rem;font-weight:800;margin-bottom:0.4rem;color:#fff;">${parsed.title || 'Untitled Advice'}</div>
-                  <div>${parsed.feedback || parsed.question || 'No spoken text returned'}</div>
-                </div>
-                ${parsed.lesson ? `
-                  <div class="lesson-box">
-                    <span class="lesson-badge">Key Takeaway</span>
-                    <span>${parsed.lesson}</span>
-                  </div>
-                ` : ''}
-                ${parsed.themes && parsed.themes.length > 0 ? `
-                  <div class="theme-tags-container">
-                    ${parsed.themes.map(t => `<span class="theme-tag">${t}</span>`).join('')}
-                  </div>
-                ` : ''}
-              `}
+              ${isError ? `<div style="color:var(--error);margin-bottom:1rem;">Attempt failed: ${escapeHtml(log.validation_error || log.error || 'Empty response')}</div>` : ''}
+              <div style="color:var(--text-dim);margin-bottom:1rem;font-size:0.8rem;">
+                ${learning ? `Shared with ${learning.shouldCoach ? 'Learning log and game reports' : 'game reports'} · ${escapeHtml(learning.wordingSource || 'legacy')} wording${learning.explanationPending ? ' · explanation pending' : ''}` : log.outcome === 'rejected' ? 'This draft was superseded or rejected; it was not accepted coaching.' : log.final_output ? 'Validated wording returned by the coach; player review has not been saved yet.' : 'Historical model output; no player learning record was linked.'}
+              </div>
+              <div class="speech-bubble">
+                <div style="font-size:1.1rem;font-weight:800;margin-bottom:0.4rem;color:#fff;">${escapeHtml(output.title || 'Untitled Advice')}</div>
+                <div>${escapeHtml(output.feedback || output.question || 'No coaching text recorded')}</div>
+              </div>
+              ${output.lesson ? `<div class="lesson-box"><span class="lesson-badge">Key Takeaway</span><span>${escapeHtml(output.lesson)}</span></div>` : ''}
+              ${Array.isArray(output.themes) && output.themes.length ? `<div class="theme-tags-container">${output.themes.map(theme => `<span class="theme-tag">${escapeHtml(theme)}</span>`).join('')}</div>` : ''}
+              ${log.record_id ? `<div style="color:var(--text-dim);margin-top:1rem;font-size:0.75rem;">Record: ${escapeHtml(log.record_id)}${log.attempt_number ? ` · Attempt ${log.attempt_number} · ${escapeHtml(log.outcome || '')}` : ''}${log.link_source === 'legacy_position' ? ' · Historical match by game, position, and move' : ''}</div>` : ''}
             </div>
           </div>
 
@@ -1083,13 +1086,14 @@
           </div>
 
           <!-- Raw Output JSON -->
+          ${log.final_output ? `<div class="card"><div class="card-header"><div class="card-title">Accepted Wording for This Call</div></div><div class="card-body"><pre><code>${escapeHtml(JSON.stringify(log.final_output, null, 2))}</code></pre></div></div>` : ''}
           <div class="card">
             <div class="card-header">
               <div class="card-title">📥 Model Output (Raw JSON)</div>
-              <button class="copy-btn" onclick="copyText('${escapeQuotes(log.raw_output || '')}')">Copy JSON</button>
+              <button class="copy-btn" data-copy="raw">Copy JSON</button>
             </div>
             <div class="card-body">
-              <pre><code>${escapeHtml(log.raw_output || 'No output recorded')}</code></pre>
+              <pre><code>${escapeHtml(log.raw_output || 'No raw model output was recorded for this learning moment.')}</code></pre>
             </div>
           </div>
 
@@ -1114,6 +1118,8 @@
           </div>
         </div>
       `;
+      view.querySelector('[data-copy="speech"]').onclick = () => copyText(output.feedback || output.question || '');
+      view.querySelector('[data-copy="raw"]').onclick = () => copyText(log.raw_output || '');
     }
 
     function renderGameSummaryBanner() {
@@ -1178,9 +1184,10 @@
     }
 
     async function clearLogs() {
-      if (!confirm('Are you sure you want to clear all stored coach logs?')) return;
+      if (!confirm('Clear recorded model attempts? Saved Learning records and game reports will be preserved.')) return;
       try {
-        await fetch('http://localhost:8765/api/logs/clear', { method: 'POST' });
+        const response = await fetch(`${auditApiBase}/api/logs/clear`, { method: 'POST' });
+        if (!response.ok) throw new Error('Could not clear model attempts');
         selectedLogIndex = null;
         fetchLogs();
       } catch (err) {
@@ -1196,11 +1203,6 @@
     function escapeHtml(str) {
       if (typeof str !== 'string') return '';
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    function escapeQuotes(str) {
-      if (typeof str !== 'string') return '';
-      return str.replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n');
     }
 
     // Auto refresh every 2.5s

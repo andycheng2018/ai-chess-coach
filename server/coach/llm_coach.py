@@ -8,6 +8,8 @@ from typing import Any
 
 from openai import OpenAI
 
+from .history import audit_call, record_attempt, timestamp
+
 from coach.tactic_verifier import THEME_PRIORITY
 
 
@@ -570,6 +572,7 @@ class LLMCoach:
             encoding="utf-8"
         ).strip()
 
+    @audit_call("feedback")
     def create_feedback(
         self,
         analysis: dict[str, Any],
@@ -577,6 +580,7 @@ class LLMCoach:
         language: str = "en",
         recent_feedback: list[str] | None = None,
         game_id: str = "",
+        record_id: str = "",
     ) -> dict[str, Any]:
         normalized_detail = str(
             detail
@@ -731,18 +735,13 @@ class LLMCoach:
             + recent_instruction
         )
 
-        import time
-        from datetime import datetime
-        log_dir = Path(__file__).resolve().parent.parent.parent / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "coach_logs.jsonl"
 
         def request_data(
             correction: str = "",
         ) -> dict[str, Any]:
             instructions_text = combined_instructions + correction
             log_entry = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": timestamp(),
                 "type": "feedback",
                 "game_id": game_id,
                 "model": self.model,
@@ -786,7 +785,7 @@ class LLMCoach:
                         * 5,
                     ),
 
-                    store=True,
+                    store=False,
                 )
 
                 text = response.output_text.strip()
@@ -817,8 +816,7 @@ class LLMCoach:
                 log_entry["error"] = str(e)
                 raise
             finally:
-                with open(log_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                record_attempt(log_entry)
 
         data = request_data()
 
@@ -909,12 +907,14 @@ class LLMCoach:
             "themes": themes,
         }
 
+    @audit_call("critical_question")
     def create_critical_question(
         self,
         position: dict[str, Any],
         language: str = "en",
         recent_questions: list[str] | None = None,
         game_id: str = "",
+        record_id: str = "",
     ) -> dict[str, str]:
         """
         Turn a Stockfish-confirmed critical position into one short
@@ -1084,11 +1084,6 @@ Return JSON only:
 }
 """.strip()
 
-        import time
-        from datetime import datetime
-        log_dir = Path(__file__).resolve().parent.parent.parent / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "coach_logs.jsonl"
         
         instructions_text = (
             instructions
@@ -1098,7 +1093,7 @@ Return JSON only:
             ]
         )
         log_entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": timestamp(),
             "type": "critical_question",
             "game_id": game_id,
             "model": self.model,
@@ -1128,7 +1123,7 @@ Return JSON only:
                     },
                 },
                 max_output_tokens=1500,
-                store=True,
+                store=False,
             )
 
             text = response.output_text.strip()
@@ -1149,8 +1144,7 @@ Return JSON only:
             log_entry["error"] = str(e)
             raise
         finally:
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+            record_attempt(log_entry)
 
         title = str(
             data.get(

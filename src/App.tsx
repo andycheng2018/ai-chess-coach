@@ -8,10 +8,12 @@ import {
   analyzeMove,
   checkCriticalPosition,
   explainMove,
+  CONTROL_URL,
   type ChessTheme,
   type CoachLanguage,
   type CoachResult,
 } from './coach';
+import { cacheHistoryRecords, mergeHistoryRecords, readHistoryRecords, syncCachedHistory, syncHistory } from './coachHistory';
 import {
   checkTtsStatus,
   markCoachVoiceIdle,
@@ -40,7 +42,6 @@ import {
 
 const BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'MonkeyKingZach';
 const ACTIVE_GAME_STORAGE_KEY = 'ai-chess-coach.active-game.v1';
-const LEARNING_LOG_STORAGE_KEY = 'ai-chess-coach.learning-log.v2';
 const TIME_CONTROL_STORAGE_KEY = 'ai-chess-coach.time-control.v1';
 
 type StoredGame = { gameId: string; username?: string; savedAt: number };
@@ -61,15 +62,6 @@ type CoachNote =
     language?: CoachLanguage;
   };
 type ReviewTarget = CoachResult & { playerColor?: 'white' | 'black' };
-type StoredLearningSession = { gameId: string; username?: string; updatedAt: number; notes: CoachNote[] };
-
-type StoredEvaluationSession = {
-  gameId: string;
-  username?: string;
-  updatedAt: number;
-  evaluations: CoachResult[];
-};
-
 type GameReport = {
   strengths: string[];
   improvements: string[];
@@ -92,73 +84,6 @@ type CriticalPrompt = {
   question: string;
   ply: number;
 };
-
-const GAME_EVALUATION_STORAGE_KEY =
-  'ai-chess-coach.game-evaluations.v1';
-
-function readEvaluationSessions(): StoredEvaluationSession[] {
-  try {
-    const raw = window.localStorage.getItem(
-      GAME_EVALUATION_STORAGE_KEY,
-    );
-
-    if (!raw) return [];
-
-    const parsed = JSON.parse(raw);
-
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed.filter(
-      (session): session is StoredEvaluationSession =>
-        Boolean(
-          session &&
-          typeof session.gameId === 'string' &&
-          Array.isArray(session.evaluations),
-        ),
-    );
-  } catch {
-    return [];
-  }
-}
-
-function readGameEvaluations(
-  gameId: string,
-): CoachResult[] {
-  return (
-    readEvaluationSessions().find(
-      (session) => session.gameId === gameId,
-    )?.evaluations || []
-  );
-}
-
-function storeGameEvaluations(
-  gameId: string,
-  username: string | undefined,
-  evaluations: CoachResult[],
-) {
-  try {
-    const existing = readEvaluationSessions().filter(
-      (session) => session.gameId !== gameId,
-    );
-
-    const next: StoredEvaluationSession[] = [
-      {
-        gameId,
-        username,
-        updatedAt: Date.now(),
-        evaluations,
-      },
-      ...existing,
-    ].slice(0, 8);
-
-    window.localStorage.setItem(
-      GAME_EVALUATION_STORAGE_KEY,
-      JSON.stringify(next),
-    );
-  } catch {
-    // localStorage may be unavailable.
-  }
-}
 
 function classificationWeight(
   classification: CoachResult['classification'],
@@ -1405,35 +1330,6 @@ function forgetStoredGame() {
   try { window.localStorage.removeItem(ACTIVE_GAME_STORAGE_KEY); } catch { /* no-op */ }
 }
 
-function readLearningSessions(): StoredLearningSession[] {
-  try {
-    const raw = window.localStorage.getItem(LEARNING_LOG_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((session): session is StoredLearningSession => Boolean(
-      session && typeof session.gameId === 'string' && Array.isArray(session.notes),
-    ));
-  } catch {
-    return [];
-  }
-}
-
-function readLearningNotes(gameId: string): CoachNote[] {
-  return readLearningSessions().find((session) => session.gameId === gameId)?.notes || [];
-}
-
-function storeLearningNotes(gameId: string, username: string | undefined, notes: CoachNote[]) {
-  try {
-    const existing = readLearningSessions().filter((session) => session.gameId !== gameId);
-    const next: StoredLearningSession[] = [
-      { gameId, username, updatedAt: Date.now(), notes: notes.slice(0, 16) },
-      ...existing,
-    ].slice(0, 8);
-    window.localStorage.setItem(LEARNING_LOG_STORAGE_KEY, JSON.stringify(next));
-  } catch { /* no-op */ }
-}
-
 function readPreferredTimeControl(): TimeControlId {
   try {
     const value = window.localStorage.getItem(TIME_CONTROL_STORAGE_KEY) as TimeControlId | null;
@@ -1742,8 +1638,21 @@ export default function App() {
   const [coachExplanationPending, setCoachExplanationPending] = useState(false);
   const [playerMoveAnalysisPending, setPlayerMoveAnalysisPending] = useState(false);
   const [coachError, setCoachError] = useState('');
-  const [coachNotes, setCoachNotes] = useState<CoachNote[]>([]);
   const [moveEvaluations, setMoveEvaluations] = useState<CoachResult[]>([]);
+  const [historyStatus, setHistoryStatus] = useState<'syncing' | 'synced' | 'offline' | 'unavailable'>('syncing');
+  const historyRevisionRef = useRef(0);
+  // Learning log and game reports are projections of the same move records.
+  const coachNotes: CoachNote[] = moveEvaluations
+    .filter(record => record.shouldCoach)
+    .sort((a, b) => b.ply - a.ply)
+    .slice(0, 16)
+    .map(record => ({ ...record, gameId: record.gameId || gameId || '',
+      savedAt: record.savedAt || 0, playerColor: record.playerColor || myColor }));
+
+  useEffect(() => {
+    void syncCachedHistory().catch(error => console.warn('Coach history sync postponed:', error));
+  }, []);
+
   const [puzzleOpen, setPuzzleOpen] = useState(false);
   const [puzzleIndex, setPuzzleIndex] = useState(0);
   const [puzzleFen, setPuzzleFen] = useState('');
@@ -2473,15 +2382,16 @@ export default function App() {
     setWinner(null);
     setGameOverOpen(false);
     if (gameId) {
-      setCoachNotes(
-        readLearningNotes(gameId),
-      );
-
-      setMoveEvaluations(
-        readGameEvaluations(gameId),
-      );
+      setMoveEvaluations(readHistoryRecords(gameId));
+      setHistoryStatus('syncing');
+      void syncHistory(gameId).then(records => {
+        if (gameIdRef.current !== gameId) return;
+        setMoveEvaluations(current => mergeHistoryRecords(records, current));
+        setHistoryStatus('synced');
+      }).catch(() => {
+        if (gameIdRef.current === gameId) setHistoryStatus('offline');
+      });
     } else {
-      setCoachNotes([]);
       setMoveEvaluations([]);
     }
     setRollbackSignal((value) => value + 1);
@@ -2568,28 +2478,21 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!gameId || !coachNotes.length) return;
-    storeLearningNotes(gameId, account?.username, coachNotes);
-  }, [gameId, account?.username, coachNotes]);
-
-  useEffect(() => {
-    if (
-      !gameId ||
-      !moveEvaluations.length
-    ) {
-      return;
-    }
-
-    storeGameEvaluations(
-      gameId,
-      account?.username,
-      moveEvaluations,
-    );
-  }, [
-    gameId,
-    account?.username,
-    moveEvaluations,
-  ]);
+    if (!gameId || !moveEvaluations.length || moveEvaluations.some(record => record.gameId !== gameId)) return;
+    const revision = ++historyRevisionRef.current;
+    const cached = cacheHistoryRecords(gameId, account?.username, moveEvaluations);
+    setHistoryStatus('syncing');
+    void syncHistory(gameId, moveEvaluations).then(records => {
+      if (gameIdRef.current !== gameId || historyRevisionRef.current !== revision) return;
+      setMoveEvaluations(current => {
+        const merged = mergeHistoryRecords(current, records);
+        return JSON.stringify(current) === JSON.stringify(merged) ? current : merged;
+      });
+      setHistoryStatus('synced');
+    }).catch(() => {
+      if (gameIdRef.current === gameId && historyRevisionRef.current === revision) setHistoryStatus(cached ? 'offline' : 'unavailable');
+    });
+  }, [gameId, account?.username, moveEvaluations]);
 
   function speak(
     text: string,
@@ -2705,11 +2608,12 @@ export default function App() {
             job.detail,
             controller.signal,
             job.language,
+            gameId || undefined,
           );
 
           // A newer board position arrived while this Stockfish request was
           // running. Do not display or speak analysis for the old position.
-          if (job.id !== latestCoachJobIdRef.current) {
+          if (job.id !== latestCoachJobIdRef.current || gameIdRef.current !== gameId) {
             continue;
           }
 
@@ -2833,22 +2737,9 @@ export default function App() {
           };
 
           const saveNote = (value: CoachResult) => {
-            setCoachNotes((current) => {
-              const note: CoachNote = {
-                ...value,
-                gameId: analysisGameId || '',
-                savedAt: Date.now(),
-                playerColor: myColor,
-                language: job.language,
-              };
-
-              return [
-                note,
-                ...current.filter(
-                  (item) => item.ply !== note.ply,
-                ),
-              ].slice(0, 16);
-            });
+            const record: CoachNote = { ...value, gameId: analysisGameId || '',
+              savedAt: Date.now(), playerColor: myColor, language: job.language };
+            setMoveEvaluations(current => mergeHistoryRecords(current, [record]));
           };
 
           saveNote(fastResult);
@@ -2868,7 +2759,7 @@ export default function App() {
               job.language,
               recentFeedback,
               undefined,
-              gameIdRef.current || undefined,
+              analysisGameId || undefined,
             )
               .then((wording) => {
                 if (job.id !== latestCoachJobIdRef.current) {
@@ -2886,17 +2777,8 @@ export default function App() {
                   ...result,
                   ...wording,
                   explanationPending: false,
+                  wordingSource: 'llm',
                 };
-
-                setMoveEvaluations((current) =>
-                  current
-                    .map((item) =>
-                      item.ply === enriched.ply
-                        ? enriched
-                        : item,
-                    )
-                    .sort((a, b) => a.ply - b.ply),
-                );
 
                 saveNote(enriched);
 
@@ -2927,7 +2809,7 @@ export default function App() {
                 speak(enriched.feedback, job.language);
               })
               .catch((error) => {
-                if (job.id !== latestCoachJobIdRef.current) {
+                if (job.id !== latestCoachJobIdRef.current || gameIdRef.current !== analysisGameId) {
                   return;
                 }
 
@@ -2951,6 +2833,7 @@ export default function App() {
                   ...fastResult,
                   ...fallback,
                   explanationPending: false,
+                  wordingSource: 'fallback',
                 };
 
                 saveNote(unavailable);
@@ -2980,6 +2863,7 @@ export default function App() {
               ...fastResult,
               ...fallback,
               explanationPending: false,
+              wordingSource: 'fallback',
             };
 
             setCoachExplanationPending(false);
@@ -3727,7 +3611,6 @@ export default function App() {
     setPlayers({ white: { name: 'White' }, black: { name: 'Black' } });
     setClock({ enabled: true, white: 600000, black: 600000, increment: 0, updatedAt: Date.now() });
     setCoachResult(null);
-    setCoachNotes([]);
     setCoachError('');
     setCoachExplanationPending(false);
     setPlayerMoveAnalysisPending(false);
@@ -4676,7 +4559,7 @@ export default function App() {
         </section>
 
         {(gameId || coachNotes.length > 0) && <section className="card learning-card">
-          <div className="section-title learning-title"><span>3</span><div>Learning log{!gameId && coachNotes.length ? <small>Saved from your last game</small> : null}</div></div>
+          <div className="section-title learning-title"><span>3</span><div>Learning log<small>{historyStatus === 'synced' ? 'Saved to coaching history' : historyStatus === 'offline' ? 'Saved on this device · waiting to sync' : historyStatus === 'unavailable' ? 'History could not be saved' : 'Syncing coaching history…'}</small></div></div>
           {coachNotes.length === 0 ? <p className="muted">Your important coaching moments will collect here so you can review the exact position later.</p> : <div className="lesson-list">
             {orderedCoachNotes.map((note) => <button
               type="button"
@@ -4851,6 +4734,11 @@ export default function App() {
           </div>
 
           <p>{reviewTarget.feedback}</p>
+          {reviewTarget.recordId ? <a
+            href={`${CONTROL_URL}/audit?record=${encodeURIComponent(reviewTarget.recordId)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >Inspect coaching record</a> : null}
 
           {reviewTarget.themes?.length ? (
             <div
