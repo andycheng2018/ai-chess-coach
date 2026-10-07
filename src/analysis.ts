@@ -141,6 +141,7 @@ export async function analyzeBoard(workspace: AnalysisWorkspace, detail: CoachDe
       method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
       body: JSON.stringify({ rootFen: workspace.rootFen, moves: analysisPath(workspace).map(node => node.uci), detail }),
     });
+    if (response.status === 404) throw new Error('The running Chess Coach backend is out of date. Stop the app in its Terminal window (Control-C), reopen Open Chess Coach.command, then retry analysis.');
     const data = await response.json();
     if (response.ok) return data;
     if (response.status !== 503 || !String(data.message).includes('engine is busy') || attempt >= 4) throw new Error(data.message || 'Analysis failed.');

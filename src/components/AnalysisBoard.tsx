@@ -175,7 +175,7 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
         <aside className="analysis-tools">
           <section className="card analysis-engine">
             <div className="analysis-engine-heading"><h3>Stockfish</h3><label><input type="checkbox" checked={engineEnabled} onChange={event => setEngineEnabled(event.target.checked)} /> Engine</label></div>
-            <div className="analysis-score" role="status"><strong>{score}</strong><span>{thinking ? 'Analyzing…' : !engineEnabled ? 'Engine paused' : result?.terminal ? result.reason?.replaceAll('_', ' ') : result ? `Depth ${result.lines[0]?.depth || 0}` : 'Ready'}</span></div>
+            <div className="analysis-score" role="status"><strong>{score}</strong><span>{thinking ? 'Analyzing…' : !engineEnabled ? 'Engine paused' : error ? 'Analysis unavailable' : result?.terminal ? result.reason?.replaceAll('_', ' ') : result ? `Depth ${result.lines[0]?.depth || 0}` : 'Ready'}</span></div>
             <p className="fine-print">Positive scores favor White; negative scores favor Black. M means forced mate.</p>
             <div className="analysis-detail" role="group" aria-label="Engine analysis effort">{(['quick', 'balanced', 'deep'] as const).map(value => <button
               className={`ghost ${detail === value ? 'selected' : ''}`} key={value} aria-pressed={detail === value} onClick={() => setDetail(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>

@@ -103,3 +103,10 @@ test('cancelling a busy-engine retry stops further analysis requests', async () 
   await assert.rejects(promise,/Aborted/);
   assert.equal(requests,1);
 });
+
+test('an old backend gives restart instructions instead of an unhelpful 404', async () => {
+  let requests=0;
+  const {analysis:a}=environment(null,async()=> { requests++; return {ok:false,status:404}; });
+  await assert.rejects(a.analyzeBoard(a.emptyAnalysis(),'balanced',new AbortController().signal),/backend is out of date.*Control-C.*Open Chess Coach.command/);
+  assert.equal(requests,1);
+});
