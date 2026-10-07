@@ -571,6 +571,8 @@ class LichessBotRuntime:
         if color:
             path += f"?color={color}"
 
+        # gameStart can arrive while the accept request is in flight.
+        started_after = time.monotonic()
         response = self._request(
             "POST",
             path,
@@ -601,7 +603,6 @@ class LichessBotRuntime:
 
         # SenseRobot/open-room flow keeps using the bot event stream because
         # it is a different entry path and may include an explicit join color.
-        started_after = time.monotonic() - 0.25
         game_id = self._wait_for_game_start(
             opponent=opponent,
             since=started_after,

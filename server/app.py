@@ -1423,6 +1423,7 @@ class Handler(BaseHTTPRequestHandler):
                 warning = str(exc)
             self._send(200, {
                 "ok": True,
+                "coach": {"configured": bool(os.environ.get("OPENAI_API_KEY", "").strip())},
                 "stockfish": stockfish,
                 "bot": runtime.status(),
                 "coachTimeMs": COACH_TIME_MS,

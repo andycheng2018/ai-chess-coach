@@ -1,9 +1,11 @@
-import { scanSenseRoom } from './senseScanner';
+import { scanSenseRoomUrl } from './senseScanner';
+import { SenseRobotSetup } from './components/SenseRobotSetup';
+import { isRememberedSenseGame, readSenseSetup, saveSenseSetup } from './senseSetup';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Move, type Square } from 'chess.js';
 import { ChessBoard, type Arrow } from './components/ChessBoard';
 import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativeOAuth } from './auth';
-import { acceptBotChallenge, getBotStatus, getCachedGameState, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
+import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import {
   analyzeMove,
   checkCriticalPosition,
@@ -40,7 +42,7 @@ import {
   type StreamEvent,
 } from './lichess';
 
-const BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'MonkeyKingZach';
+const DEFAULT_BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'MonkeyKingZach';
 const ACTIVE_GAME_STORAGE_KEY = 'ai-chess-coach.active-game.v1';
 const TIME_CONTROL_STORAGE_KEY = 'ai-chess-coach.time-control.v1';
 
@@ -1598,19 +1600,24 @@ export default function App() {
   const [token, setToken] = useState<string | null>(getToken());
   const [account, setAccount] = useState<Account | null>(null);
   const [status, setStatus] = useState('Ready');
-  const [level, setLevel] = useState<(typeof LEVELS)[number]['id']>('developing');
+  const [level, setLevel] = useState<(typeof LEVELS)[number]['id']>(() =>
+    LEVELS.find(item => item.id === readSenseSetup().level)?.id || 'developing');
   const [timeControlId, setTimeControlId] = useState<TimeControlId>(readPreferredTimeControl);
   const [currentTimeControlLabel, setCurrentTimeControlLabel] = useState('10 min');
   const [preferredColor, setPreferredColor] = useState<'random' | 'white' | 'black'>('random');
   const [bot, setBot] = useState<BotRuntimeStatus>({ running: false, connected: false });
+  // The backend owns the training bot identity, including after validation.
+  const BOT_USERNAME = bot.username || DEFAULT_BOT_USERNAME;
+  const [senseSetupOpen, setSenseSetupOpen] = useState(() => readSenseSetup().open);
+  const [gameStreamConnected, setGameStreamConnected] = useState(false);
+  const [senseConnectionError, setSenseConnectionError] = useState('');
   const [startingGame, setStartingGame] = useState(false);
   const [scanningRoom, setScanningRoom] = useState(false);
   const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
-  // SenseRobot mode is intentionally NOT restored from localStorage.
-  // A game becomes a SenseRobot game only after this app successfully
-  // scans and joins a SenseRobot QR room in the current session.
+  // A remembered room is restored only after Lichess confirms that this
+  // account and the training bot are the players in that exact joined game.
   const [senseRobotGameId, setSenseRobotGameId] = useState<string | null>(null);
   const gameIdRef = useRef<string | null>(null);
   const [initialFen, setInitialFen] = useState('startpos');
@@ -1970,7 +1977,7 @@ export default function App() {
         if (!disposed && done) setToken(getToken());
       })
       .catch((error) => {
-        if (!disposed) setStatus(String(error));
+        if (!disposed) { setStatus(String(error)); setSenseConnectionError(String(error)); }
       });
 
     // Native iOS callback delivered through chessbuddy://oauth/callback.
@@ -1982,6 +1989,7 @@ export default function App() {
       },
       (error) => {
         if (!disposed) setStatus(error);
+        if (!disposed) setSenseConnectionError(error);
       },
     ).then((removeListener) => {
       if (disposed) {
@@ -2003,6 +2011,7 @@ export default function App() {
       .then(setAccount)
       .catch((error) => {
         setStatus(`Lichess account error: ${String(error)}`);
+        setSenseConnectionError(`Could not confirm your Lichess account: ${String(error)}. Please sign in again.`);
         logout();
         setToken(null);
       });
@@ -2045,7 +2054,7 @@ export default function App() {
       if (!cancelled) setRecoveryChecked(true);
     });
     return () => { cancelled = true; };
-  }, [token, account, setActiveGameId]);
+  }, [token, account, setActiveGameId, BOT_USERNAME]);
 
   useEffect(() => {
     if (!token || !account) return;
@@ -2076,7 +2085,7 @@ export default function App() {
           if (opponent === BOT_USERNAME.toLowerCase()) {
             // A normal Lichess gameStart must stay a normal online game.
             // Preserve SenseRobot mode only when this is the exact game
-            // that was activated by a successful QR scan.
+            // that was activated by a successful room join.
             const startedGameId = event.game.id;
 
             setSenseRobotGameId((current) =>
@@ -2100,7 +2109,7 @@ export default function App() {
       () => setStatus('Reconnecting to Lichess…'),
     );
     return () => controller.abort();
-  }, [token, account, setActiveGameId]);
+  }, [token, account, setActiveGameId, BOT_USERNAME]);
 
   useEffect(() => {
     if (!token || !gameId || !account) return;
@@ -2169,13 +2178,25 @@ export default function App() {
           forgetStoredGame();
           gameIdRef.current = null;
           setGameId(null);
+          setSenseRobotGameId(null);
+          setGameStreamConnected(false);
           setGameStatus('idle');
           setRecoveryChecked(true);
           setStatus('The saved Lichess game belongs to a different account, so it was not reopened.');
+          setSenseConnectionError('This room belongs to a different Lichess account. Check the account linked in SenseRobot, then create a new room.');
           controller.abort();
           return;
         }
         const color: 'white' | 'black' = whiteName.toLowerCase() === me ? 'white' : 'black';
+        const opponent = color === 'white' ? blackName : whiteName;
+        const remembered = isRememberedSenseGame(readSenseSetup(), gameId, account.username);
+        if (remembered && opponent.toLowerCase() === BOT_USERNAME.toLowerCase()) {
+          setSenseRobotGameId(gameId);
+        } else if (opponent.toLowerCase() !== BOT_USERNAME.toLowerCase()) {
+          setSenseRobotGameId(null);
+          if (remembered) setSenseConnectionError('This game has a different opponent. Finish it and create a new room for the training bot.');
+        }
+        setGameStreamConnected(true);
         setPlayers({
           white: { name: whiteName, rating: event.white?.rating, title: event.white?.title },
           black: { name: blackName, rating: event.black?.rating, title: event.black?.title },
@@ -2191,14 +2212,17 @@ export default function App() {
           setStatus('Training game connected.');
         }
       } else if (event.type === 'gameState') {
+        setGameStreamConnected(true);
         applyState(event);
       }
     };
     void retryingStream(
       (signal) => streamGame(token, gameId, onGameEvent, signal),
       controller.signal,
-      () => setStatus('Reconnecting to the game…'),
+      () => { setGameStreamConnected(false); setStatus('Reconnecting to the game…'); },
       (error) => {
+        setGameStreamConnected(false);
+        setSenseConnectionError(`The game stream could not connect: ${String(error)}. Check your Lichess connection and account.`);
         setRecoveryChecked(true);
         if (error instanceof LichessHttpError && error.status === 404) {
           void getPlayingGames(token).then((games) => {
@@ -2222,8 +2246,8 @@ export default function App() {
         setStatus(`Game connection stopped: ${String(error)}`);
       },
     );
-    return () => controller.abort();
-  }, [token, gameId, account, setActiveGameId]);
+    return () => { controller.abort(); setGameStreamConnected(false); };
+  }, [token, gameId, account, setActiveGameId, BOT_USERNAME]);
 
   useEffect(() => {
     if (!gameId) return;
@@ -3372,7 +3396,7 @@ export default function App() {
     setStatus('Checking for an existing training game…');
 
     // Normal Play is always a regular Lichess online game.
-    // Only the QR scanner is allowed to enable SenseRobot mode.
+    // Only a verified SenseRobot room join enables physical-board mode.
     setSenseRobotGameId(null);
 
     try {
@@ -3486,72 +3510,39 @@ export default function App() {
     }
   }
 
-  async function scanSenseRobotRoom() {
-    if (
-      scanningRoom ||
-      startingGame ||
-      activeGame ||
-      gameId ||
-      !recoveryChecked
-    ) {
-      return;
+  async function connectSenseRobotRoom(roomUrl?: string): Promise<string> {
+    if (!account || !token) throw new Error('Sign in with your robot’s Lichess account first.');
+    if (scanningRoom || startingGame || activeGame || gameId || !recoveryChecked) {
+      throw new Error('Wait for the current game check, or finish your open game first.');
     }
-
     setScanningRoom(true);
-
+    setSenseConnectionError('');
     try {
+      setStatus(roomUrl ? 'Checking room link…' : 'Scan the SenseRobot game-room QR…');
+      const room = parseSenseRoomUrl(roomUrl ?? await scanSenseRoomUrl());
       setStatus('Preparing coach bot…');
-
-      // Always apply the difficulty currently selected
-      // in Chess Buddy before joining the SenseRobot room.
-      const levelState = await setBotLevel(level);
-      setBot(levelState);
-
-      let state = levelState;
-
-      if (!state.running) {
-        state = await startBot();
-        setBot(state);
-      }
-
-      if (!state.connected) {
-        state = await waitForBotReady();
-        setBot(state);
-      }
-
-      setStatus('Scan the SenseRobot room QR code…');
-
-      const joined = await scanSenseRoom();
-
+      let state = await setBotLevel(level);
+      setBot(state);
+      if (!state.running) { state = await startBot(); setBot(state); }
+      if (!state.connected) { state = await waitForBotReady(); setBot(state); }
+      setStatus('Joining your SenseRobot room…');
+      const joined = await joinSenseRoom(room.challengeId, room.color, account.username);
       setBot(joined);
-
-      if (!joined.gameId) {
-        throw new Error(
-          'The room was joined, but Lichess did not report a game.'
-        );
-      }
-
-      setActiveGameId(joined.gameId);
-
-      // This successful QR scan is the one and only activation path
-      // for SenseRobot mode.
+      if (!joined.gameId) throw new Error('Lichess has not reported a game for this room yet.');
+      // Save the successful join before attaching the game stream. A redirect
+      // or refresh may resume this exact room, but never an unrelated game.
+      saveSenseSetup({ ...readSenseSetup(), open: true, joinedGameId: joined.gameId,
+        joinedUsername: account.username, level });
+      setGameStreamConnected(false);
       setSenseRobotGameId(joined.gameId);
-
+      setActiveGameId(joined.gameId);
       setGameStatus('recovering');
-
-      setStatus(
-        `SenseRobot room joined as ${BOT_USERNAME}.`
-      );
+      setStatus(`Room joined. Waiting for ${account.username} and ${joined.username || BOT_USERNAME} to sync…`);
+      return joined.gameId;
     } catch (error) {
-      setStatus(
-        `Could not join SenseRobot room: ${error instanceof Error
-          ? error.message
-          : String(error)
-        }`
-      );
-    } finally {
-      setScanningRoom(false);
-    }
+      setStatus(`Could not join SenseRobot room: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    } finally { setScanningRoom(false); }
   }
 
   function requestTakeback() {
@@ -3626,15 +3617,31 @@ export default function App() {
     setStatus('Ready for another training game.');
   }
 
+  const senseSetup = <SenseRobotSetup
+    open={senseSetupOpen} onClose={() => setSenseSetupOpen(false)}
+    username={account?.username || null} bot={bot} level={level} levels={LEVELS}
+    onLevel={next => { if (LEVELS.some(item => item.id === next)) void changeLevel(next as typeof level); }}
+    onLogin={async () => { setSenseConnectionError(''); await loginWithLichess(); }} onJoin={connectSenseRobotRoom}
+    onRetryBot={async () => { setBot(await startBot()); }}
+    gameId={gameId} verified={isSenseRobotGame && isCoachGame && gameStreamConnected && Boolean(account)}
+    busy={scanningRoom || startingGame} recoveryChecked={recoveryChecked}
+    moves={position.plyCount} connectionMessage={status}
+    connectionError={senseConnectionError}
+    signingIn={Boolean(token && !account)}
+  />;
+
   if (!token) {
     return <main className="landing">
       <div className="hero-card">
         <span className="eyebrow">AI CHESS COACH</span>
         <h1>Play a bot.<br />Learn every game.</h1>
         <p>Challenge the training bot on Lichess and get immediate, position-specific coaching when a move needs attention.</p>
-        <button className="primary" onClick={() => void loginWithLichess()}>Sign in with Lichess</button>
+        <button className="primary" onClick={() => void loginWithLichess().catch(error => setStatus(String(error)))}>Sign in with Lichess</button>
+        <button className="ghost wide" onClick={() => setSenseSetupOpen(true)}>Connect my SenseRobot</button>
+        {status !== 'Ready' && <p role="status" className="fine-print">{status}</p>}
         <p className="fine-print">AI coaching is enabled only in games against the designated training bot.</p>
       </div>
+      {senseSetup}
     </main>;
   }
 
@@ -4033,9 +4040,11 @@ export default function App() {
   }
 
   return <div className="app-shell">
+    {senseSetup}
     <header>
       <div className="brand-row"><span className="eyebrow">AI CHESS COACH</span><strong>{account?.username || 'Connecting…'}</strong></div>
       <div className="header-actions">
+        <button className="ghost" onClick={() => setSenseSetupOpen(true)}>SenseRobot setup</button>
         <span className={`status-dot ${bot.connected ? 'online' : 'offline'}`} />
         <span className="header-status">{status}</span>
         {bot.lastMoveMs != null ? <span className="speed-pill">bot {bot.lastMoveMs} ms</span> : null}
@@ -4135,18 +4144,8 @@ export default function App() {
             {!recoveryChecked ? 'Checking active game…' : startingGame ? 'Starting…' : `Play ${BOT_USERNAME}`}
           </button>
 
-          <button
-            className="ghost wide"
-            disabled={
-              scanningRoom ||
-              startingGame ||
-              !recoveryChecked
-            }
-            onClick={() => void scanSenseRobotRoom()}
-          >
-            {scanningRoom
-              ? 'Scanning…'
-              : '▣ Scan SenseRobot Room'}
+          <button className="ghost wide" disabled={startingGame} onClick={() => setSenseSetupOpen(true)}>
+            Connect my SenseRobot
           </button>
         </section>}
 

@@ -23,6 +23,69 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .58; }
 a { color: inherit; }
 
+.sense-setup-backdrop {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  padding: 20px; background: rgba(12, 13, 11, .8); backdrop-filter: blur(8px);
+}
+.sense-setup {
+  width: min(100%, 620px); max-height: calc(100dvh - 40px); overflow-y: auto;
+  padding: clamp(20px, 4vw, 32px); border-radius: 18px;
+  background: var(--panel); border: 1px solid var(--border); box-shadow: 0 25px 90px #0008;
+}
+.sense-setup:focus { outline: none; }
+.sense-heading { display: flex; gap: 15px; align-items: start; justify-content: space-between; }
+.sense-heading h2 { margin: 8px 0 14px; font-size: clamp(23px, 5vw, 30px); letter-spacing: -.035em; }
+.sense-heading .ghost { flex: 0 0 auto; }
+.sense-steps { padding: 0; margin: 22px 0; list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.sense-steps li { display: flex; flex-direction: column; gap: 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.sense-steps li > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--panel-2); }
+.sense-steps .current, .sense-steps .done { color: #aade7c; }
+.sense-steps .current > span { background: var(--green); color: #132209; box-shadow: 0 0 0 4px #81b64c22; }
+.sense-steps .done > span { background: #81b64c22; }
+.sense-body { padding: 18px; border-radius: 12px; background: var(--panel-3); }
+.sense-body h3 { margin: 0 0 12px; font-size: 21px; }
+.sense-body p, .sense-help p { color: #c0bbb3; font-size: 14px; line-height: 1.65; }
+.sense-body p strong { color: #edeae5; }
+.sense-body .wide { margin-top: 10px; }
+.sense-handoff { margin-top: 18px; border-top: 1px solid var(--border); }
+.sense-handoff h4 { margin: 16px 0 8px; }
+.sense-label { display: block; color: #dedbd4; margin: 16px 0 8px; font-weight: 700; font-size: 13px; }
+.sense-body input, .sense-body select {
+  width: 100%; min-width: 0; padding: 12px; background: var(--panel-2); color: #f3f0ea;
+  border: 1px solid #ffffff26; border-radius: 7px; font: inherit;
+}
+.sense-body :is(input, select, button, a):focus-visible, .sense-heading button:focus-visible {
+  outline: 2px solid #aade7c; outline-offset: 3px;
+}
+.sense-back { border: 0; background: none; color: #aade7c; padding: 0; margin: 18px 0 0; font-size: 13px; }
+.sense-account { padding: 14px; border: 1px solid #81b64c44; border-radius: 8px; display: grid; gap: 6px; }
+.sense-account span { color: #aade7c; font-size: 12px; }
+.sense-account strong { font-size: 21px; overflow-wrap: anywhere; }
+.sense-notice { padding: 10px 13px; background: #81b64c14; border-radius: 7px; }
+.sense-checks { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 18px; font-size: 12px; color: var(--muted); }
+.sense-checks .ready { color: #aade7c; }
+.sense-help { margin-top: 16px; font-size: 13px; }
+.sense-help summary { color: #c7c1b8; cursor: pointer; }
+.sense-retry { margin-top: 12px; }
+.sense-success { font-size: 38px; color: #aade7c; margin-bottom: 12px; }
+.sense-link { display: inline-block; text-decoration: none; padding: 10px 14px; }
+.sense-camera-dialog {
+  width: min(94vw, 540px); max-height: 94dvh; overflow: auto; padding: 24px;
+  background: var(--panel); color: #edeae5; border: 1px solid var(--border); border-radius: 14px;
+}
+.sense-camera-dialog::backdrop { background: #000b; }
+.sense-camera-dialog h2 { margin-top: 0; }
+.sense-camera-dialog p { color: var(--muted); font-size: 14px; line-height: 1.6; }
+.sense-camera-dialog select { width: 100%; margin: 8px 0; padding: 10px; background: var(--panel-2); color: #edeae5; border-radius: 5px; }
+.sense-camera-dialog button { margin-top: 10px; }
+#sense-camera-preview { min-height: 180px; margin-top: 12px; }
+@media (max-width: 480px) {
+  .sense-setup-backdrop { padding: 8px; }
+  .sense-setup { max-height: calc(100dvh - 16px); padding: 18px; border-radius: 12px; }
+  .sense-body { padding: 14px; }
+  .header-actions > .ghost:first-child { font-size: 11px; padding: 7px; }
+}
+
 .app-shell { min-height: 100vh; }
 header {
   min-height: 64px;

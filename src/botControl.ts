@@ -64,6 +64,7 @@ export function setBotLevel(level: string): Promise<BotRuntimeStatus> {
 export function joinSenseRoom(
   challengeId: string,
   color: 'white' | 'black',
+  opponent: string,
 ): Promise<BotRuntimeStatus> {
   return jsonRequest('/api/bot/join-room', {
     method: 'POST',
@@ -71,6 +72,7 @@ export function joinSenseRoom(
     body: JSON.stringify({
       challengeId,
       color,
+      opponent,
     }),
   });
 }
@@ -79,6 +81,17 @@ export type SenseRoom = {
   challengeId: string;
   color: 'white' | 'black';
 };
+
+export type SetupHealth = {
+  ok: boolean;
+  stockfish: string | null;
+  warning?: string | null;
+  coach?: { configured: boolean };
+};
+
+export function getSetupHealth(): Promise<SetupHealth> {
+  return jsonRequest('/api/health', { signal: AbortSignal.timeout(5000) });
+}
 
 export function parseSenseRoomUrl(rawValue: string): SenseRoom {
   let url: URL;

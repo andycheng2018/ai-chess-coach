@@ -76,7 +76,27 @@ This separation was important to me because LLMs can explain ideas well, but the
 
 Chess Buddy can also work with a physical **SenseRobot** chess board.
 
-The iPhone app scans the room QR code created by SenseRobot and connects the Chess Buddy bot to the corresponding Lichess game. Moves made on the physical board are synchronized through Lichess, allowing the same coaching system to analyze a real over-the-board game.
+Choose **Connect my SenseRobot** on the sign-in screen or training screen to open
+the guided setup. It remembers your progress across Lichess sign-in, checks the
+coach server, Stockfish, AI configuration, and training bot, and accepts either a
+camera scan or a pasted Lichess room link. Returning from another app refreshes
+the checks. After the bot joins, setup waits for the Lichess game stream to
+confirm the account, opponent, and board before showing the connected state.
+The backend supplies the bot identity and the selected strength is applied
+automatically; the SenseRobot room supplies the clock and color.
+
+Wi-Fi and SenseRobot account linking are guided handoffs to the companion app.
+Network selection and passwords remain there: this browser cannot scan nearby
+networks or provision the robot. These steps are labeled as player confirmations,
+distinct from live service/game checks. The documented network and account menu
+paths come from the [SenseRobot FAQ](https://www.senserobotchess.com/pages/chess-faq);
+room menus vary by model/firmware, so setup links the manufacturer's model guides.
+
+Moves made on the physical board are synchronized through Lichess, allowing the
+same coaching system to analyze a real over-the-board game. A successfully joined
+room is remembered locally and physical-board mode is restored on refresh only
+after Lichess confirms the same game, player, and training bot. Setup never saves
+Wi-Fi passwords or room URLs. Existing games must finish before joining a new room.
 
 This was one of the more interesting parts of the project because it connects:
 

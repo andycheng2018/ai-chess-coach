@@ -19,7 +19,8 @@
     "@capacitor/ios": "^8.5.0",
     "chess.js": "^1.4.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "html5-qrcode": "^2.3.8"
   },
   "devDependencies": {
     "@types/react": "^19.1.10",
