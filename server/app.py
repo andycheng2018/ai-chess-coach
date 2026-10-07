@@ -797,6 +797,43 @@ def analyze_move(
     return result
 
 
+def analyze_position(payload: dict[str, Any]) -> dict[str, Any]:
+    fen = payload.get("rootFen")
+    moves = payload.get("moves", [])
+    if not isinstance(fen, str) or len(fen) > 200:
+        raise ValueError("A valid rootFen is required.")
+    if not isinstance(moves, list) or len(moves) > 512:
+        raise ValueError("moves must contain at most 512 legal UCI moves.")
+    try:
+        board = chess.Board(fen)
+    except ValueError as exc:
+        raise ValueError("Invalid FEN.") from exc
+    if not board.is_valid():
+        raise ValueError("The position is not a legal standard-chess position.")
+    for uci in moves:
+        if not isinstance(uci, str) or len(uci) not in {4, 5}:
+            raise ValueError("Invalid analysis move.")
+        try:
+            move = chess.Move.from_uci(uci)
+        except ValueError as exc:
+            raise ValueError("Invalid analysis move.") from exc
+        if move not in board.legal_moves:
+            raise ValueError(f"Illegal analysis move: {uci}")
+        board.push(move)
+    profile = COACH_ANALYSIS_PROFILES.get(str(payload.get("detail", "balanced")), COACH_ANALYSIS_PROFILES["balanced"])
+    # A rapidly edited board must not create an unbounded engine queue behind
+    # live coaching. The client retries a busy engine with a cancellable delay.
+    if not _analyzer_lock.acquire(timeout=0.25):
+        raise RuntimeError("The chess engine is busy. Try again in a moment.")
+    try:
+        return get_analyzer().analyze_position(board, time_ms=profile["time_ms"])
+    except (chess.engine.EngineError, chess.engine.EngineTerminatedError):
+        reset_analyzer()
+        raise
+    finally:
+        _analyzer_lock.release()
+
+
 def explain_analysis(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1567,6 +1604,8 @@ class Handler(BaseHTTPRequestHandler):
                         self._json_body()
                     ),
                 )
+            elif self.path == "/api/analysis/position":
+                self._send(200, analyze_position(self._json_body()))
             elif self.path == "/api/coach/explain":
                 self._send(
                     200,

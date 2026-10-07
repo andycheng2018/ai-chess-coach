@@ -288,6 +288,46 @@ class StockfishAnalyzer:
             except Exception:
                 pass
 
+    def analyze_position(self, board: chess.Board, *, time_ms: int = 900) -> dict[str, Any]:
+        """Standalone analysis, always scored from White's perspective."""
+        outcome = board.outcome(claim_draw=True)
+        if outcome is not None:
+            winner = None if outcome.winner is None else ("white" if outcome.winner else "black")
+            return {"fen": board.fen(), "turn": "white" if board.turn else "black",
+                    "terminal": True, "winner": winner, "result": outcome.result(),
+                    "reason": outcome.termination.name.lower(), "lines": [],
+                    "score": {"cp": 0 if winner is None else None, "mate": 0 if winner else None}}
+        infos = self.engine.analyse(
+            board, chess.engine.Limit(time=max(200, min(3000, time_ms)) / 1000),
+            multipv=min(3, board.legal_moves.count()),
+        )
+        lines = []
+        for info in infos:
+            score = info.get("score")
+            pv = list(info.get("pv") or [])[:16]
+            if score is None or not pv:
+                continue
+            replay = board.copy()
+            legal_pv = []
+            san = []
+            for move in pv:
+                if move not in replay.legal_moves:
+                    break
+                san.append(replay.san(move))
+                legal_pv.append(move.uci())
+                replay.push(move)
+            if not legal_pv:
+                continue
+            white_score = score.white()
+            lines.append({"moves": san, "uci": legal_pv,
+                          "score": {"cp": white_score.score(), "mate": white_score.mate()},
+                          "depth": int(info.get("depth") or 0)})
+        if not lines:
+            raise RuntimeError("Stockfish returned no usable analysis lines.")
+        return {"fen": board.fen(), "turn": "white" if board.turn else "black",
+                "terminal": False, "winner": None, "lines": lines,
+                "score": lines[0]["score"]}
+
     def _verify_zugzwang(
         self,
         board: chess.Board,

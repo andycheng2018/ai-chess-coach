@@ -1,4 +1,6 @@
 import { scanSenseRoomUrl } from './senseScanner';
+import { AnalysisBoard } from './components/AnalysisBoard';
+import type { AnalysisSeed } from './analysis';
 import { SenseRobotSetup } from './components/SenseRobotSetup';
 import { isRememberedSenseGame, readSenseSetup, saveSenseSetup } from './senseSetup';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1675,6 +1677,8 @@ export default function App() {
   const [coachLanguage, setCoachLanguage] = useState<CoachLanguage>(readCoachLanguage);
   const [reviewMode, setReviewMode] = useState<CoachReviewMode | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [analysisSeed, setAnalysisSeed] = useState<AnalysisSeed | null>(null);
   const [historyPly, setHistoryPly] = useState<number | null>(null);
   type CoachJob = {
     id: number;
@@ -3617,6 +3621,23 @@ export default function App() {
     setStatus('Ready for another training game.');
   }
 
+  function openAnalysis(seed: AnalysisSeed | null = null) {
+    setAnalysisSeed(seed);
+    setReviewMode(null);
+    setAnalysisOpen(true);
+  }
+
+  function analyzeGamePosition() {
+    if (!gameId) { openAnalysis(); return; }
+    openAnalysis({ rootFen: initialFen === 'startpos' ? new Chess().fen() : initialFen,
+      moves: movesText.trim() ? movesText.trim().split(/\s+/) : [],
+      ply: historyPly ?? position.plyCount, source: `Copy of training game ${gameId}`,
+      sourceId: gameId, orientation });
+  }
+
+  const analysisBoard = analysisOpen ? <AnalysisBoard seed={analysisSeed}
+    onClose={() => setAnalysisOpen(false)} liveGame={activeGame} /> : null;
+
   const senseSetup = <SenseRobotSetup
     open={senseSetupOpen} onClose={() => setSenseSetupOpen(false)}
     username={account?.username || null} bot={bot} level={level} levels={LEVELS}
@@ -3637,11 +3658,13 @@ export default function App() {
         <h1>Play a bot.<br />Learn every game.</h1>
         <p>Challenge the training bot on Lichess and get immediate, position-specific coaching when a move needs attention.</p>
         <button className="primary" onClick={() => void loginWithLichess().catch(error => setStatus(String(error)))}>Sign in with Lichess</button>
+        <button className="ghost wide" onClick={() => openAnalysis()}>Open analysis board</button>
         <button className="ghost wide" onClick={() => setSenseSetupOpen(true)}>Connect my SenseRobot</button>
         {status !== 'Ready' && <p role="status" className="fine-print">{status}</p>}
         <p className="fine-print">AI coaching is enabled only in games against the designated training bot.</p>
       </div>
       {senseSetup}
+      {analysisBoard}
     </main>;
   }
 
@@ -4041,9 +4064,11 @@ export default function App() {
 
   return <div className="app-shell">
     {senseSetup}
+    {analysisBoard}
     <header>
       <div className="brand-row"><span className="eyebrow">AI CHESS COACH</span><strong>{account?.username || 'Connecting…'}</strong></div>
       <div className="header-actions">
+        <button className="ghost" onClick={analyzeGamePosition}>Analysis board</button>
         <button className="ghost" onClick={() => setSenseSetupOpen(true)}>SenseRobot setup</button>
         <span className={`status-dot ${bot.connected ? 'online' : 'offline'}`} />
         <span className="header-status">{status}</span>
@@ -4252,6 +4277,7 @@ export default function App() {
             )}
           </div>
           <div className="game-actions">
+            <button className="ghost" onClick={analyzeGamePosition}>Analyze this position</button>
             {activeGame ? (
               <button
                 className="ghost"
@@ -4685,6 +4711,12 @@ export default function App() {
           <button className={reviewMode === 'better' ? 'active' : ''} onClick={() => setReviewMode('better')}>Before your move</button>
           <button className={reviewMode === 'threat' ? 'active' : ''} onClick={() => setReviewMode('threat')}>After your move</button>
         </div>
+        <button className="ghost wide" onClick={() => openAnalysis({
+          rootFen: reviewMode === 'better' ? reviewTarget.fenBefore : reviewTarget.fenAfter,
+          source: `Coach review · move ${reviewTarget.moveNumber}`,
+          sourceId: reviewTarget.recordId ? `${reviewTarget.recordId}:${reviewMode}` : undefined,
+          orientation: reviewOrientation,
+        })}>Explore on analysis board</button>
         <div className="review-context">
           {reviewMode === 'better' ? 'This is the exact position where you had to choose your move.' : `This is the position immediately after ${reviewTarget.playedMove}.`}
         </div>

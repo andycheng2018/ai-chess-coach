@@ -72,6 +72,30 @@ A typical game looks like this:
 
 This separation was important to me because LLMs can explain ideas well, but they are not reliable chess engines (As of 2026, AI is in general pretty bad at chess. They are great at hallucinating where pieces are, thus making many illegal moves). I use **Stockfish as the source of truth** and AI only for communication.
 
+## Analysis board
+
+Choose **Open analysis board** before sign-in, **Analysis board** in the app
+header, **Analyze this position** in a game, or **Explore on analysis board** in
+a coaching review. This is an editable copy: analysis moves never call the
+Lichess move API or control SenseRobot. A live game's clock continues while the
+copy is open.
+
+Play legal moves for either side, choose promotion pieces, go back to create
+alternative branches, and click moves in the variation tree. Stockfish returns
+up to three candidate lines for the selected position; click a line's move to
+play through that continuation. Scores are consistently from White's perspective
+(positive favors White, negative favors Black); mate scores use M. Quick,
+Balanced, and Deep change the finite search budget. Each new position gets a
+fresh search, and superseded browser requests are cancelled. The analysis route
+shares the coaching engine and rejects a busy engine rather than queueing
+unbounded work behind live coaching. This mode does not call the language model.
+
+Import a FEN or PGN main line and copy the current FEN or a PGN containing all
+your variation branches. The current workspace is saved locally in this browser
+under `ai-chess-coach.analysis-board.v1`; it is separate from actual played moves
+and coaching audit records. Opening the same game snapshot preserves its saved
+branches. **New board** starts a fresh workspace; export first to keep a copy.
+
 ## SenseRobot Integration
 
 Chess Buddy can also work with a physical **SenseRobot** chess board.
