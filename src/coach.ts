@@ -69,6 +69,28 @@ export type CoachResult = {
   // Stockfish returns immediately, then the LLM wording arrives separately.
   analysisId?: string;
   explanationPending?: boolean;
+
+  openingEco?: string;
+  openingName?: string;
+  openingVariation?: string;
+  openingDepthMatched?: number;
+  openingInBook?: boolean;
+  openingLeftBookAt?: number | null;
+  openingBookMove?: string | null;
+  openingBookMoveUci?: string | null;
+  openingTransposed?: boolean;
+};
+
+export type OpeningState = {
+  eco: string;
+  name: string;
+  variation: string;
+  depthMatched: number;
+  inBook: boolean;
+  leftBookAt: number | null;
+  bookMove?: string | null;
+  bookMoveUci?: string | null;
+  transposed?: boolean;
 };
 
 export type ThemeEvidence = {
@@ -168,6 +190,7 @@ export async function analyzeMove(
   detailOrSignal: CoachDetail | AbortSignal = 'balanced',
   maybeSignal?: AbortSignal,
   language: CoachLanguage = 'en',
+  moves: string[] = [],
 ): Promise<CoachResult> {
   const detail: CoachDetail =
     typeof detailOrSignal === 'string'
@@ -191,6 +214,7 @@ export async function analyzeMove(
         move,
         detail,
         language,
+        moves,
       }),
       signal,
     },
@@ -251,6 +275,37 @@ export async function explainMove(
   }
 
   return data as CoachWording;
+}
+
+
+export async function fetchOpeningStatus(
+  moves: string[],
+  signal?: AbortSignal,
+): Promise<OpeningState> {
+  const response = await fetch(
+    `${CONTROL_URL}/api/coach/opening`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ moves }),
+      signal,
+    },
+  );
+
+  const data = await response
+    .json()
+    .catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message ||
+      `${response.status} ${response.statusText}`,
+    );
+  }
+
+  return data as OpeningState;
 }
 
 
