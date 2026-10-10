@@ -72,29 +72,49 @@ A typical game looks like this:
 
 This separation was important to me because LLMs can explain ideas well, but they are not reliable chess engines (As of 2026, AI is in general pretty bad at chess. They are great at hallucinating where pieces are, thus making many illegal moves). I use **Stockfish as the source of truth** and AI only for communication.
 
-## Analysis board
+## Analysis library and saved games
 
-Choose **Open analysis board** before sign-in, **Analysis board** in the app
-header, **Analyze this position** in a game, or **Explore on analysis board** in
-a coaching review. This is an editable copy: analysis moves never call the
-Lichess move API or control SenseRobot. A live game's clock continues while the
-copy is open.
+Choose **Open analysis library** before sign-in or **Analysis library** in the
+app header. This navigation page has Cards, List, and Compact layouts, search,
+**New analysis**, and an archive with Restore. Each save has its own URL
+(`#analysis/<save-id>`), board, variations, engine settings, and layout. Browser
+Back/Forward and refreshing the page preserve your selected save.
 
-Play legal moves for either side, choose promotion pieces, go back to create
-alternative branches, and click moves in the variation tree. Stockfish returns
-up to three candidate lines for the selected position; click a line's move to
-play through that continuation. Scores are consistently from White's perspective
-(positive favors White, negative favors Black); mate scores use M. Quick,
-Balanced, and Deep change the finite search budget. Each new position gets a
-fresh search, and superseded browser requests are cancelled. The analysis route
-shares the coaching engine and rejects a busy engine rather than queueing
-unbounded work behind live coaching. This mode does not call the language model.
+Use **Save game** or **Analyze this position** in a training game to store its
+played moves. Returning to the same game's save refreshes the played main line
+and retains analysis branches. **Save a copy** creates an independent version.
+Game PGN exports include known players, result, and Lichess link. Analysis moves
+never call the Lichess move API or control SenseRobot; a live clock continues.
 
-Import a FEN or PGN main line and copy the current FEN or a PGN containing all
-your variation branches. The current workspace is saved locally in this browser
-under `ai-chess-coach.analysis-board.v1`; it is separate from actual played moves
-and coaching audit records. Opening the same game snapshot preserves its saved
-branches. **New board** starts a fresh workspace; export first to keep a copy.
+Editing a board autosaves. Names save on blur or Enter; **Save** also confirms a
+manual save. Storage is local to this browser, with up to 100 pages; it is not an
+account/cloud backup. **Download PGN** exports the game and all variation
+branches. Import accepts a FEN or a PGN main line into the currently open save.
+The unified library uses `ai-chess-coach.analysis-library.v2` and recovers the
+previous single draft without deleting its original backup. Storage failures
+and conflicting writes from another tab are shown visibly; the current local
+draft remains open for a PGN download.
+
+Play either side, choose promotions, revisit moves to create alternatives, and
+click a Stockfish continuation to add it to your tree. Scores favor White when
+positive and Black when negative; M means forced mate. Search controls offer:
+
+- **Time presets:** Quick, Balanced, and Deep use finite search budgets.
+- **Exact depth:** Enter a whole number from 1 to 128 and click **Apply depth**.
+- **Unlimited:** Continuously deepen without a depth/time cap; **Stop search**
+  retains the last evaluation. Leaving the page or changing position stops it.
+
+Depth and unlimited searches publish intermediate results using the same
+Stockfish adapter and scoring as presets. One stoppable long-search worker is
+allowed alongside the live coaching engine. Another browser session receives a
+busy message; an abandoned worker stops after its renewable 12-second lease
+expires. This analysis mode does not call the language model.
+
+Choose **Board left**, **Board right**, or **Stacked** for each saved page.
+Drag the arrow dividers to resize the board/tools split, engine panel, or
+variation panel; focused dividers also support arrow keys and Home/End. In the
+stacked layout the board divider controls board size. Narrow screens stack the
+sections automatically.
 
 ## SenseRobot Integration
 

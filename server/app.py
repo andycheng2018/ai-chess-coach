@@ -22,6 +22,7 @@ load_dotenv(ROOT / ".env")
 from bot_runtime import BOT_LEVELS, runtime
 from coach.stockfish_analyzer import StockfishAnalyzer, capture_context, find_stockfish
 from coach.history import history
+from coach.analysis_search import analysis_searches
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 
@@ -797,7 +798,7 @@ def analyze_move(
     return result
 
 
-def analyze_position(payload: dict[str, Any]) -> dict[str, Any]:
+def analysis_board(payload: dict[str, Any]) -> chess.Board:
     fen = payload.get("rootFen")
     moves = payload.get("moves", [])
     if not isinstance(fen, str) or len(fen) > 200:
@@ -820,6 +821,11 @@ def analyze_position(payload: dict[str, Any]) -> dict[str, Any]:
         if move not in board.legal_moves:
             raise ValueError(f"Illegal analysis move: {uci}")
         board.push(move)
+    return board
+
+
+def analyze_position(payload: dict[str, Any]) -> dict[str, Any]:
+    board = analysis_board(payload)
     profile = COACH_ANALYSIS_PROFILES.get(str(payload.get("detail", "balanced")), COACH_ANALYSIS_PROFILES["balanced"])
     # A rapidly edited board must not create an unbounded engine queue behind
     # live coaching. The client retries a busy engine with a cancellable delay.
@@ -1606,6 +1612,13 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif self.path == "/api/analysis/position":
                 self._send(200, analyze_position(self._json_body()))
+            elif self.path == "/api/analysis/search":
+                payload = self._json_body()
+                self._send(200, analysis_searches.start(payload, analysis_board(payload)))
+            elif self.path == "/api/analysis/search/status":
+                self._send(200, analysis_searches.status(self._json_body()))
+            elif self.path == "/api/analysis/search/stop":
+                self._send(200, analysis_searches.stop(self._json_body()))
             elif self.path == "/api/coach/explain":
                 self._send(
                     200,
@@ -1662,6 +1675,7 @@ if __name__ == "__main__":
         pass
     finally:
         server.server_close()
+        analysis_searches.close()
         runtime.stop()
         with _analyzer_lock:
             reset_analyzer()

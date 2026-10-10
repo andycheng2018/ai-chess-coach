@@ -2,8 +2,9 @@ import { Chess } from 'chess.js';
 import { CONTROL_URL, type CoachDetail } from './coach';
 
 export type AnalysisNode = { id: string; parent: string | null; children: string[]; uci: string; san: string; fen: string };
-export type AnalysisWorkspace = { rootFen: string; source: string; sourceId: string; nodes: Record<string, AnalysisNode>; current: string; nextId: number };
-export type AnalysisSeed = { rootFen: string; moves?: string[]; ply?: number; source: string; sourceId?: string; orientation?: 'white' | 'black' };
+export type GameRecord = { white: string; black: string; result: '1-0' | '0-1' | '1/2-1/2' | '*'; site?: string };
+export type AnalysisWorkspace = { rootFen: string; source: string; sourceId: string; nodes: Record<string, AnalysisNode>; current: string; nextId: number; game?: GameRecord };
+export type AnalysisSeed = { rootFen: string; moves?: string[]; ply?: number; source: string; sourceId?: string; orientation?: 'white' | 'black'; game?: GameRecord };
 export type EngineScore = { cp: number | null; mate: number | null };
 export type PositionAnalysis = {
   fen: string; turn: 'white' | 'black'; terminal: boolean; winner: 'white' | 'black' | null;
@@ -68,9 +69,15 @@ export function seedAnalysis(seed: AnalysisSeed, saved?: AnalysisWorkspace | nul
     && saved.rootFen === new Chess(seed.rootFen).fen()
     ? { ...saved, current: 'root', source: seed.source } : emptyAnalysis(seed.rootFen, seed.source, seed.sourceId);
   const path = ['root'];
-  for (const uci of seed.moves || []) { workspace = addAnalysisMove(workspace, uci); path.push(workspace.current); }
+  for (const uci of seed.moves || []) {
+    const parent = workspace.current;
+    workspace = addAnalysisMove(workspace, uci); path.push(workspace.current);
+    // Played moves remain the exported main line; exploration branches survive.
+    const node = workspace.nodes[parent];
+    workspace = {...workspace, nodes: {...workspace.nodes, [parent]: {...node, children: [workspace.current, ...node.children.filter(id=>id!==workspace.current)]}}};
+  }
   const ply = Math.max(0, Math.min(path.length - 1, seed.ply ?? path.length - 1));
-  return { ...workspace, current: path[ply] };
+  return { ...workspace, current: path[ply], game: seed.game || workspace.game };
 }
 
 export function importAnalysis(text: string): AnalysisWorkspace {
@@ -83,7 +90,7 @@ export function importAnalysis(text: string): AnalysisWorkspace {
   catch { throw new Error('This is not a valid PGN. Check its move sequence, or paste a FEN instead.'); }
   const moves = chess.history({ verbose: true });
   const rootFen = moves[0]?.before || chess.fen();
-  return seedAnalysis({ rootFen, moves: moves.map(move => move.from + move.to + (move.promotion || '')), source: 'Imported PGN (main line)' });
+  return seedAnalysis({ rootFen, moves: moves.map(move => move.from + move.to + (move.promotion || '')), source: 'Imported PGN (main line)', game: {white: chess.getHeaders().White || '?', black: chess.getHeaders().Black || '?', result: (['1-0','0-1','1/2-1/2'].includes(chess.getHeaders().Result) ? chess.getHeaders().Result : '*') as GameRecord['result']} });
 }
 
 function moveText(workspace: AnalysisWorkspace, node: AnalysisNode): string {
@@ -101,17 +108,23 @@ export function exportAnalysisPgn(workspace: AnalysisWorkspace): string {
     if (!main) return '';
     return [moveText(workspace, workspace.nodes[main]), ...alternatives.map(id => `(${branch(id)})`), children(workspace.nodes[main])].filter(Boolean).join(' ');
   }
-  const headers = ['[Event "Chess Coach analysis"]', '[Result "*"]'];
+  const outcome = workspace.game?.result || '*';
+  const quote = (value: string) => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]/g, ' ');
+  const headers = ['[Event "Chess Coach analysis"]', `[Result "${outcome}"]`];
+  if (workspace.game) {
+    headers.push(`[White "${quote(workspace.game.white)}"]`, `[Black "${quote(workspace.game.black)}"]`);
+    if (workspace.game.site) headers.push(`[Site "${quote(workspace.game.site)}"]`);
+  }
   if (workspace.rootFen !== new Chess().fen()) headers.push('[SetUp "1"]', `[FEN "${workspace.rootFen}"]`);
-  return `${headers.join('\n')}\n\n${children(workspace.nodes.root)} *`;
+  return `${headers.join('\n')}\n\n${children(workspace.nodes.root)} ${outcome}`;
 }
 
-export function readAnalysis(): AnalysisWorkspace | null {
+export function validateAnalysis(saved: AnalysisWorkspace): AnalysisWorkspace | null {
   try {
-    const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null') as AnalysisWorkspace;
     if (!saved || typeof saved.rootFen !== 'string' || typeof saved.source !== 'string'
       || typeof saved.sourceId !== 'string' || !saved.nodes?.root || !saved.nodes[saved.current]
       || !Number.isInteger(saved.nextId) || Object.keys(saved.nodes).length > 513) return null;
+    if (saved.game && (typeof saved.game.white !== 'string' || typeof saved.game.black !== 'string' || !['1-0','0-1','1/2-1/2','*'].includes(saved.game.result) || (saved.game.site !== undefined && typeof saved.game.site !== 'string'))) return null;
     new Chess(saved.rootFen);
     if (saved.nodes.root.parent !== null || saved.nodes.root.fen !== saved.rootFen) return null;
     const visited = new Set<string>();
@@ -135,6 +148,11 @@ export function readAnalysis(): AnalysisWorkspace | null {
     if (ids.some(id => !Number.isInteger(id) || id < 1 || id >= saved.nextId)) return null;
     return saved;
   } catch { return null; }
+}
+
+export function readAnalysis(): AnalysisWorkspace | null {
+  try { return validateAnalysis(JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')); }
+  catch { return null; }
 }
 
 export function saveAnalysis(workspace: AnalysisWorkspace): boolean {
@@ -166,4 +184,41 @@ export async function analyzeBoard(workspace: AnalysisWorkspace, detail: CoachDe
       signal.addEventListener('abort', cancel, { once: true });
     });
   }
+}
+
+export async function watchAnalysis(workspace: AnalysisWorkspace, settings: {mode: 'depth' | 'unlimited'; depth: number}, signal: AbortSignal, onResult: (result: PositionAnalysis) => void): Promise<void> {
+  const credentials = { id: crypto.randomUUID(), owner: searchOwner() };
+  async function request(path: string, body: object) {
+    const response = await fetch(`${CONTROL_URL}/api/analysis/search${path}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body), signal,
+    });
+    if (response.status === 404) throw new Error('Restart the Chess Coach backend to enable depth and unlimited searches.');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Search failed.');
+    return data as {running: boolean; result: PositionAnalysis | null; error: string | null};
+  }
+  try {
+    let snapshot = await request('', { ...credentials, ...settings, rootFen: workspace.rootFen, moves: analysisPath(workspace).map(node => node.uci) });
+    while (!signal.aborted) {
+      if (snapshot.error) throw new Error(snapshot.error);
+      if (snapshot.result) onResult(snapshot.result);
+      if (!snapshot.running) return;
+      await abortableDelay(500, signal);
+      snapshot = await request('/status', credentials);
+    }
+  } finally {
+    // Also stops a request that reached the server just before the fetch aborted.
+    void fetch(`${CONTROL_URL}/api/analysis/search/stop`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(credentials),keepalive:true}).catch(()=>{});
+  }
+}
+let owner: string | undefined;
+function searchOwner() { return owner ||= crypto.randomUUID(); }
+// Lazy so browsing/importing saved games does not need an engine session.
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve,reject)=>{
+    if (signal.aborted) { reject(new DOMException('Aborted','AbortError')); return; }
+    const cancel=()=>{clearTimeout(timer);reject(new DOMException('Aborted','AbortError'));};
+    const timer=setTimeout(()=>{signal.removeEventListener('abort',cancel);resolve();},ms);
+    signal.addEventListener('abort',cancel,{once:true});
+  });
 }

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
 import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
@@ -15,7 +16,7 @@ function environment(initial, fetch) {
   const exports = {};
   vm.runInNewContext(compiled, { exports, require: path => path === './coach' ? {CONTROL_URL:'http://test'} : require(path),
     localStorage: {getItem: () => saved, setItem: (_, value) => { saved = value; }},
-    fetch, setTimeout, clearTimeout, DOMException });
+    fetch, crypto:webcrypto, setTimeout, clearTimeout, DOMException });
   return { analysis: exports, readSaved: () => saved };
 }
 
@@ -138,4 +139,24 @@ test('an old backend gives restart instructions instead of an unhelpful 404', as
   const {analysis:a}=environment(null,async()=> { requests++; return {ok:false,status:404}; });
   await assert.rejects(a.analyzeBoard(a.emptyAnalysis(),'balanced',new AbortController().signal),/backend is out of date.*Control-C.*Open Chess Coach.command/);
   assert.equal(requests,1);
+});
+
+
+test('refreshing a saved game promotes played moves without discarding explored alternatives', () => {
+  const {analysis:a}=environment();
+  const seed={rootFen:new Chess().fen(),source:'game',sourceId:'g',moves:['e2e4']};
+  let w=a.addAnalysisMove(a.seedAnalysis(seed),'c7c5');
+  w=a.seedAnalysis({...seed,moves:['e2e4','e7e5'],game:{white:'Student',black:'Coach',result:'1-0'}},w);
+  assert.deepEqual(Array.from(w.nodes.n1.children,id=>w.nodes[id].san),['e5','c5']);
+  const pgn=a.exportAnalysisPgn(w);assert.match(pgn,/1\. e4 1\.\.\. e5 \(1\.\.\. c5\)/);assert.match(pgn,/\[White "Student"\]/);assert.match(pgn,/1-0$/);
+});
+test('cancelling a live search explicitly stops its worker', async () => {
+  const requests=[];const controller=new AbortController();let update;
+  const {analysis:a}=environment(null,async(url,options)=>{
+    requests.push({url,body:JSON.parse(options.body),signal:options.signal});
+    return {ok:true,status:200,json:async()=>({running:true,result:{score:{cp:20,mate:null}},error:null})};
+  });
+  const promise=a.watchAnalysis(a.emptyAnalysis(),{mode:'unlimited',depth:18},controller.signal,data=>{update=data;controller.abort();});
+  await assert.rejects(promise,/Aborted/);
+  assert.equal(update.score.cp,20);assert.equal(requests.length,2);assert.match(requests[1].url,/search\/stop$/);assert.equal(requests[1].signal,undefined);assert.equal(requests[0].body.id,requests[1].body.id);
 });

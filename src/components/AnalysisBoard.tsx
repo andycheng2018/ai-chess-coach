@@ -1,32 +1,34 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { type Square } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
-import { addAnalysisMove, analysisPath, analysisPosition, analysisPositionKey, analyzeBoard, emptyAnalysis, evaluationWhitePercent, exportAnalysisPgn,
-  formatEngineScore, importAnalysis, readAnalysis, saveAnalysis, seedAnalysis,
-  type AnalysisNode, type AnalysisSeed, type PositionAnalysis } from '../analysis';
-import type { CoachDetail } from '../coach';
+import { addAnalysisMove, analysisPath, analysisPosition, analysisPositionKey, analyzeBoard, watchAnalysis, evaluationWhitePercent, exportAnalysisPgn,
+  formatEngineScore, importAnalysis,
+  type AnalysisNode, type AnalysisWorkspace, type PositionAnalysis } from '../analysis';
+import { downloadAnalysis, type AnalysisSave } from '../analysisLibrary';
+import { ResizeHandle } from './ResizeHandle';
 
-type Props = { seed: AnalysisSeed | null; onClose: () => void; liveGame: boolean };
+type Props = { save: AnalysisSave; onChange: (save: AnalysisSave) => boolean; onClose: () => void; onLibrary: () => void; onNew: () => void; onSaveAs: () => void; onSave: () => void; notice: string; liveGame: boolean };
 
-export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
-  const [workspace, setWorkspace] = useState(() => seed ? seedAnalysis(seed, readAnalysis()) : readAnalysis() || emptyAnalysis());
-  const [orientation, setOrientation] = useState<'white' | 'black'>(seed?.orientation || 'white');
-  const [detail, setDetail] = useState<CoachDetail>('balanced');
+export function AnalysisBoard({ save, onChange, onClose, onLibrary, onNew, onSaveAs, onSave, notice: savedNotice, liveGame }: Props) {
+  const [titleText, setTitleText] = useState(save.title);
+  useEffect(() => setTitleText(save.title), [save.title]);
+  const workspace = save.workspace;
+  const { orientation } = save.view;
+  const detail = save.search.detail;
+  function setWorkspace(next: AnalysisWorkspace) { onChange({ ...save, workspace: next }); }
+  function setView(view: Partial<AnalysisSave['view']>) { onChange({ ...save, view: { ...save.view, ...view } }); }
+  const [depthText, setDepthText] = useState(String(save.search.depth));
   const [engineEnabled, setEngineEnabled] = useState(true);
   const [completed, setCompleted] = useState<{ key: string; data: PositionAnalysis } | null>(null);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
-  const [unsaved, setUnsaved] = useState(false);
   const [rollback, setRollback] = useState(0);
   const [promotion, setPromotion] = useState<{ from: string; to: string } | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [positionText, setPositionText] = useState('');
   const [retry, setRetry] = useState(0);
-  const dialog = useRef<HTMLDivElement>(null);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
   const node = workspace.nodes[workspace.current];
   const chess = useMemo(() => analysisPosition(workspace), [workspace]);
   const turn = chess.turn() === 'w' ? 'white' : 'black';
@@ -39,7 +41,6 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
     return moves;
   }, [chess]);
 
-  useEffect(() => { setUnsaved(!saveAnalysis(workspace)); }, [workspace]);
   useEffect(() => {
     setPromotion(null); setRollback(value => value + 1);
   }, [workspace.current, workspace.rootFen]);
@@ -50,42 +51,16 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
     if (!engineEnabled) { setThinking(false); return () => controller.abort(); }
     setThinking(true);
     const timer = window.setTimeout(() => {
-      void analyzeBoard(workspace, detail, controller.signal).then(data => {
-        if (!controller.signal.aborted) { setCompleted({ key: positionKey, data }); setThinking(false); }
-      }).catch(cause => {
+      const update = (data: PositionAnalysis) => { if (!controller.signal.aborted) setCompleted({ key: positionKey, data }); };
+      const request = save.search.mode === 'preset'
+        ? analyzeBoard(workspace, detail, controller.signal).then(update)
+        : watchAnalysis(workspace, { mode: save.search.mode, depth: save.search.depth }, controller.signal, update);
+      void request.then(() => { if (!controller.signal.aborted) setThinking(false); }).catch(cause => {
         if (!controller.signal.aborted) { setError(cause instanceof Error ? cause.message : String(cause)); setThinking(false); }
       });
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [positionKey, detail, engineEnabled, retry]);
-
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    const backdrop = dialog.current?.parentElement;
-    const siblings = Array.from(backdrop?.parentElement?.children || []).filter(element => element !== backdrop) as HTMLElement[];
-    const inert = siblings.map(element => element.inert);
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    siblings.forEach(element => { element.inert = true; });
-    dialog.current?.focus();
-    function key(event: KeyboardEvent) {
-      if (event.key === 'Escape') { closeRef.current(); return; }
-      if (event.key !== 'Tab') return;
-      const controls = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input, textarea, select, summary') || [])
-        .filter(element => element.getClientRects().length > 0);
-      if (event.shiftKey && (document.activeElement === controls[0] || document.activeElement === dialog.current)) {
-        event.preventDefault(); controls.at(-1)?.focus();
-      } else if (!event.shiftKey && document.activeElement === controls.at(-1)) {
-        event.preventDefault(); controls[0]?.focus();
-      }
-    }
-    document.addEventListener('keydown', key);
-    return () => {
-      document.body.style.overflow = overflow;
-      siblings.forEach((element, index) => { element.inert = inert[index]; });
-      document.removeEventListener('keydown', key); previous?.focus();
-    };
-  }, []);
+  }, [positionKey, detail, save.search.mode, save.search.depth, engineEnabled, retry]);
 
   function applyMove(uci: string) {
     try { setWorkspace(addAnalysisMove(workspace, uci)); setActionError(''); setNotice(''); }
@@ -138,14 +113,19 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
   const score = result ? formatEngineScore(result.score, result) : '—';
   const bestUci = result?.lines[0]?.uci[0];
 
-  return <div className="analysis-backdrop">
-    <div className="analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysis-title" tabIndex={-1} ref={dialog}>
+  return <>
       <div className="analysis-heading">
-        <div><span className="eyebrow">EXPLORE · COMPARE · UNDERSTAND</span><h2 id="analysis-title">Analysis board</h2><p>{workspace.source}</p></div>
-        <button className="ghost" onClick={onClose}>Back to {liveGame ? 'live game' : 'coach'}</button>
+        <div><span className="eyebrow">EXPLORE · COMPARE · UNDERSTAND</span><h2 id="analysis-title">{save.title}</h2><p>{workspace.source}</p></div>
+        <div className="analysis-heading-actions"><button className="ghost" onClick={onLibrary}>← Library</button><button className="ghost" onClick={onClose}>Back to {liveGame ? 'live game' : 'coach'}</button></div>
       </div>
       {liveGame && <p className="analysis-live-notice">Your live game and its clock continue while you analyze this copy.</p>}
-      <div className="analysis-layout">
+      <div className="analysis-workspace-toolbar">
+        <label>Save name <input aria-label="Save name" maxLength={120} value={titleText} onChange={event=>setTitleText(event.target.value)} onBlur={()=>onChange({...save,title:titleText})} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur();}}/></label>
+        <button className="primary" onClick={onSave}>Save</button><button className="ghost" onClick={onSaveAs}>Save a copy</button><button className="ghost" onClick={()=>downloadAnalysis(save)}>Download PGN</button><button className="ghost" onClick={onNew}>＋ New analysis</button>
+        <label>Board layout <select aria-label="Board layout" value={save.view.layout} onChange={event=>setView({layout:event.target.value as AnalysisSave['view']['layout']})}><option value="classic">Board left</option><option value="focus">Board right</option><option value="stacked">Stacked</option></select></label>
+      </div>
+      {savedNotice && <p className="fine-print" role="status">{savedNotice}</p>}
+      <div className={`analysis-layout layout-${save.view.layout}`} style={{'--columns':save.view.layout==='focus' ? `minmax(280px, ${100-save.view.boardPercent}fr) 18px minmax(220px, ${save.view.boardPercent}fr)` : `minmax(220px, ${save.view.boardPercent}fr) 18px minmax(280px, ${100-save.view.boardPercent}fr)`,'--board-size':`${save.view.boardSize}px`} as CSSProperties}>
         <section className="analysis-board-column">
           <div className="analysis-board-row">
             <div className={`analysis-eval-bar ${orientation === 'black' ? 'flipped' : ''} ${advantage === null ? 'unknown' : ''}`} role="img" aria-label={advantage === null ? 'Evaluation unavailable for this position' : `Evaluation from White’s perspective: ${score}`}>
@@ -167,18 +147,22 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
             <button className="ghost" disabled={workspace.current === 'root'} onClick={() => setWorkspace({ ...workspace, current: 'root' })}>Start</button>
             <button className="ghost" disabled={!node.parent} onClick={() => setWorkspace({ ...workspace, current: node.parent! })}>← Back</button>
             <button className="ghost" disabled={!node.children.length} onClick={() => setWorkspace({ ...workspace, current: node.children[0] })}>Forward →</button>
-            <button className="ghost" onClick={() => setOrientation(orientation === 'white' ? 'black' : 'white')}>Flip board</button>
+            <button className="ghost" onClick={() => setView({orientation:orientation === 'white' ? 'black' : 'white'})}>Flip board</button>
           </div>
           <p className="fine-print">Move either side to try an idea. Go back and choose another move to create a variation. Your branches are saved in this browser.</p>
-          {unsaved && <p className="inline-error">Browser storage is unavailable. Export your PGN before closing to preserve these variations.</p>}
         </section>
+        <ResizeHandle label="Resize board and tools" axis={save.view.layout==='stacked'?'y':'x'} value={save.view.layout==='stacked'?save.view.boardSize:save.view.boardPercent} min={save.view.layout==='stacked'?240:25} max={save.view.layout==='stacked'?800:75} percent={save.view.layout!=='stacked'} reversed={save.view.layout==='focus'} onChange={value=>setView(save.view.layout==='stacked'?{boardSize:value}:{boardPercent:value})}/>
         <aside className="analysis-tools">
-          <section className="card analysis-engine">
+          <section className="card analysis-engine" style={{height:save.view.engineHeight}}>
             <div className="analysis-engine-heading"><h3>Stockfish</h3><label><input type="checkbox" checked={engineEnabled} onChange={event => setEngineEnabled(event.target.checked)} /> Engine</label></div>
-            <div className="analysis-score" role="status"><strong>{score}</strong><span>{thinking ? result ? 'Updating analysis…' : 'Analyzing…' : !engineEnabled ? 'Engine paused' : error ? 'Analysis unavailable' : result?.terminal ? result.reason?.replaceAll('_', ' ') : result ? `Depth ${result.lines[0]?.depth || 0}` : 'Ready'}</span></div>
+            <div className="analysis-score" role="status"><strong>{score}</strong><span>{thinking ? result ? `Searching · Depth ${result.lines[0]?.depth || 0}` : 'Analyzing…' : !engineEnabled ? 'Engine paused' : error ? 'Analysis unavailable' : result?.terminal ? result.reason?.replaceAll('_', ' ') : result ? `Depth ${result.lines[0]?.depth || 0}` : 'Ready'}</span></div>
             <p className="fine-print">Positive scores favor White; negative scores favor Black. M means forced mate.</p>
-            <div className="analysis-detail" role="group" aria-label="Engine analysis effort">{(['quick', 'balanced', 'deep'] as const).map(value => <button
-              className={`ghost ${detail === value ? 'selected' : ''}`} key={value} aria-pressed={detail === value} onClick={() => setDetail(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
+            <label className="analysis-search-mode">Search mode <select aria-label="Search mode" value={save.search.mode} onChange={event=>{onChange({...save,search:{...save.search,mode:event.target.value as AnalysisSave['search']['mode']}});setEngineEnabled(true);}}><option value="preset">Time presets</option><option value="depth">Exact depth</option><option value="unlimited">Unlimited</option></select></label>
+            {save.search.mode==='depth' && <div className="analysis-depth-control"><label>Target depth <input aria-label="Target depth" type="number" min="1" max="128" value={depthText} onChange={event=>setDepthText(event.target.value)}/></label><button className="ghost" onClick={()=>{const depth=Number(depthText);if(!Number.isInteger(depth)||depth<1||depth>128){setActionError('Enter a whole-number depth from 1 to 128.');return;}onChange({...save,search:{...save.search,depth}});setActionError('');setEngineEnabled(true);setRetry(value=>value+1);}}>Apply depth</button></div>}
+            {save.search.mode==='unlimited' && <p className="fine-print">No depth or time cap. Results update until you stop, leave this page, or change the position.</p>}
+            {save.search.mode!=='preset' && <button className="ghost" onClick={()=>{if(engineEnabled&&thinking)setEngineEnabled(false);else{setEngineEnabled(true);setRetry(value=>value+1);}}}>{engineEnabled&&thinking?'Stop search':'Resume search'}</button>}
+            {save.search.mode==='preset' && <div className="analysis-detail" role="group" aria-label="Engine analysis effort">{(['quick', 'balanced', 'deep'] as const).map(value => <button
+              className={`ghost ${detail === value ? 'selected' : ''}`} key={value} aria-pressed={detail === value} onClick={() => onChange({...save,search:{...save.search,detail:value}})}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>}
             {result?.lines.map((line, lineIndex) => <div className="analysis-engine-line" key={lineIndex}>
               <strong>{formatEngineScore(line.score)}</strong>
               <div>{line.moves.map((san, index) => {
@@ -190,13 +174,15 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
             {result?.lines.length ? <p className="fine-print">Click a move in an engine line to explore up to that move.</p> : null}
             {error && <div className="inline-error" role="alert">{error}<button className="ghost" onClick={() => setRetry(value => value + 1)}>Retry analysis</button></div>}
           </section>
-          <section className="card analysis-tree"><h3>Moves & variations</h3><button className={`ghost ${workspace.current === 'root' ? 'selected' : ''}`} onClick={() => setWorkspace({ ...workspace, current: 'root' })}>Starting position</button>
+          <ResizeHandle label="Resize engine panel" axis="y" value={save.view.engineHeight} min={180} max={800} onChange={engineHeight=>setView({engineHeight})}/>
+          <section className="card analysis-tree" style={{height:save.view.treeHeight}}><h3>Moves & variations</h3><button className={`ghost ${workspace.current === 'root' ? 'selected' : ''}`} onClick={() => setWorkspace({ ...workspace, current: 'root' })}>Starting position</button>
             {variationButtons(workspace.nodes.root)}{!workspace.nodes.root.children.length && <p className="fine-print">Make a move on the board to start exploring.</p>}
             <p className="fine-print">Selected path: {path.map(move => move.san).join(' ') || 'Starting position'}</p>
           </section>
+          <ResizeHandle label="Resize variations panel" axis="y" value={save.view.treeHeight} min={140} max={800} onChange={treeHeight=>setView({treeHeight})}/>
           <section className="card analysis-position"><h3>Position tools</h3>
             <div className="analysis-navigation"><button className="ghost" onClick={() => void copyPosition('fen')}>Copy FEN</button><button className="ghost" onClick={() => void copyPosition('pgn')}>Copy PGN</button>
-              <button className="ghost" onClick={() => { setWorkspace(emptyAnalysis()); setActionError(''); setNotice('New board ready.'); }}>New board</button></div>
+</div>
             <details open={editorOpen} onToggle={event => setEditorOpen(event.currentTarget.open)}><summary>Import FEN / PGN</summary>
               <label className="sense-label" htmlFor="analysis-position-text">Position or game text</label><textarea id="analysis-position-text" value={positionText} onChange={event => setPositionText(event.target.value)} rows={5} />
               <p className="fine-print">PGN imports its main line. PGN exports include your variation branches.</p>
@@ -205,6 +191,5 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
           </section>
         </aside>
       </div>
-    </div>
-  </div>;
+  </>;
 }
