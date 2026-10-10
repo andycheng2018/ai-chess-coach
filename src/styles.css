@@ -34,10 +34,10 @@ a { color: inherit; }
 .analysis-board-column { min-width: 0; }
 .analysis-board-row { display: flex; gap: 10px; width: 100%; }
 .analysis-chess-wrap { flex: 1; min-width: 0; border-radius: 7px; overflow: hidden; }
-.analysis-eval-bar { flex: 0 0 34px; position: relative; background: #403b34; border-radius: 5px; overflow: hidden; }
+.analysis-eval-bar { flex: 0 0 20px; position: relative; background: #403b34; border-radius: 5px; overflow: hidden; border: 1px solid #ffffff20; }
 .analysis-eval-bar > div { position: absolute; bottom: 0; left: 0; width: 100%; background: #eee8db; transition: height .3s ease; }
 .analysis-eval-bar.flipped > div { top: 0; bottom: auto; }
-.analysis-eval-bar > span { position: absolute; top: 50%; transform: translateY(-50%); left: 0; width: 100%; padding: 6px 1px; background: #272421dc; color: #fff; font-size: 9px; text-align: center; white-space: nowrap; }
+.analysis-eval-bar.unknown { background: repeating-linear-gradient(135deg, #403b34, #403b34 7px, #555047 7px, #555047 14px); }
 .analysis-board-status { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0; font-size: 13px; }
 .analysis-board-status span { color: var(--muted); font-size: 12px; }
 .analysis-navigation, .analysis-detail { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
@@ -53,6 +53,7 @@ a { color: inherit; }
 .analysis-engine-line div { min-width: 0; }
 .analysis-engine-line button { border: none; border-radius: 3px; padding: 4px; font-size: 13px; background: none; color: #ded8cf; }
 .analysis-engine-line button:hover { background: var(--panel-2); color: #aade7c; }
+.analysis-line-number { color: var(--muted); font-size: 11px; }
 .analysis-tools .selected { background: #81b64c33; color: #b5df8c; }
 .analysis-tree { max-height: 330px; overflow-y: auto; }
 .analysis-variation { font-size: 12px; }
@@ -65,7 +66,7 @@ a { color: inherit; }
 .analysis-promotion { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px; background: var(--panel-2); border-radius: 7px; }
 .analysis-modal :is(button, input, textarea, summary):focus-visible { outline: 2px solid #aade7c; outline-offset: 2px; }
 @media (min-width: 761px) {
-  .analysis-layout { grid-template-columns: minmax(0, min(640px, calc(100dvh - 250px))) minmax(300px, 1fr); }
+  .analysis-layout { grid-template-columns: minmax(0, clamp(280px, calc(100dvh - 250px), 640px)) minmax(300px, 1fr); }
 }
 @media (max-width: 760px) {
   .analysis-backdrop { padding: 0; }

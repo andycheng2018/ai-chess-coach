@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 
 export type Arrow = { from: string; to: string; kind?: 'best' | 'danger' | 'idea' };
 
@@ -100,6 +100,7 @@ export function ChessBoard(props: Props) {
   const dragTimer = useRef<number | null>(null);
   const remoteTimer = useRef<number | null>(null);
   const localMoveRef = useRef<string | null>(null);
+  const markerId = useId();
 
   const pieces = useMemo(() => fenToPieces(fen), [fen]);
   const files = orientation === 'white' ? ['a','b','c','d','e','f','g','h'] : ['h','g','f','e','d','c','b','a'];
@@ -413,17 +414,17 @@ export function ChessBoard(props: Props) {
 
       {(coachGeometry.length > 0 || userArrows.length > 0 || preview) && <svg className="arrow-layer" viewBox="0 0 100 100" aria-hidden="true">
         <defs>
-          <marker id="best-head" markerUnits="userSpaceOnUse" markerWidth="5.2" markerHeight="5.2" refX="4.7" refY="2.6" orient="auto"><path d="M0,0 L5.2,2.6 L0,5.2 Z" fill="rgba(105,183,73,.92)" /></marker>
-          <marker id="danger-head" markerUnits="userSpaceOnUse" markerWidth="5.2" markerHeight="5.2" refX="4.7" refY="2.6" orient="auto"><path d="M0,0 L5.2,2.6 L0,5.2 Z" fill="rgba(225,87,72,.92)" /></marker>
-          <marker id="idea-head" markerUnits="userSpaceOnUse" markerWidth="5.2" markerHeight="5.2" refX="4.7" refY="2.6" orient="auto"><path d="M0,0 L5.2,2.6 L0,5.2 Z" fill="rgba(79,151,214,.92)" /></marker>
-          <marker id="user-head" markerUnits="userSpaceOnUse" markerWidth="5.5" markerHeight="5.5" refX="5" refY="2.75" orient="auto"><path d="M0,0 L5.5,2.75 L0,5.5 Z" fill="rgba(42,137,55,.84)" /></marker>
+          <marker id={`${markerId}-best-head`} markerUnits="userSpaceOnUse" markerWidth="5.2" markerHeight="5.2" refX="4.7" refY="2.6" orient="auto"><path d="M0,0 L5.2,2.6 L0,5.2 Z" fill="rgba(105,183,73,.92)" /></marker>
+          <marker id={`${markerId}-danger-head`} markerUnits="userSpaceOnUse" markerWidth="5.2" markerHeight="5.2" refX="4.7" refY="2.6" orient="auto"><path d="M0,0 L5.2,2.6 L0,5.2 Z" fill="rgba(225,87,72,.92)" /></marker>
+          <marker id={`${markerId}-idea-head`} markerUnits="userSpaceOnUse" markerWidth="5.2" markerHeight="5.2" refX="4.7" refY="2.6" orient="auto"><path d="M0,0 L5.2,2.6 L0,5.2 Z" fill="rgba(79,151,214,.92)" /></marker>
+          <marker id={`${markerId}-user-head`} markerUnits="userSpaceOnUse" markerWidth="5.5" markerHeight="5.5" refX="5" refY="2.75" orient="auto"><path d="M0,0 L5.5,2.75 L0,5.5 Z" fill="rgba(42,137,55,.84)" /></marker>
         </defs>
-        {userArrows.map((arrow) => { const g = arrowGeometry(arrow.from, arrow.to, orientation); return <line key={`${arrow.from}-${arrow.to}`} {...g} stroke="rgba(42,137,55,.84)" strokeWidth="2.35" strokeLinecap="round" markerEnd="url(#user-head)" />; })}
-        {preview && <line {...preview} stroke="rgba(42,137,55,.62)" strokeWidth="2.35" strokeLinecap="round" markerEnd="url(#user-head)" />}
+        {userArrows.map((arrow) => { const g = arrowGeometry(arrow.from, arrow.to, orientation); return <line key={`${arrow.from}-${arrow.to}`} {...g} stroke="rgba(42,137,55,.84)" strokeWidth="2.35" strokeLinecap="round" markerEnd={`url(#${markerId}-user-head)`} />; })}
+        {preview && <line {...preview} stroke="rgba(42,137,55,.62)" strokeWidth="2.35" strokeLinecap="round" markerEnd={`url(#${markerId}-user-head)`} />}
         {coachGeometry.map((arrow, index) => {
           const kind = arrow.kind || 'idea';
           const stroke = kind === 'best' ? 'rgba(105,183,73,.92)' : kind === 'danger' ? 'rgba(225,87,72,.92)' : 'rgba(79,151,214,.92)';
-          return <line key={`${arrow.from}-${arrow.to}-${index}`} {...arrow.geometry} stroke={stroke} strokeWidth="2.05" strokeLinecap="round" opacity=".9" markerEnd={`url(#${kind}-head)`} />;
+          return <line key={`${arrow.from}-${arrow.to}-${index}`} {...arrow.geometry} stroke={stroke} strokeWidth="2.05" strokeLinecap="round" opacity=".9" markerEnd={`url(#${markerId}-${kind}-head)`} />;
         })}
       </svg>}
     </div>

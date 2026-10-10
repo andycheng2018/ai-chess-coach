@@ -35,6 +35,19 @@ export function analysisPosition(workspace: AnalysisWorkspace, id = workspace.cu
   return chess;
 }
 
+// Include move history: identical FENs can have different repetition outcomes.
+export function analysisPositionKey(workspace: AnalysisWorkspace): string {
+  return JSON.stringify([workspace.rootFen, analysisPath(workspace).map(node => node.uci)]);
+}
+
+export function evaluationWhitePercent(result: PositionAnalysis | null): number | null {
+  if (!result) return null;
+  if (result.terminal) return result.winner === 'white' ? 100 : result.winner === 'black' ? 0 : 50;
+  if (result.score.mate !== null) return result.score.mate > 0 ? 100 : 0;
+  if (result.score.cp === null || !Number.isFinite(result.score.cp)) return null;
+  return 100 / (1 + Math.exp(-result.score.cp / 300));
+}
+
 export function addAnalysisMove(workspace: AnalysisWorkspace, uci: string): AnalysisWorkspace {
   const parent = workspace.nodes[workspace.current];
   const chess = analysisPosition(workspace);
@@ -66,7 +79,8 @@ export function importAnalysis(text: string): AnalysisWorkspace {
   // A FEN contains eight slash-separated ranks, followed by side to move.
   if (/^\S+\/\S+\s+[wb]\s/.test(value)) return emptyAnalysis(value, 'Imported position');
   const chess = new Chess();
-  chess.loadPgn(value);
+  try { chess.loadPgn(value); }
+  catch { throw new Error('This is not a valid PGN. Check its move sequence, or paste a FEN instead.'); }
   const moves = chess.history({ verbose: true });
   const rootFen = moves[0]?.before || chess.fen();
   return seedAnalysis({ rootFen, moves: moves.map(move => move.from + move.to + (move.promotion || '')), source: 'Imported PGN (main line)' });

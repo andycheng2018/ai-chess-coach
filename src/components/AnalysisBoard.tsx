@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { type Square } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
-import { addAnalysisMove, analysisPath, analysisPosition, analyzeBoard, emptyAnalysis, exportAnalysisPgn,
+import { addAnalysisMove, analysisPath, analysisPosition, analysisPositionKey, analyzeBoard, emptyAnalysis, evaluationWhitePercent, exportAnalysisPgn,
   formatEngineScore, importAnalysis, readAnalysis, saveAnalysis, seedAnalysis,
   type AnalysisNode, type AnalysisSeed, type PositionAnalysis } from '../analysis';
 import type { CoachDetail } from '../coach';
@@ -13,7 +13,7 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
   const [orientation, setOrientation] = useState<'white' | 'black'>(seed?.orientation || 'white');
   const [detail, setDetail] = useState<CoachDetail>('balanced');
   const [engineEnabled, setEngineEnabled] = useState(true);
-  const [result, setResult] = useState<PositionAnalysis | null>(null);
+  const [completed, setCompleted] = useState<{ key: string; data: PositionAnalysis } | null>(null);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
@@ -31,6 +31,8 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
   const chess = useMemo(() => analysisPosition(workspace), [workspace]);
   const turn = chess.turn() === 'w' ? 'white' : 'black';
   const path = analysisPath(workspace);
+  const positionKey = analysisPositionKey(workspace);
+  const result = completed?.key === positionKey ? completed.data : null;
   const destinations = useMemo(() => {
     const moves = new Map<string, string[]>();
     for (const move of chess.moves({ verbose: true })) moves.set(move.from, [...(moves.get(move.from) || []), move.to]);
@@ -44,18 +46,18 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
 
   useEffect(() => {
     const controller = new AbortController();
-    setResult(null); setError('');
+    setError('');
     if (!engineEnabled) { setThinking(false); return () => controller.abort(); }
     setThinking(true);
     const timer = window.setTimeout(() => {
       void analyzeBoard(workspace, detail, controller.signal).then(data => {
-        if (!controller.signal.aborted) { setResult(data); setThinking(false); }
+        if (!controller.signal.aborted) { setCompleted({ key: positionKey, data }); setThinking(false); }
       }).catch(cause => {
         if (!controller.signal.aborted) { setError(cause instanceof Error ? cause.message : String(cause)); setThinking(false); }
       });
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [workspace, detail, engineEnabled, retry]);
+  }, [positionKey, detail, engineEnabled, retry]);
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -132,9 +134,7 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
     });
   }
 
-  const advantage = result?.terminal ? result.winner === 'white' ? 100 : result.winner === 'black' ? 0 : 50
-    : result?.score.mate != null ? result.score.mate > 0 ? 100 : 0
-      : result?.score.cp != null ? 100 / (1 + Math.exp(-result.score.cp / 300)) : 50;
+  const advantage = evaluationWhitePercent(result);
   const score = result ? formatEngineScore(result.score, result) : '—';
   const bestUci = result?.lines[0]?.uci[0];
 
@@ -148,8 +148,8 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
       <div className="analysis-layout">
         <section className="analysis-board-column">
           <div className="analysis-board-row">
-            <div className={`analysis-eval-bar ${orientation === 'black' ? 'flipped' : ''}`} role="img" aria-label={`Evaluation from White’s perspective: ${score}`}>
-              <div style={{ height: `${advantage}%` }} /><span>{result?.terminal ? result.winner === 'white' ? '1–0' : result.winner === 'black' ? '0–1' : '½–½' : score}</span>
+            <div className={`analysis-eval-bar ${orientation === 'black' ? 'flipped' : ''} ${advantage === null ? 'unknown' : ''}`} role="img" aria-label={advantage === null ? 'Evaluation unavailable for this position' : `Evaluation from White’s perspective: ${score}`}>
+              {advantage !== null && <div style={{ height: `${advantage}%` }} />}
             </div>
             <div className="analysis-chess-wrap"><ChessBoard fen={node.fen} orientation={orientation}
               movableColor={!destinations.size || promotion ? undefined : turn} destinations={destinations}
@@ -175,13 +175,17 @@ export function AnalysisBoard({ seed, onClose, liveGame }: Props) {
         <aside className="analysis-tools">
           <section className="card analysis-engine">
             <div className="analysis-engine-heading"><h3>Stockfish</h3><label><input type="checkbox" checked={engineEnabled} onChange={event => setEngineEnabled(event.target.checked)} /> Engine</label></div>
-            <div className="analysis-score" role="status"><strong>{score}</strong><span>{thinking ? 'Analyzing…' : !engineEnabled ? 'Engine paused' : error ? 'Analysis unavailable' : result?.terminal ? result.reason?.replaceAll('_', ' ') : result ? `Depth ${result.lines[0]?.depth || 0}` : 'Ready'}</span></div>
+            <div className="analysis-score" role="status"><strong>{score}</strong><span>{thinking ? result ? 'Updating analysis…' : 'Analyzing…' : !engineEnabled ? 'Engine paused' : error ? 'Analysis unavailable' : result?.terminal ? result.reason?.replaceAll('_', ' ') : result ? `Depth ${result.lines[0]?.depth || 0}` : 'Ready'}</span></div>
             <p className="fine-print">Positive scores favor White; negative scores favor Black. M means forced mate.</p>
             <div className="analysis-detail" role="group" aria-label="Engine analysis effort">{(['quick', 'balanced', 'deep'] as const).map(value => <button
               className={`ghost ${detail === value ? 'selected' : ''}`} key={value} aria-pressed={detail === value} onClick={() => setDetail(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
             {result?.lines.map((line, lineIndex) => <div className="analysis-engine-line" key={lineIndex}>
               <strong>{formatEngineScore(line.score)}</strong>
-              <div>{line.moves.map((san, index) => <button key={index} title="Explore this continuation" onClick={() => playLine(line.uci, index + 1)}>{san}</button>)}</div>
+              <div>{line.moves.map((san, index) => {
+                const black = (chess.turn() === 'b' ? index % 2 === 0 : index % 2 === 1);
+                const moveNumber = Number(node.fen.split(' ')[5]) + Math.floor((index + (chess.turn() === 'b' ? 1 : 0)) / 2);
+                return <button key={index} title="Explore this continuation" onClick={() => playLine(line.uci, index + 1)}>{!black || index === 0 ? <span className="analysis-line-number">{moveNumber}{black ? '…' : '.'} </span> : null}{san}</button>;
+              })}</div>
             </div>)}
             {result?.lines.length ? <p className="fine-print">Click a move in an engine line to explore up to that move.</p> : null}
             {error && <div className="inline-error" role="alert">{error}<button className="ghost" onClick={() => setRetry(value => value + 1)}>Retry analysis</button></div>}

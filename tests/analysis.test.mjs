@@ -57,6 +57,7 @@ test('underpromotion, black-to-move FEN, and PGN imports preserve the actual pos
   w = a.importAnalysis('1. e4 e5 2. Nf3 Nc6 *');
   assert.equal(a.analysisPath(w).length,4);
   assert.equal(w.nodes[w.current].fen,new Chess('r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3').fen());
+  assert.throws(()=>a.importAnalysis('not a chess position'),/not a valid PGN/);
 });
 
 test('PGN export includes alternatives and browser persistence restores every branch', () => {
@@ -91,6 +92,34 @@ test('replaying a branch keeps repetition history and scores keep White perspect
   assert.equal(a.formatEngineScore({cp:120,mate:null}),'+1.20');
   assert.equal(a.formatEngineScore({cp:null,mate:-3}),'−M3');
   assert.equal(a.formatEngineScore({cp:null,mate:0},{terminal:true,winner:'black'}),'Black wins');
+});
+
+test('evaluation distinguishes unknown, advantage, forced mate, and terminal outcomes', () => {
+  const {analysis:a}=environment();
+  const result = score => ({score,terminal:false,winner:null});
+  assert.equal(a.evaluationWhitePercent(null),null);
+  assert.equal(a.evaluationWhitePercent(result({cp:null,mate:null})),null);
+  assert.equal(a.evaluationWhitePercent(result({cp:0,mate:null})),50);
+  assert.ok(a.evaluationWhitePercent(result({cp:284,mate:null}))>50);
+  assert.ok(a.evaluationWhitePercent(result({cp:-284,mate:null}))<50);
+  assert.equal(a.evaluationWhitePercent(result({cp:100000,mate:null})),100);
+  assert.ok(a.evaluationWhitePercent(result({cp:-100000,mate:null}))<0.001);
+  assert.equal(a.evaluationWhitePercent(result({cp:null,mate:3})),100);
+  assert.equal(a.evaluationWhitePercent(result({cp:null,mate:-3})),0);
+  for(const [winner,expected] of [['white',100],['black',0],[null,50]]) {
+    assert.equal(a.evaluationWhitePercent({terminal:true,winner,score:{cp:null,mate:0}}),expected);
+  }
+});
+
+test('evaluation identity ignores selection rerenders but preserves repetition history', () => {
+  const {analysis:a}=environment();
+  const root=a.emptyAnalysis();
+  const original=a.analysisPositionKey(root);
+  assert.equal(a.analysisPositionKey({...root}),original);
+  let w=root;
+  for(const uci of ['g1f3','g8f6','f3g1','f6g8']) w=a.addAnalysisMove(w,uci);
+  assert.notEqual(a.analysisPositionKey(w),original);
+  assert.equal(a.analysisPositionKey({...w,current:'root'}),original);
 });
 
 test('cancelling a busy-engine retry stops further analysis requests', async () => {
