@@ -98,6 +98,14 @@ export async function handleTakeback(token: string, gameId: string, accept: bool
   await checkedFetch(`${BASE_URL}/api/board/game/${gameId}/takeback/${accept ? 'yes' : 'no'}`, { method: 'POST', headers: authHeaders(token) });
 }
 
+export async function requestTakeback(token: string, gameId: string): Promise<void> {
+  // Lichess uses the same endpoint for both offering and accepting takebacks.
+  await checkedFetch(`${BASE_URL}/api/board/game/${gameId}/takeback/yes`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+}
+
 async function readNdjson(response: Response, onEvent: (event: any) => void, signal?: AbortSignal): Promise<void> {
   if (!response.body) throw new Error('Streaming response has no body.');
   const reader = response.body.getReader();

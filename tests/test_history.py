@@ -129,6 +129,24 @@ class HistoryTests(unittest.TestCase):
         self.assertIn("CORRECTION REQUIRED", attempts[1]["instructions"])
         self.assertTrue(all(call["store"] is False for call in calls))
 
+    def test_opening_context_and_learning_record_share_the_audit_identity(self):
+        coach, calls = self.coach([{"feedback": "Develop the bishop while keeping your center secure.", "themes": []}])
+        moves = ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"]
+        opening = app.opening_result_fields(moves, 3)
+        wording = coach.create_feedback({
+            "played_move": "Bb5", "opening_eco": opening["openingEco"],
+            "opening_name": opening["openingName"], "opening_in_book": opening["openingInBook"],
+            "opening_depth_matched": opening["openingDepthMatched"],
+        }, game_id="game-a", record_id="analysis-1")
+        self.journal.save_records("game-a", [record(**wording, **opening)])
+        audit = self.journal.audit_entries()[0]
+        self.assertTrue(audit["payload"]["opening_in_book"])
+        self.assertEqual(audit["payload"]["opening_eco"], opening["openingEco"])
+        self.assertEqual(audit["payload"]["opening_depth_matched"], 5)
+        self.assertEqual(audit["learning_record"]["openingEco"], opening["openingEco"])
+        self.assertEqual(audit["learning_record"]["recordId"], "analysis-1")
+        self.assertFalse(calls[0]["store"])
+
     def test_validation_failure_is_not_marked_as_accepted(self):
         coach, _ = self.coach([{"feedback": ""}])
         with self.assertRaisesRegex(ValueError, "empty feedback"):
