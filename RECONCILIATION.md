@@ -10,8 +10,9 @@ No default-branch merge or push is part of this reconciliation.
 - Shared ancestor: `d7f9815654b9fcda2f920048406479c97eb9cf6f`.
 - Approved newer UI stash: `840d31274288ee0a5cee74c0ef143bca9465a550`.
 
-The first reconciliation commit, `f96d7af`, is a merge with both branch parents.
-The newer UI is applied on top. GitHub Desktop stash backups remain available;
+The local verification merge, `f96d7af`, combines both branch parents.
+The newer UI is applied on top. Publication through the connected GitHub account
+retains both original branch parents and the exact verified final source tree. GitHub Desktop stash backups remain available;
 its separate main stash containing local coaching journal data is not applied.
 
 ## Integration decisions
