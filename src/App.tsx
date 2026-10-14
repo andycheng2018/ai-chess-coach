@@ -7,6 +7,12 @@ import { isRememberedSenseGame, readSenseSetup, saveSenseSetup } from './senseSe
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Move, type Square } from 'chess.js';
 import { ChessBoard, type Arrow } from './components/ChessBoard';
+import { NavBar, type AppView } from './components/NavBar';
+import { SideBar } from './components/SideBar';
+import { CoachWindow } from './components/CoachWindow';
+import { HomeHub } from './components/HomeHub';
+import { ProfileModal } from './components/ProfileModal';
+import { MenuModal } from './components/MenuModal';
 import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativeOAuth } from './auth';
 import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import {
@@ -1699,6 +1705,7 @@ export default function App() {
   const [endGameConfirm, setEndGameConfirm] = useState(false);
   const [winner, setWinner] = useState<Winner>(null);
   const [gameOverOpen, setGameOverOpen] = useState(false);
+  const autoReportedGameRef = useRef<string | null>(null);
 
   const [coachResult, setCoachResult] = useState<CoachResult | null>(null);
   const [criticalPrompt, setCriticalPrompt] = useState<CriticalPrompt | null>(null);
@@ -1735,6 +1742,31 @@ export default function App() {
   const [coachDetail, setCoachDetail] = useState<CoachDetail>(readCoachDetail);
   const [coachLanguage, setCoachLanguage] = useState<CoachLanguage>(readCoachLanguage);
   const [openingState, setOpeningState] = useState<OpeningState | null>(null);
+  const [currentView, setCurrentView] = useState<AppView>('home');
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [menuModalOpen, setMenuModalOpen] = useState(false);
+  const [navHidden, setNavHidden] = useState(false);
+
+  // Auto-hide top navbar when scrolling down, restore when scrolling up or near top
+  useEffect(() => {
+    let lastScrollY = window.scrollY;
+
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      if (currentScrollY <= 45) {
+        setNavHidden(false);
+      } else if (currentScrollY > lastScrollY + 6 && currentScrollY > 70) {
+        setNavHidden(true);
+      } else if (currentScrollY < lastScrollY - 6) {
+        setNavHidden(false);
+      }
+      lastScrollY = currentScrollY;
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   const [reviewMode, setReviewMode] = useState<CoachReviewMode | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
   const [analysisOpen, setAnalysisOpen] = useState(() => analysisRoute() !== null);
@@ -2515,7 +2547,11 @@ export default function App() {
     const timer =
       window.setTimeout(
         () => {
-          setGameOverOpen(true);
+          // Preference changes must not reopen a dismissed report over another panel.
+          if (autoReportedGameRef.current !== gameId) {
+            autoReportedGameRef.current = gameId;
+            setGameOverOpen(true);
+          }
 
           if (
             !voiceEnabled ||
@@ -2678,6 +2714,8 @@ export default function App() {
         blocked: 'Audio blocked — tap to retry',
         offline: 'ElevenLabs offline',
       }[ttsStatus.state];
+  void testCoachVoice;
+  void ttsStatusLabel;
 
   const processCoachQueue = useCallback(async () => {
     if (coachProcessingRef.current) return;
@@ -3760,23 +3798,6 @@ export default function App() {
     signingIn={Boolean(token && !account)}
   />;
 
-  if (!token) {
-    return <main className="landing">
-      <div className="hero-card">
-        <span className="eyebrow">AI CHESS COACH</span>
-        <h1>Play a bot.<br />Learn every game.</h1>
-        <p>Challenge the training bot on Lichess and get immediate, position-specific coaching when a move needs attention.</p>
-        <button className="primary" onClick={() => void loginWithLichess().catch(error => setStatus(String(error)))}>Sign in with Lichess</button>
-        <button className="ghost wide" onClick={() => openAnalysis()}>Open analysis library</button>
-        <button className="ghost wide" onClick={() => setSenseSetupOpen(true)}>Connect my SenseRobot</button>
-        {status !== 'Ready' && <p role="status" className="fine-print">{status}</p>}
-        <p className="fine-print">AI coaching is enabled only in games against the designated training bot.</p>
-      </div>
-      {senseSetup}
-      {analysisBoard}
-    </main>;
-  }
-
   const topSide = orientation === 'white' ? 'black' : 'white';
   const bottomSide = orientation === 'white' ? 'white' : 'black';
   const coachingMoments = coachNotes.length;
@@ -3786,6 +3807,10 @@ export default function App() {
     (result) =>
       result.classification === 'good',
   ).length;
+  void blunders;
+  void mistakes;
+  void coachingMoments;
+  void goodMoves;
 
   const puzzleSourceNotes: CoachNote[] = [
     ...coachNotes,
@@ -3952,6 +3977,7 @@ export default function App() {
     })();
 
   const focusLessons = Array.from(new Set(coachNotes.map((note) => note.lesson).filter(Boolean))).slice(0, 3);
+  void focusLessons;
   const botLabel = bot.connected ? 'Coach bot ready' : bot.running ? 'Coach bot connecting' : 'Coach bot offline';
   const selectedLevel = LEVELS.find((item) => item.id === level) || LEVELS[2];
   const selectedTimeControl = TIME_CONTROLS.find((item) => item.id === timeControlId) || TIME_CONTROLS[4];
@@ -4174,20 +4200,113 @@ export default function App() {
   return <div className="app-shell">
     {senseSetup}
     {analysisBoard}
-    <header>
-      <div className="brand-row"><span className="eyebrow">AI CHESS COACH</span><strong>{account?.username || 'Connecting…'}</strong></div>
-      <div className="header-actions">
-        <button className="ghost" onClick={() => openAnalysis()}>Analysis library</button>
-        <button className="ghost" onClick={() => setSenseSetupOpen(true)}>SenseRobot setup</button>
-        <span className={`status-dot ${bot.connected ? 'online' : 'offline'}`} />
-        <span className="header-status">{status}</span>
-        {bot.lastMoveMs != null ? <span className="speed-pill">bot {bot.lastMoveMs} ms</span> : null}
-        <button className="ghost" onClick={() => { logout(); setToken(null); }}>Log out</button>
-      </div>
-    </header>
+    <ProfileModal
+      open={profileModalOpen}
+      onClose={() => setProfileModalOpen(false)}
+      username={account?.username}
+      coachDetail={coachDetail}
+      onChangeCoachDetail={setCoachDetail}
+      coachLanguage={coachLanguage}
+      onChangeCoachLanguage={(lang) => {
+        stopCoachSpeech();
+        setCoachLanguage(lang);
+      }}
+      voiceEnabled={voiceEnabled}
+      onToggleVoice={(enabled) => {
+        setVoiceEnabled(enabled);
+        if (enabled) {
+          void unlockCoachAudio().then(() =>
+            speakCoach(
+              coachLanguage === 'zh-CN'
+                ? '语音教练已开启。关键时刻我会提醒你。'
+                : "Voice coach is on. I'll speak up at the right moments.",
+              coachLanguage,
+            ),
+          );
+        } else {
+          stopCoachSpeech();
+        }
+      }}
+      hintsEnabled={hintsEnabled}
+      onToggleHints={setHintsEnabled}
+      onLogout={() => { logout(); setToken(null); }}
+    />
 
-    <main className="game-layout">
-      <section className="play-column">
+    <MenuModal
+      open={menuModalOpen}
+      onClose={() => setMenuModalOpen(false)}
+      onSelectView={setCurrentView}
+      onOpenAnalysis={openAnalysis}
+      onOpenSenseSetup={() => setSenseSetupOpen(true)}
+      username={account?.username}
+      botConnected={Boolean(bot.connected)}
+      botLabel={botLabel}
+      hasActiveGame={Boolean(activeGame || gameId)}
+      onLogout={() => { logout(); setToken(null); }}
+    />
+
+    <NavBar
+      currentView={currentView}
+      onSelectView={(view) => {
+        if (view === 'profile') setProfileModalOpen(true);
+        else if (view === 'menu') setMenuModalOpen(true);
+        else setCurrentView(view);
+      }}
+      username={account?.username}
+      botConnected={Boolean(bot.connected)}
+      botLabel={botLabel}
+      hasActiveGame={Boolean(activeGame || gameId)}
+      onOpenAnalysis={openAnalysis}
+      onOpenSenseSetup={() => setSenseSetupOpen(true)}
+      onLogout={() => { logout(); setToken(null); }}
+      hidden={navHidden}
+    />
+
+    <SideBar
+      currentView={currentView}
+      onSelectView={(view) => {
+        if (view === 'profile') setProfileModalOpen(true);
+        else if (view === 'menu') setMenuModalOpen(true);
+        else setCurrentView(view);
+      }}
+      username={account?.username}
+      botConnected={Boolean(bot.connected)}
+      botLabel={botLabel}
+      hasActiveGame={Boolean(activeGame || gameId)}
+      onOpenAnalysis={openAnalysis}
+      onOpenSenseSetup={() => setSenseSetupOpen(true)}
+      onOpenProfile={() => setProfileModalOpen(true)}
+      onOpenMenu={() => setMenuModalOpen(true)}
+      navHidden={navHidden}
+    />
+
+    {currentView === 'home' ? (
+      <HomeHub
+        username={account?.username}
+        botConnected={Boolean(bot.connected)}
+        botLabel={botLabel}
+        levels={LEVELS}
+        level={level}
+        onChangeLevel={(next) => { if (LEVELS.some(item => item.id === next)) void changeLevel(next as typeof level); }}
+        timeControls={TIME_CONTROLS}
+        timeControlId={timeControlId}
+        onChangeTimeControl={changeTimeControl as any}
+        preferredColor={preferredColor}
+        onChangeColor={setPreferredColor}
+        onStartGame={() => void startCoachGame()}
+        startingGame={startingGame}
+        recoveryChecked={recoveryChecked}
+        hasActiveGame={Boolean(activeGame || gameId)}
+        onEnterArena={() => setCurrentView('arena')}
+        onOpenAnalysis={openAnalysis}
+        onOpenSenseSetup={() => setSenseSetupOpen(true)}
+        onOpenProfile={() => setProfileModalOpen(true)}
+        onLogin={() => void loginWithLichess().catch((error) => setStatus(String(error)))}
+        isLoggedIn={Boolean(token)}
+      />
+    ) : (
+      <main className="arena-layout">
+      <section className="match-arena-window">
         <PlayerBar player={players[topSide]} clock={displayedClock[topSide]} active={activeGame && turnColor === topSide} side={topSide} />
         <section className="board-panel">
           <ChessBoard
@@ -4240,9 +4359,7 @@ export default function App() {
                 : 'Checking for an active game…'}
           </span>
         </div>
-      </section>
 
-      <aside className="side-panel">
         {!gameId && <section className="card setup-card">
           <div className="section-title"><span>1</span> Training opponent</div>
           <p className="section-copy">Estimated practice strength — start low and move up when games feel comfortable.</p>
@@ -4310,7 +4427,7 @@ export default function App() {
             <div><span>{gameOutcomeTitle}</span><strong>{gameReason}</strong></div>
             <b>{gameScore}</b>
           </div> : null}
-          <div className="move-list">
+          <div className="move-list-scroll custom-scroll">
             {position.san.length === 0 ? (
               <span className="muted">Moves will appear here.</span>
             ) : (
@@ -4422,316 +4539,58 @@ export default function App() {
             ) : null}
           </div>
         </section>}
+      </section>
 
-        <section className="card coach-card">
-          <div className="section-title">
-            <span>2</span>
+      {/* WINDOW 2: DEDICATED AI COACH COMMAND CENTER WINDOW WITH DEDICATED SCROLLBAR 2 */}
+      <CoachWindow
+        openingLabel={openingState?.name ? formatOpeningLabel(openingState) : ''}
+        openingStatus={openingState ? formatOpeningStatus(openingState, coachLanguage) : ''}
+        historyStatus={historyStatus}
+        coachResult={coachResult}
+        coachThinking={coachThinking}
+        coachError={coachError}
+        criticalPrompt={criticalPrompt}
+        coachNotes={orderedCoachNotes}
+        isMyTurn={isMyTurn}
+        voiceEnabled={voiceEnabled}
+        onToggleVoice={(enabled) => {
+          setVoiceEnabled(enabled);
+          if (enabled) {
+            void unlockCoachAudio().then(() =>
+              speakCoach(
+                coachLanguage === 'zh-CN'
+                  ? '语音教练已开启。关键时刻我会提醒你。'
+                  : "Voice coach is on. I'll speak up at the right moments.",
+                coachLanguage,
+              ),
+            );
+          } else {
+            stopCoachSpeech();
+          }
+        }}
+        ttsStatus={ttsStatus}
+        hintsEnabled={hintsEnabled}
+        onToggleHints={setHintsEnabled}
+        coachDetail={coachDetail}
+        onChangeCoachDetail={setCoachDetail}
+        coachLanguage={coachLanguage}
+        onChangeCoachLanguage={(lang) => {
+          stopCoachSpeech();
+          setCoachLanguage(lang);
+        }}
+        onReviewPosition={(res) => {
+          setReviewTarget(res);
+          setReviewMode('better');
+        }}
+        onSelectPly={(ply) => {
+          setHistoryPly(ply >= position.plyCount ? null : ply);
+        }}
+        currentPly={historyPly}
+        themeLabel={themeLabel}
+      />
 
-            {coachLanguage === 'zh-CN'
-              ? 'AI 教练'
-              : 'Live coach'}
-          </div>
-          {openingState?.name ? (
-            <div className="opening-badge coach-opening-badge">
-              <strong>{formatOpeningLabel(openingState)}</strong>
-              {formatOpeningStatus(openingState, coachLanguage) ? (
-                <small>{formatOpeningStatus(openingState, coachLanguage)}</small>
-              ) : null}
-            </div>
-          ) : null}
-          <div className={`coach-bubble ${coachResult?.classification || ''}`}>
-            {criticalPrompt && isMyTurn ? <>
-              {coachResult?.shouldCoach &&
-                coachResult.ply === criticalPrompt.ply - 1 ? (
-                <div className="coach-prior-feedback">
-                  <div className="coach-heading">
-                    <strong>{coachResult.title}</strong>
-                    <span className={`quality-badge ${coachResult.classification}`}>
-                      {coachResult.classification}
-                    </span>
-                  </div>
-
-                  <div>{coachResult.feedback}</div>
-
-                  {coachResult.themes?.length ? (
-                    <div className="coach-theme-tags">
-                      {coachResult.themes.map((theme) => (
-                        <span
-                          className="coach-theme-tag"
-                          key={theme}
-                        >
-                          {themeLabel(theme, coachLanguage)}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <button
-                    className="coach-review-button"
-                    onClick={() => {
-                      setReviewTarget(coachResult);
-                      setReviewMode('better');
-                    }}
-                  >
-                    {coachLanguage === 'zh-CN'
-                      ? '复盘这个局面'
-                      : 'Review this position'}
-                  </button>
-                </div>
-              ) : null}
-
-              {coachResult?.shouldCoach &&
-                coachResult.ply === criticalPrompt.ply - 1 ? (
-                <div className="coach-next-decision">
-                  {coachLanguage === 'zh-CN'
-                    ? '现在，落子之前'
-                    : 'Now, before you move'}
-                </div>
-              ) : null}
-
-              <div className="coach-heading">
-                <strong>{criticalPrompt.title}</strong>
-                <span className="quality-badge inaccuracy">
-                  {criticalPrompt.mateThreat
-                    ? coachLanguage === 'zh-CN'
-                      ? '将杀威胁'
-                      : 'Mate threat'
-                    : coachLanguage === 'zh-CN'
-                      ? '先想一想'
-                      : 'Think first'}
-                </span>
-              </div>
-
-              <div className="coach-question">
-                <span>
-                  {criticalPrompt.mateThreat
-                    ? coachLanguage === 'zh-CN'
-                      ? '优先处理'
-                      : 'Priority'
-                    : criticalPrompt.kind === 'opportunity'
-                      ? coachLanguage === 'zh-CN'
-                        ? '机会'
-                        : 'Opportunity'
-                      : criticalPrompt.kind === 'threat'
-                        ? coachLanguage === 'zh-CN'
-                          ? '对手意图'
-                          : 'Opponent idea'
-                        : coachLanguage === 'zh-CN'
-                          ? '关键局面'
-                          : 'Critical position'}
-                </span>
-
-                {criticalPrompt.question}
-              </div>
-            </> : coachThinking ? <div className="coach-thinking"><span className="spinner" />Analyzing your move…</div> : coachError ? <div className="inline-error">{coachError}</div> : coachResult ? <>
-              <div className="coach-heading">
-                <strong>{coachResult.title}</strong>
-                {coachResult.shouldCoach ? (
-                  <span className={`quality-badge ${coachResult.classification}`}>
-                    {coachResult.classification}
-                  </span>
-                ) : null}
-              </div>
-              <div>{coachResult.feedback}</div>
-              {coachResult.themes?.length ? (
-                <div
-                  className="coach-theme-tags"
-                  aria-label={coachLanguage === 'zh-CN'
-                    ? '棋局主题'
-                    : 'Chess themes'}
-                >
-                  {coachResult.themes.map((theme) => (
-                    <span
-                      className="coach-theme-tag"
-                      key={theme}
-                    >
-                      {themeLabel(theme, coachLanguage)}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {coachResult.question ? (
-                <div className="coach-question">
-                  <span>
-                    {coachLanguage === 'zh-CN'
-                      ? '想一想'
-                      : 'Ask yourself'}
-                  </span>
-
-                  {coachResult.question}
-                </div>
-              ) : null}
-              {coachResult.lesson ? (
-                <div className="coach-lesson">
-                  {coachLanguage === 'zh-CN'
-                    ? '记住：'
-                    : 'Remember: '}
-
-                  {coachResult.lesson}
-                </div>
-              ) : null}
-              {coachResult.shouldCoach ? <button className="coach-review-button" onClick={() => { setReviewTarget(coachResult); setReviewMode('better'); }}>Review this position</button> : null}
-            </> : <>
-              <strong>
-                {coachLanguage === 'zh-CN'
-                  ? '准备好了'
-                  : 'Ready to coach'}
-              </strong>
-              <div>
-                {coachLanguage === 'zh-CN'
-                  ? '继续下棋。没有重要内容时我会保持安静，关键时刻再提醒你。'
-                  : 'Keep playing. I’ll stay quiet when there is nothing important to add and step in when a position is worth discussing.'}
-              </div>
-            </>}
-          </div>
-          <div className="coach-detail-setting">
-            <span>
-              {coachLanguage === 'zh-CN'
-                ? '教练语言'
-                : 'Coach language'}
-            </span>
-
-            <div className="coach-detail-options">
-              {(
-                [
-                  ['en', 'English'],
-                  ['zh-CN', '中文'],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`coach-detail-button ${coachLanguage === value
-                    ? 'active'
-                    : ''
-                    }`}
-                  aria-pressed={
-                    coachLanguage === value
-                  }
-                  onClick={() => {
-                    stopCoachSpeech();
-                    setCoachLanguage(value);
-                  }}
-                >
-                  <span>{label}</span>
-
-                  {coachLanguage === value ? (
-                    <span
-                      className="coach-detail-check"
-                      aria-hidden="true"
-                    >
-                      ✓
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="coach-detail-setting">
-            <span>Coach detail</span>
-
-            <div className="coach-detail-options">
-              {(
-                [
-                  ['quick', 'Quick', 'Fast'],
-                  ['balanced', 'Balanced', 'Stronger'],
-                  ['deep', 'Deep', 'Deepest'],
-                ] as const
-              ).map(([value, label, strength]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`coach-detail-button ${coachDetail === value ? 'active' : ''
-                    }`}
-                  aria-pressed={coachDetail === value}
-                  onClick={() => setCoachDetail(value)}
-                >
-                  <span>{label}</span>
-                  <small>{strength} Stockfish</small>
-                  {coachDetail === value ? (
-                    <span className="coach-detail-check" aria-hidden="true">✓</span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="coach-actions">
-            <div className="voice-controls">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={voiceEnabled}
-                  onChange={(event) => {
-                    const enabled =
-                      event.target.checked;
-
-                    setVoiceEnabled(enabled);
-
-                    if (enabled) {
-                      /*
-                      * IMPORTANT:
-                      * This happens directly inside a user click,
-                      * so iOS can unlock audio playback.
-                      */
-                      void unlockCoachAudio().then(() =>
-                        speakCoach(
-                          coachLanguage === 'zh-CN'
-                            ? '语音教练已开启。关键时刻我会提醒你。'
-                            : "Voice coach is on. I'll speak up at the right moments.",
-                          coachLanguage,
-                        ),
-                      );
-                    } else {
-                      stopCoachSpeech();
-                    }
-                  }}
-                />
-
-                {coachLanguage === 'zh-CN'
-                  ? ' 语音'
-                  : ' Voice'}
-              </label>
-
-              <button
-                type="button"
-                className={`tts-status ${ttsStatus.state}`}
-                title={ttsStatus.detail || ttsStatusLabel}
-                onClick={testCoachVoice}
-              >
-                <i aria-hidden="true" />
-                {ttsStatusLabel}
-              </button>
-            </div>
-            <label><input type="checkbox" checked={hintsEnabled} onChange={(event) => setHintsEnabled(event.target.checked)} /> Board hints</label>
-          </div>
-          <div className="hint-legend"><span><i className="legend-line best" />best</span><span><i className="legend-line danger" />threat</span><span><i className="legend-square" />key square</span></div>
-        </section>
-
-        {(gameId || coachNotes.length > 0) && <section className="card learning-card">
-          <div className="section-title learning-title"><span>3</span><div>Learning log<small>{historyStatus === 'synced' ? 'Saved to coaching history' : historyStatus === 'offline' ? 'Saved on this device · waiting to sync' : historyStatus === 'unavailable' ? 'History could not be saved' : 'Syncing coaching history…'}</small></div></div>
-          {coachNotes.length === 0 ? <p className="muted">Your important coaching moments will collect here so you can review the exact position later.</p> : <div className="lesson-list">
-            {orderedCoachNotes.map((note) => <button
-              type="button"
-              className="lesson-item"
-              key={`${note.gameId}-${note.ply}`}
-              onClick={() => { setReviewTarget(note); setReviewMode('better'); }}
-            >
-              <span className={`lesson-dot ${note.classification}`} />
-              <div>
-                <strong>Move {note.moveNumber} · {note.playedMove} · {note.title}</strong>
-                <small>{note.lesson || 'Review the opponent’s forcing replies.'}</small>
-              </div>
-              <span className="review-chevron">›</span>
-            </button>)}
-          </div>}
-          {!activeGame && coachNotes.length > 0 ? <div className="session-review">
-            <strong>Game review</strong>
-            <div className="review-stats"><span><b>{coachingMoments}</b> coach moments</span><span><b>{mistakes}</b> mistakes</span><span><b>{blunders}</b> blunders</span></div>
-            {focusLessons.length ? <div className="focus-list"><span>Focus next game</span>{focusLessons.map((lesson) => <small key={lesson}>• {lesson}</small>)}</div> : <small className="muted">No major recurring issue found in this game.</small>}
-          </div> : null}
-        </section>}
-      </aside>
-    </main>
+      </main>
+    )}
 
     {reviewMode && reviewTarget && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Review coached position" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewMode(null); }}>
       <div
