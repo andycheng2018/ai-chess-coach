@@ -572,6 +572,42 @@ class LLMCoach:
             encoding="utf-8"
         ).strip()
 
+    @audit_call("chat")
+    def create_chat_reply(self, context: dict[str, Any], message: str,
+                          turns: list[dict[str, Any]], language: str = "en",
+                          detail: str = "balanced", game_id: str = "",
+                          record_id: str | None = None) -> dict[str, Any]:
+        instructions = (PROMPT_PATH.parent / "luna_chat_prompt.txt").read_text(encoding="utf-8")
+        inputs = []
+        for turn in turns[-8:]:
+            inputs.extend([
+                {"role": "user", "content": json.dumps({"position_fen": turn["fen"], "question": turn["message"]}, ensure_ascii=False)},
+                {"role": "assistant", "content": turn["reply"]},
+            ])
+        inputs.append({"role": "user", "content": json.dumps({
+            "context": context, "language": language, "detail": detail, "question": message,
+        }, ensure_ascii=False)})
+        entry = {"timestamp": timestamp(), "type": "chat", "game_id": game_id,
+                 "model": self.model, "instructions": instructions,
+                 "payload": {**context, "message": message, "language": language, "detail": detail},
+                 "input": inputs}
+        try:
+            response = self.client.with_options(timeout=45, max_retries=0).responses.create(
+                model=self.model, instructions=instructions, input=inputs,
+                max_output_tokens={"quick": 500, "balanced": 900, "deep": 1600}.get(detail, 900), store=False,
+            )
+            reply = response.output_text.strip()
+            entry["raw_output"] = reply
+            if not reply or getattr(response, "status", "completed") != "completed":
+                raise ValueError("Luna could not finish her reply. Please try again.")
+            entry["status"] = "success"
+            return {"reply": reply}
+        except Exception as exc:
+            entry.update(status="error", error=str(exc))
+            raise
+        finally:
+            record_attempt(entry)
+
     @audit_call("feedback")
     def create_feedback(
         self,

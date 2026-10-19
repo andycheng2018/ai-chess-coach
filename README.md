@@ -28,6 +28,7 @@ Stockfish is responsible for evaluations, best moves, tactics, and move classifi
 ## What it does
 
 * **Live AI coaching**: analyzes moves as you play and explains important mistakes in natural/chess language.
+* **Chat with Luna**: ask follow-up questions in the coach window or alongside a saved analysis board, with Stockfish context and persistent conversations.
 * **Critical-position questions**: sometimes asks the player what they think the opponent is threatening instead of immediately giving away the answer.
 * **Personalized practice**: turns useful mistakes from the game into tactical or positional puzzles afterward.
 * **Learning log**: saves important moments so players can revisit the exact position and see the better move or opponent threat.
@@ -53,10 +54,31 @@ The browser keeps one offline history cache and migrates the older Learning log
 and game evaluation storage automatically. Pending uploads remain cached until
 the backend acknowledges them. Historical notes without a captured model call
 remain reviewable, but cannot supply missing raw prompts or responses. Clearing
-model attempts in Audit Studio preserves Learning records and reports. The
+model attempts in Audit Studio preserves Learning records, reports, and Luna conversations. The
 journal is ignored by Git; preserve the `logs/` directory when moving or
 redeploying the backend. OpenAI calls use `store=False` because the application
 keeps its audit records in this journal.
+
+### Talk with Luna
+
+Open the existing coach window and select **Chat with Luna**. In a saved analysis,
+use the visible Luna chat panel below Stockfish, or select **Chat with Luna** at
+the top to jump to its message box. Ask a question,
+share an idea, or use **Discuss your coaching question** to answer the coach.
+Enter sends; Shift+Enter adds a line. The coach window's language and detail
+controls also apply to chat, and **Read aloud** speaks a reply on request.
+
+Each game and each analysis save has its own conversation. Luna receives the
+exact board snapshot captured when you send, fresh bounded Stockfish analysis,
+matching saved coaching, and the last eight exchanges. Earlier replies show
+their position and are labeled when you change the board. The complete transcript
+remains in the same backend journal; the browser caches it and keeps drafts and
+unconfirmed request IDs for retries. Chat never moves pieces or changes a save.
+
+The backend uses the existing `OPENAI_API_KEY` and `OPENAI_MODEL` configuration.
+Restart the backend after updating the code or `.env`. In Audit Studio, select
+**Luna chats** to inspect the actual conversation input, board/engine context,
+raw model output, failures, and saved exchange. There is no second chat database.
 
 ## How it works
 

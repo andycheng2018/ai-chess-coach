@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { type Square } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { addAnalysisMove, analysisPath, analysisPosition, analysisPositionKey, analyzeBoard, watchAnalysis, evaluationWhitePercent, exportAnalysisPgn,
@@ -6,10 +6,16 @@ import { addAnalysisMove, analysisPath, analysisPosition, analysisPositionKey, a
   type AnalysisNode, type AnalysisWorkspace, type PositionAnalysis } from '../analysis';
 import { downloadAnalysis, type AnalysisSave } from '../analysisLibrary';
 import { ResizeHandle } from './ResizeHandle';
+import { LunaChat } from './LunaChat';
 
 type Props = { save: AnalysisSave; onChange: (save: AnalysisSave) => boolean; onClose: () => void; onLibrary: () => void; onNew: () => void; onSaveAs: () => void; onSave: () => void; notice: string; liveGame: boolean };
 
 export function AnalysisBoard({ save, onChange, onClose, onLibrary, onNew, onSaveAs, onSave, notice: savedNotice, liveGame }: Props) {
+  const chatPanel = useRef<HTMLDivElement>(null);
+  function focusChat() {
+    chatPanel.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    chatPanel.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus({ preventScroll: true });
+  }
   const [titleText, setTitleText] = useState(save.title);
   useEffect(() => setTitleText(save.title), [save.title]);
   const workspace = save.workspace;
@@ -116,7 +122,7 @@ export function AnalysisBoard({ save, onChange, onClose, onLibrary, onNew, onSav
   return <>
       <div className="analysis-heading">
         <div><span className="eyebrow">EXPLORE · COMPARE · UNDERSTAND</span><h2 id="analysis-title">{save.title}</h2><p>{workspace.source}</p></div>
-        <div className="analysis-heading-actions"><button className="ghost" onClick={onLibrary}>← Library</button><button className="ghost" onClick={onClose}>Back to {liveGame ? 'live game' : 'coach'}</button></div>
+        <div className="analysis-heading-actions"><button className="primary" onClick={focusChat}>☾ Chat with Luna</button><button className="ghost" onClick={onLibrary}>← Library</button><button className="ghost" onClick={onClose}>Back to {liveGame ? 'live game' : 'coach'}</button></div>
       </div>
       {liveGame && <p className="analysis-live-notice">Your live game and its clock continue while you analyze this copy.</p>}
       <div className="analysis-workspace-toolbar">
@@ -175,6 +181,10 @@ export function AnalysisBoard({ save, onChange, onClose, onLibrary, onNew, onSav
             {error && <div className="inline-error" role="alert">{error}<button className="ghost" onClick={() => setRetry(value => value + 1)}>Retry analysis</button></div>}
           </section>
           <ResizeHandle label="Resize engine panel" axis="y" value={save.view.engineHeight} min={180} max={800} onChange={engineHeight=>setView({engineHeight})}/>
+          <div className="card analysis-luna-panel" ref={chatPanel}>
+            <LunaChat key={`analysis:${save.id}`} sessionId={`analysis:${save.id}`}
+              position={{ fen: node.fen, rootFen: workspace.rootFen, moves: path.map(move => move.uci!) }} detail={detail} />
+          </div>
           <section className="card analysis-tree" style={{height:save.view.treeHeight}}><h3>Moves & variations</h3><button className={`ghost ${workspace.current === 'root' ? 'selected' : ''}`} onClick={() => setWorkspace({ ...workspace, current: 'root' })}>Starting position</button>
             {variationButtons(workspace.nodes.root)}{!workspace.nodes.root.children.length && <p className="fine-print">Make a move on the board to start exploring.</p>}
             <p className="fine-print">Selected path: {path.map(move => move.san).join(' ') || 'Starting position'}</p>

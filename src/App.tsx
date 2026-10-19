@@ -4543,6 +4543,10 @@ export default function App() {
 
       {/* WINDOW 2: DEDICATED AI COACH COMMAND CENTER WINDOW WITH DEDICATED SCROLLBAR 2 */}
       <CoachWindow
+        chatSessionId={gameId ? `game:${gameId}` : `lounge:${account?.id || 'local'}`}
+        chatPosition={{ fen: displayPosition.chess.fen(), rootFen: initialFen && initialFen !== 'startpos' ? initialFen : new Chess().fen(),
+          moves: movesText.trim().split(/\s+/).filter(Boolean).slice(0, historyPly ?? position.plyCount) }}
+        onSpeakChat={(text) => { void unlockCoachAudio().then(() => speakCoach(text, coachLanguage)); }}
         openingLabel={openingState?.name ? formatOpeningLabel(openingState) : ''}
         openingStatus={openingState ? formatOpeningStatus(openingState, coachLanguage) : ''}
         historyStatus={historyStatus}
