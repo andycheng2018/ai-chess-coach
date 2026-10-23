@@ -25,6 +25,7 @@ from coach.opening_recognizer import recognize_opening
 from coach.stockfish_analyzer import StockfishAnalyzer, capture_context, find_stockfish
 from coach.history import history
 from coach.analysis_search import analysis_searches
+from vbot_demo import demo as vbot_demo
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 
@@ -876,6 +877,7 @@ def analyze_move(
         analysis["_history_record"] = dict(result)
     if game_id:
         history.save_records(game_id, [result])
+        vbot_demo.remember(result)
     return result
 
 
@@ -1488,6 +1490,17 @@ def critical_position_question(
 class Handler(BaseHTTPRequestHandler):
     server_version = "AIChessCoach/1.0"
 
+    def _vbot_local_request(self) -> bool:
+        # Physical motion controls are local to the demo Mac, including same-origin
+        # browser checks. Existing public coaching APIs retain their own CORS rules.
+        port = self.server.server_port
+        allowed = {f"http://{host}:{p}" for host in ("localhost", "127.0.0.1")
+                   for p in (port, 5173, 3333)}
+        local_hosts = {f"localhost:{port}", f"127.0.0.1:{port}", f"[::1]:{port}"}
+        return (self.client_address[0] in {"127.0.0.1", "::1"}
+                and self.headers.get("Host", "") in local_hosts
+                and self.headers.get("Origin", "") in allowed | {""})
+
     def _cors_origin(self) -> str:
         origin = self.headers.get("Origin", "")
 
@@ -1614,7 +1627,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self) -> None:  # noqa: N802
-        if urlsplit(self.path).path in {"/audit", "/audit/"}:
+        if urlsplit(self.path).path in {"/vbot", "/vbot/", "/api/vbot/status"}:
+            if not self._vbot_local_request():
+                self._send(403, {"message": "Open VBOT Demo locally on the demo Mac."})
+            elif urlsplit(self.path).path == "/api/vbot/status":
+                self._send(200, vbot_demo.status())
+            else:
+                self._send_bytes(200, (ROOT / "vbot-demo" / "index.html").read_bytes(), "text/html; charset=utf-8")
+        elif urlsplit(self.path).path in {"/audit", "/audit/"}:
             try:
                 self._send_bytes(200, (ROOT / "audit-dashboard" / "index.html").read_bytes(), "text/html; charset=utf-8")
             except OSError:
@@ -1628,6 +1648,7 @@ class Handler(BaseHTTPRequestHandler):
                 warning = str(exc)
             self._send(200, {
                 "ok": True,
+                "vbotDemo": True,
                 "coach": {"configured": bool(os.environ.get("OPENAI_API_KEY", "").strip())},
                 "stockfish": stockfish,
                 "bot": runtime.status(),
@@ -1718,7 +1739,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
-            if self.path == "/api/logs/clear":
+            if self.path.startswith("/api/vbot/"):
+                if not self._vbot_local_request() or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                    self._send(403, {"message": "VBOT controls require local JSON requests from the demo Mac."})
+                    return
+                payload = self._json_body()
+                if self.path == "/api/vbot/arm":
+                    response = vbot_demo.arm(payload)
+                elif self.path == "/api/vbot/disarm":
+                    response = vbot_demo.disarm()
+                elif self.path == "/api/vbot/celebrate":
+                    response = vbot_demo.celebrate(payload, runtime.game_state(str(payload.get("gameId", ""))))
+                elif self.path == "/api/vbot/rehearse":
+                    response = vbot_demo.rehearse(payload.get("classification", "good"), payload.get("scenario", "ordinary"))
+                else:
+                    self._send(404, {"message": "Not found"})
+                    return
+                self._send(200, response)
+            elif self.path == "/api/logs/clear":
                 history.clear_attempts()
                 self._send(200, {"ok": True, "message": "Model attempts cleared; learning records and chats preserved"})
             elif self.path == "/api/coach/chat":
@@ -1853,6 +1891,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
+        vbot_demo.disarm()
         server.server_close()
         analysis_searches.close()
         runtime.stop()

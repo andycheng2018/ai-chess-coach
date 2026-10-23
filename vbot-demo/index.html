@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chess Buddy × VBOT · Demo desk</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101817;color:#edf3e7;font:16px/1.55 system-ui,sans-serif}main{max-width:1120px;margin:55px auto;padding:0 24px}small,.muted{color:#a8b9b0}h1{font:500 clamp(32px,5vw,56px)/1.1 Georgia,serif;margin:14px 0 20px}h2{font-size:19px;margin:0 0 16px}.eyebrow{letter-spacing:.18em;color:#c7df91;font-size:12px;text-transform:uppercase}.lead{max-width:680px;color:#bdcec3}section{background:#192521;border:1px solid #34433b;border-radius:18px;padding:25px;margin-top:20px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}label{display:block;margin:15px 0 6px}input:not([type=checkbox]),select{width:100%;padding:12px;border:1px solid #57675c;background:#101817;color:#edf3e7;border-radius:8px;font:inherit}button{padding:12px 20px;border:0;border-radius:8px;font:600 15px system-ui;cursor:pointer;background:#c7df91;color:#142017}button.secondary{background:#34463b;color:#edf3e7}button.stop{background:#f0aa96;color:#291910}button:disabled{opacity:.45;cursor:default}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}.badge{display:inline-block;padding:6px 12px;border-radius:30px;background:#34463b;font-weight:650}#state.armed{background:#c7df91;color:#142017}#state.live{background:#f0aa96;color:#291910}.check{display:flex;align-items:start;gap:10px}input[type=checkbox]{margin-top:7px}.flow{font:18px Georgia,serif;color:#c7df91;margin:25px 0}.events{list-style:none;padding:0;max-height:460px;overflow:auto}.events li{padding:13px 0;border-top:1px solid #34433b;display:grid;grid-template-columns:90px 110px 1fr;gap:10px}.events time{color:#a8b9b0;font-size:13px}#error{color:#ffc0a8;white-space:pre-wrap}a{color:#c7df91}.notice{border-left:3px solid #c7df91;padding-left:14px}.live-options[hidden]{display:none}@media(max-width:760px){main{margin-top:28px}.grid{grid-template-columns:1fr}.events li{grid-template-columns:75px 1fr}.events li span:last-child{grid-column:1/-1}}
+</style>
+<main>
+<div class="eyebrow">Saturday demo · Chess Buddy × VBOT EDU</div>
+<h1>A good move.<br>A little celebration.</h1>
+<p class="lead">Your existing Lichess game feeds the coach. Ordinary good moves earn a brief, varied acknowledgment. Material wins and meaningful evaluation improvements can earn a full dance.</p>
+<p class="flow">Human move → Lichess → Coach verdict → Gesture or milestone dance</p>
+<span class="badge" id="state">Connecting…</span> <span class="muted" id="detail"></span>
+<div class="grid">
+<section><h2>Prepare the demo</h2>
+<label for="game">Lichess game ID</label><input id="game" maxlength="8" placeholder="e.g. AbCd1234" autocomplete="off">
+<small>The eight letters/numbers in the game link. Only this game can trigger the robot.</small>
+<label for="mode">Mode</label><select id="mode"><option value="rehearsal">Rehearsal · no robot connection</option><option value="live">Live · physical robot motion</option></select>
+<label for="preset">Milestone celebration</label><select id="preset"><option value="actions/ROCKYOU.json">Rock You · major moments only</option></select>
+<small>Ordinary good moves: randomly choose a rehearsed wave or left/right head gesture. Fast games: head gestures only.</small>
+<div class="live-options" id="live-options" hidden>
+<label for="target">Verified SSH alias or vbot@IP</label><input id="target" placeholder="vbot@your-verified-robot-address" autocomplete="off">
+<p id="verification" class="muted"></p>
+<label for="version">Robot application version (if independently verified)</label><input id="version" placeholder="unknown" autocomplete="off">
+<label class="check"><input id="space" type="checkbox"><span>I have clear space, a suitable posture, and have rehearsed the selected actions on this robot.</span></label>
+<label class="check"><input id="stop" type="checkbox"><span>An onsite operator has the handset ready and knows how to stop the robot.</span></label>
+</div>
+<div class="actions"><button id="arm">Arm rehearsal</button><button class="stop" id="disarm">Disarm future dances</button></div>
+<p id="error" role="alert"></p>
+</section>
+<section><h2>Rehearse before the room fills</h2>
+<p>Start in rehearsal. Feed a sample verdict through the same celebration rules, then play a real training game and watch its events arrive here.</p>
+<div class="actions"><button class="secondary" id="good">Sample good move</button><button class="secondary" id="mistake">Sample mistake</button><button class="secondary" id="major">Sample major moment</button></div>
+<p class="muted">Sample events are labeled synthetic. They never contact the robot. Actual game events require a fresh engine result and a matching move in the existing Lichess bot stream.</p>
+<p class="notice">One action at a time. Rest after completion: 10 seconds for gestures, 20 seconds for dances. Full dances at least three minutes apart. Fresh readiness checks before each action. Busy moves are skipped, never queued. An uncertain robot result disarms the demo and is never retried automatically.</p>
+<p><strong>Disarm prevents future requests.</strong> It does not stop a dance already running. Use the onsite handset stop for that.</p>
+<p class="muted">Live arming requires a verified application version or a local record of this exact preset being successfully tested on this robot. Sound remains a separate check. Keep this desk open on the Mac running the local coach backend.</p>
+<p class="muted">Full-dance rules: net material gain ≥2 points after the expected reply, evaluation gain ≥2 pawns over recent turns, or a sustained ≥1.5-pawn improvement (last 3 turns versus prior 5). Depth 12+ and noise checks required. These are heuristics, not calibrated statistical significance. Fast games (estimated base + 40 increments under 10 minutes), unknown time controls, or under 2 minutes remaining use head gestures only.</p>
+<a href="/api/health" target="_blank" rel="noreferrer">Coach backend status ↗</a>
+</section>
+</div>
+<section><h2>Event desk</h2><p class="muted">A request is distinct from confirmed completion. This timeline lasts until the backend restarts; every restart begins disarmed.</p><ol class="events" id="events"><li>No events yet.</li></ol></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let initialized=false;
+async function api(path,body){const response=await fetch('/api/vbot/'+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const data=await response.json();if(!response.ok)throw new Error(data.message||'Request failed');return data;}
+function mode(){const live=$('mode').value==='live';$('live-options').hidden=!live;$('arm').textContent=live?'Arm live dance':'Arm rehearsal';}
+async function refresh(){try{const s=await api('status');$('state').textContent=s.armed?(s.mode==='live'?'LIVE · ARMED':'REHEARSAL · ARMED'):'DISARMED';$('state').className='badge'+(s.armed?' armed':'')+(s.armed&&s.mode==='live'?' live':'');$('detail').textContent=[s.gameId&&'Game '+s.gameId,s.busy?'Action in progress':s.cooldownRemaining>0?'Cooldown '+s.cooldownRemaining+'s':'Ready for the next eligible move'].filter(Boolean).join(' · ');if(!initialized){$('game').value=s.gameId;$('target').value=s.target;$('mode').value=s.mode;$('preset').value=s.preset;$('version').value=s.verification?.applicationVersion||'unknown';$('verification').textContent=s.verification?'Local rehearsal recorded for '+s.verification.target+': '+s.verification.presets.map(p=>p.preset.split('/').pop()).join(', ')+'. Application version '+(s.verification.applicationVersion||'unverified')+'. ROCKYOU sound pending.':'';initialized=true;mode();}$('good').disabled=$('mistake').disabled=$('major').disabled=!s.armed||s.mode!=='rehearsal';$('arm').disabled=s.busy;const nodes=s.events.map(e=>{const li=document.createElement('li'),t=document.createElement('time'),status=document.createElement('strong'),text=document.createElement('span');t.textContent=new Date(e.time).toLocaleTimeString();status.textContent=e.status;text.textContent=[e.synthetic?'Synthetic':e.gameId,e.playedMove,e.classification,e.tier,e.reason||e.message,e.paceReason,e.preset,e.goalId&&'Goal '+e.goalId].filter(Boolean).join(' · ');li.append(t,status,text);return li;});$('events').replaceChildren(...nodes);}catch(e){$('error').textContent=String(e);}}
+async function action(path,body){$('error').textContent='';try{await api(path,body);await refresh();}catch(e){$('error').textContent=e.message;}}
+$('mode').onchange=mode;$('arm').onclick=()=>action('arm',{mode:$('mode').value,gameId:$('game').value.trim(),target:$('target').value.trim(),preset:$('preset').value,applicationVersion:$('version').value.trim(),confirmSafeWorkspace:$('space').checked,confirmHandsetStop:$('stop').checked});$('disarm').onclick=()=>action('disarm',{});$('good').onclick=()=>action('rehearse',{classification:'good'});$('mistake').onclick=()=>action('rehearse',{classification:'mistake'});$('major').onclick=()=>action('rehearse',{classification:'good',scenario:'major'});refresh();setInterval(refresh,1000);
+</script>
+</html>
