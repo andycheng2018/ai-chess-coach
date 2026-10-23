@@ -82,6 +82,10 @@ raw model output, failures, and saved exchange. There is no second chat database
 
 ## How it works
 
+For the local chess-to-robot demonstration, double-click **Open VBOT Chess Demo.command**.
+The [VBOT demo guide](vbot-demo/README.md) covers rehearsal, brief gestures and milestone dances,
+the prepared robot package and the remaining onsite checks before enabling a live dance.
+
 A typical game looks like this:
 
 1. The player signs in with Lichess and starts a game.

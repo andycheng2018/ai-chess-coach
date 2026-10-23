@@ -35,6 +35,8 @@ def backend_ready():
     try:
         with urlopen(f'{backend_url}/api/health', timeout=1) as response:
             data = json.load(response)
+        if os.environ.get('VBOT_DEMO') == '1' and not data.get('vbotDemo'):
+            raise RuntimeError('An older coach backend is running. Stop its Terminal with Control-C, then reopen the demo.')
         return data.get('ok') is True and 'coachAnalysisProfiles' in data
     except (OSError, URLError, ValueError):
         return False
@@ -74,7 +76,10 @@ try:
         time.sleep(0.25)
 
     subprocess.run(['open', web_url], check=True)
+    if os.environ.get('VBOT_DEMO') == '1':
+        subprocess.run(['open', f'{backend_url}/vbot'], check=True)
     print(f'Chess Coach: {web_url}', flush=True)
+    print(f'VBOT Demo: {backend_url}/vbot', flush=True)
     print(f'Audit Studio: {backend_url}/audit', flush=True)
     if started:
         print('Keep this Terminal window open while using the app. Press Control-C to stop it.', flush=True)
