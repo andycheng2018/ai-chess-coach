@@ -11,3 +11,11 @@ bot/config.yml
 vite.config.js
 vite.config.d.ts
 logs/
+vbot-demo/wheelhouse/
+vbot-demo/requests/
+vbot-demo/unresolved-action.json
+
+/vbot-demo/device-verification.local.json
+
+# Local screenshot of the superseded rehearsal policy.
+/vbot-demo/rehearsal.png
