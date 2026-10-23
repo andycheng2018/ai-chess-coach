@@ -14,6 +14,7 @@ import { HomeHub } from './components/HomeHub';
 import { ProfileModal } from './components/ProfileModal';
 import { MenuModal } from './components/MenuModal';
 import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativeOAuth } from './auth';
+import { notifyVbotMove } from './vbotDemo';
 import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import {
   analyzeMove,
@@ -2752,6 +2753,10 @@ export default function App() {
           }
 
           const analysisGameId = gameId;
+
+          // This is the accepted live player's result, after the stale-game/job guard.
+          // The backend independently checks its engine record against the Lichess stream.
+          if (gameId) void notifyVbotMove(result, gameId, myColor);
 
           setMoveEvaluations((current) => {
             const next = [
