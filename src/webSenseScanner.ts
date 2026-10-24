@@ -53,17 +53,28 @@ export function scanWebSenseRoom(): Promise<string> {
         if (settled) { if (scanner.isScanning) await scanner.stop(); return; }
         status.textContent = 'Camera ready. Hold the room QR steady in view.';
       } catch (cause) {
-        if (!settled) void finish(undefined, new Error(`Could not start the camera: ${cause instanceof Error ? cause.message : String(cause)}. Paste the room link instead.`));
+        if (!settled) {
+          status.textContent = `Could not start the camera: ${cause instanceof Error ? cause.message : String(cause)}. Allow camera access, choose another camera, or cancel and paste the room link.`;
+          start.textContent = 'Retry camera';
+          start.hidden = false;
+          start.disabled = false;
+        }
       } finally { switching = false; select.disabled = false; }
     }
 
     start.onclick = async () => {
       start.disabled = true;
+      if (scanner) {
+        cameraTask = startCamera(select.value);
+        await cameraTask;
+        start.disabled = false;
+        return;
+      }
       status.textContent = 'Waiting for camera permission…';
       try {
         const cameras = await Html5Qrcode.getCameras();
         if (settled) return;
-        if (!cameras.length) throw new Error('No camera found');
+        if (!cameras.length) throw new Error('No camera found.');
         cameras.forEach(camera => {
           const option = document.createElement('option');
           option.value = camera.id; option.textContent = camera.label || `Camera ${select.length + 1}`;
@@ -75,7 +86,12 @@ export function scanWebSenseRoom(): Promise<string> {
         cameraTask = startCamera(preferred.id);
         await cameraTask;
       } catch (cause) {
-        void finish(undefined, new Error(`Camera access failed: ${cause instanceof Error ? cause.message : String(cause)}. Allow camera access or paste the room link.`));
+        if (!settled) {
+          status.textContent = `Camera access failed: ${cause instanceof Error ? cause.message : String(cause)}. Allow camera access and retry, or cancel and paste the room link.`;
+          start.textContent = 'Retry camera';
+          start.hidden = false;
+          start.disabled = false;
+        }
       }
     };
     select.onchange = () => { cameraTask = startCamera(select.value); };

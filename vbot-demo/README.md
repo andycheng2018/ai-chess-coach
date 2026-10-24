@@ -64,6 +64,20 @@ build normally points at Render through `.env.production`; that remote backend c
 control this Mac's robot. Use the demo launcher/dev frontend and the local coach API.
 Custom frontend ports need to be added deliberately to the local VBOT origin allowlist.
 
+### SenseRobot fallback options
+
+In **Connect SenseRobot**, open **Other ways to connect or continue**:
+use a manual eight-character room code with the invited bot color, attach the same active
+training-bot game after confirming it is shown on the physical board, or continue that game
+on-screen. Existing-game attachment checks the signed-in account's active games and refuses
+unrelated opponents or a changed game/position. Switching input does not create another game.
+Reconfirm physical-piece agreement whenever the position or input mode changes.
+
+The optional **Device IP and MAC** card stores router reference details only in this browser.
+It does not test connectivity, configure Wi-Fi, verify physical-board synchronization, or
+infer a direct LAN API. The public [SenseRobot FAQ](https://www.senserobotchess.com/pages/chess-faq)
+documents Lichess account linking; a direct LAN game-control interface remains unverified.
+
 ## Prepare the robot package locally
 
 The available release pairing is SDK `2026.9.23`, Aorta messages `2026.9.23`, EDU
@@ -168,6 +182,41 @@ Readiness failure sends no goal and disarms. Inspect onsite; stand the robot thr
 the app if appropriate and rearm deliberately. The helper never stands it automatically
 or changes idle/power policies. Postflight readiness failure preserves the known
 completed result but disables future dances. Audio verification is independent of motion.
+
+## Mac-first physical-board rehearsal
+
+Keep VBOT off while preparing the chess board. Start **Open VBOT Chess Demo.command**
+and keep both the Chess Buddy game page and the demo desk open on the Mac. The current
+celebration path receives accepted live engine results through the game page; it does
+not independently analyze a game after that page is closed. Engine results arrive before
+the separate generated wording, so a celebration does not wait for spoken commentary.
+
+1. Finish any existing training game before opening a new SenseRobot room. In Chess Buddy,
+   open **Connect SenseRobot** and follow Wi-Fi, matching Lichess account, room, and play.
+   Wi-Fi/account confirmations are operator statements; the actual game connection is
+   verified through Lichess. Scan the room QR or paste its link. Camera failures allow retry
+   or the pasted-link fallback.
+2. Choose an untimed training game for the first rehearsal. Make a physical move, confirm
+   Chess Buddy shows the same position, and confirm SenseRobot executes the bot's reply.
+   Verify the human color and opponent before progressing.
+3. With VBOT still off, arm **Rehearsal** for this game and inspect real move events.
+   Synthetic sample buttons exercise the rules without contacting the robot; they are
+   labeled synthetic and cannot establish that a real move earned a celebration.
+4. Only after board synchronization works, power VBOT on, inspect its volume in the phone
+   app, confirm a clear level workspace and Stop procedure, and arm **Live** for this game.
+   Observe an ordinary gesture and a genuine major-moment response. Fast games use brief
+   head gestures; full dances require the documented evaluation/material conditions.
+5. Finish the game, disarm, and start another game deliberately. Select and rearm for the
+   new game; the previous game must not cause later celebrations.
+
+Before the demo, exercise refresh/reconnect, a pending move followed by a takeback,
+promotion choices, game finish, and a new game. Check that the board agrees with Lichess
+and old moves do not replay robot actions. If analysis narrowly precedes the bot stream,
+the backend waits at most 1.5 seconds for confirmation. A timeout, mismatched position,
+changed arming session, or busy/cooling robot does not create a deferred action queue.
+Native obstacle rejection requires inspecting and clearing the physical workspace; retain
+the preset's checks. A successful terminal result and the operator's observation are
+both needed to establish physical behavior and audible sound.
 
 ## Stops, uncertainty and replay
 

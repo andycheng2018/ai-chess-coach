@@ -223,7 +223,41 @@ class VbotDemo:
             self._event("disarmed", message="Future dances disabled. An action already running must finish or be stopped onsite.")
             return self.status()
 
-    def celebrate(self, payload: dict, game: dict | None) -> dict:
+    def reconcile(self, payload: dict, game_reader, *, timeout=1.5, wait=time.sleep) -> dict:
+        """Briefly await the existing bot stream, never retry a robot command.
+
+        Only an otherwise available armed demo may wait. A disarm/rearm, busy
+        action, terminal game, mismatch, or deadline ends this observation.
+        """
+        with self.lock:
+            generation = self.generation
+            can_wait = (self.armed and payload.get("gameId") == self.game_id and not self.busy
+                        and self.clock() - max(self.last_started, self.last_finished) >= self.cooldown)
+            deadline = self.clock() + max(0, min(timeout, 1.5))
+        while True:
+            with self.lock:
+                if generation != self.generation:
+                    return self._event("skipped", reason="Demo changed while awaiting the game stream; no action queued.")
+                if can_wait and self.clock() > deadline:
+                    return self._event("skipped", gameId=payload.get("gameId"),
+                        reason="Lichess did not confirm this move within the brief sync window; no action queued.")
+            game = game_reader(str(payload.get("gameId", "")))
+            with self.lock:
+                if generation != self.generation:
+                    return self._event("skipped", reason="Demo changed while awaiting the game stream; no action queued.")
+                if can_wait and self.clock() > deadline:
+                    return self._event("skipped", gameId=payload.get("gameId"),
+                        reason="Lichess did not confirm this move within the brief sync window; no action queued.")
+                outcome = self.celebrate(payload, game, defer_stream=can_wait)
+                if outcome.get("status") != "awaiting_stream":
+                    return outcome
+                remaining = deadline - self.clock()
+                if remaining <= 0:
+                    return self._event("skipped", gameId=payload.get("gameId"),
+                        reason="Lichess did not confirm this move within the brief sync window; no action queued.")
+            wait(min(0.05, remaining))
+
+    def celebrate(self, payload: dict, game: dict | None, *, defer_stream=False) -> dict:
         if not isinstance(payload.get("recordId"), str):
             raise ValueError("A server recordId is required.")
         with self.lock:
@@ -232,13 +266,18 @@ class VbotDemo:
                 return self._event("skipped", reason="No fresh server engine result.")
             created, record = entry
             reason = None
+            stream_pending = False
             if self.clock() - created > 30 or created < self.armed_at:
                 reason = "Analysis is stale or predates arming."
             elif record["gameId"] != payload.get("gameId") or record["playerColor"] != payload.get("playerColor"):
                 reason = "Game or player does not match the engine result."
-            elif not game or game.get("state", {}).get("status") not in {"started", "created"}:
+            elif not game:
+                stream_pending = True
+                reason = "No active game in the existing Lichess bot stream."
+            elif game.get("state", {}).get("status") not in {"started", "created"}:
                 reason = "No active game in the existing Lichess bot stream."
             elif not isinstance(game.get("updatedAt"), (int, float)) or time.time() * 1000 - game["updatedAt"] > 30000:
+                stream_pending = True
                 reason = "The cached Lichess stream is stale."
             elif game.get("botColor") not in {"white", "black"} or game["botColor"] == record["playerColor"]:
                 reason = "Only the human player's moves can celebrate."
@@ -249,8 +288,11 @@ class VbotDemo:
                     board = chess.Board() if game.get("initialFen") in {None, "", "startpos"} else chess.Board(game["initialFen"])
                     moves = game["state"].get("moves", "").split()
                     target_ply = record["ply"] - board.ply() - 1
-                    if not 0 <= target_ply < len(moves):
+                    if target_ply >= len(moves):
+                        stream_pending = True
                         raise ValueError("Move not yet in stream")
+                    if target_ply < 0:
+                        raise ValueError("Move predates the initial position")
                     for uci in moves[:target_ply]:
                         board.push_uci(uci)
                     if (moves[target_ply] != record["playedMoveUci"] or
@@ -262,6 +304,8 @@ class VbotDemo:
                 except (ValueError, TypeError, KeyError):
                     reason = "Move/position not confirmed by the existing Lichess stream."
             if reason:
+                if defer_stream and stream_pending:
+                    return {"status": "awaiting_stream"}
                 return self._event("skipped", reason=reason, gameId=record["gameId"], ply=record["ply"])
             if not self.armed or record["gameId"] != self.game_id:
                 return self._submit(record)

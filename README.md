@@ -176,7 +176,7 @@ This was one of the more interesting parts of the project because it connects:
 
 Real-time games introduced several problems that weren't obvious when I first built the project.
 
-For example, players can move faster than the coach can finish analyzing the previous move (especially if the analysis mode is selected to be deeper). I solved this with a **FIFO coaching queue**, so a new move doesn't silently cancel an earlier mistake.
+Players can move faster than the coach can finish analyzing a position. Live coaching keeps one running search and replaces waiting work with the newest position, so stale commentary does not build up. Older results do not replace the current board feedback. During rapid play, not every move receives commentary or a robot reaction.
 
 The app also handles:
 

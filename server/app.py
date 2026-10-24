@@ -1749,7 +1749,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path == "/api/vbot/disarm":
                     response = vbot_demo.disarm()
                 elif self.path == "/api/vbot/celebrate":
-                    response = vbot_demo.celebrate(payload, runtime.game_state(str(payload.get("gameId", ""))))
+                    response = vbot_demo.reconcile(payload, runtime.game_state)
                 elif self.path == "/api/vbot/rehearse":
                     response = vbot_demo.rehearse(payload.get("classification", "good"), payload.get("scenario", "ordinary"))
                 else:

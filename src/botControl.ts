@@ -82,6 +82,19 @@ export type SenseRoom = {
   color: 'white' | 'black';
 };
 
+export function buildSenseRoomUrl(
+  eightCharacterId: string,
+  explicitBotColor: 'white' | 'black',
+): string {
+  if (!/^[a-zA-Z0-9]{8}$/.test(eightCharacterId)) {
+    throw new Error('Invalid Lichess challenge ID.');
+  }
+  if (explicitBotColor !== 'white' && explicitBotColor !== 'black') {
+    throw new Error('The room URL must specify white or black.');
+  }
+  return `https://lichess.org/${eightCharacterId}?color=${explicitBotColor}`;
+}
+
 export type SetupHealth = {
   ok: boolean;
   stockfish: string | null;
@@ -113,11 +126,13 @@ export function parseSenseRoomUrl(rawValue: string): SenseRoom {
     .split('/')
     .filter(Boolean);
 
-  if (parts.length !== 1) {
+  // SenseRobot invitations also use Lichess's /game/<id> route.
+  const challengeId = parts.length === 1 ? parts[0]
+    : parts.length === 2 && parts[0] === 'game' ? parts[1] : '';
+
+  if (!challengeId) {
     throw new Error('Invalid Lichess room URL.');
   }
-
-  const challengeId = parts[0];
 
   // Lichess challenge/game IDs are 8 characters.
   if (!/^[a-zA-Z0-9]{8}$/.test(challengeId)) {

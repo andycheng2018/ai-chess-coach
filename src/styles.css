@@ -182,6 +182,10 @@ a { color: inherit; }
 .sense-checks .ready { color: #aade7c; }
 .sense-help { margin-top: 16px; font-size: 13px; }
 .sense-help summary { color: #c7c1b8; cursor: pointer; }
+.sense-fallback, .sense-device-details { padding-top: 14px; border-top: 1px solid var(--border); }
+.sense-fallback h4 { margin: 18px 0 8px; }
+.sense-confirm { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0; font-size: 13px; line-height: 1.6; }
+.sense-confirm input[type="checkbox"] { width: auto; flex: 0 0 auto; margin-top: 4px; }
 .sense-retry { margin-top: 12px; }
 .sense-success { font-size: 38px; color: #aade7c; margin-bottom: 12px; }
 .sense-link { display: inline-block; text-decoration: none; padding: 10px 14px; }
