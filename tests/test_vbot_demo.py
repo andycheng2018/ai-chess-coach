@@ -19,7 +19,7 @@ class DemoTests(unittest.TestCase):
     def setUp(self):
         self.now = 100.0
         self.sender = Mock(return_value={"status": "completed", "goalId": "goal"})
-        self.demo = VbotDemo(sender=self.sender, clock=lambda: self.now, verification={"target":"vbot@robot.example", "presets":[{"preset":"actions/WAVE.json","status":"SUCCEEDED","errorCategory":0,"movementConfirmed":True}]})
+        self.demo = VbotDemo(sender=self.sender, clock=lambda: self.now, verification={"target":"vbot@robot.example", "presets":[{"preset":"actions/WAVE.json","status":"SUCCEEDED","errorCategory":0,"movementConfirmed":True,"durationMs":3000}]})
         self.arm()
 
     def arm(self, mode="rehearsal"):
@@ -187,7 +187,7 @@ class VerifiedPresetTests(unittest.TestCase):
     def setUp(self):
         self.profile={"target":"vbot@robot.example", "hostKeyFingerprint":"SHA256:"+"a"*43,
                       "presets":[{"preset":"actions/ROCKYOU.json", "status":"SUCCEEDED",
-                                  "errorCategory":0,"movementConfirmed":True}, {"preset":"actions/WAVE.json", "status":"SUCCEEDED","errorCategory":0,"movementConfirmed":True}]}
+                                  "errorCategory":0,"movementConfirmed":True,"durationMs":3000}, {"preset":"actions/WAVE.json", "status":"SUCCEEDED","errorCategory":0,"movementConfirmed":True,"durationMs":3000}]}
         self.sender=Mock(return_value={"status":"completed", "readyForNext":True})
         self.keys=Mock(return_value={self.profile["hostKeyFingerprint"]})
         self.demo=VbotDemo(sender=self.sender, verification=self.profile, fingerprint_reader=self.keys)
@@ -266,7 +266,7 @@ class TierDispatchTests(unittest.TestCase):
         self.now=1000.0
         presets=["actions/ROCKYOU.json","actions/WAVE.json","atom/look_left.json","atom/look_right.json"]
         profile={"target":"vbot@robot.example","hostKeyFingerprint":"SHA256:"+"a"*43,
-                 "presets":[{"preset":p,"status":"SUCCEEDED","errorCategory":0,"movementConfirmed":True} for p in presets]}
+                 "presets":[{"preset":p,"status":"SUCCEEDED","errorCategory":0,"movementConfirmed":True,"durationMs":3000} for p in presets]}
         self.sender=Mock(return_value={"status":"completed","readyForNext":True})
         self.demo=VbotDemo(sender=self.sender,clock=lambda:self.now,verification=profile,
                            fingerprint_reader=lambda target:{profile["hostKeyFingerprint"]},chooser=lambda options:options[0])
@@ -284,7 +284,7 @@ class TierDispatchTests(unittest.TestCase):
 
     def verify_sad(self):
         self.demo.verification["presets"].append({"preset":"actions/GRIEVANCE.json",
-            "status":"SUCCEEDED", "errorCategory":0, "movementConfirmed":True})
+            "status":"SUCCEEDED", "errorCategory":0, "movementConfirmed":True,"durationMs":3000})
 
     def test_sad_live_requires_exact_rehearsal_even_with_application_version(self):
         self.demo.compatibility = {"basis":"application-version", "applicationVersion":"V1.6.0"}
@@ -324,6 +324,54 @@ class TierDispatchTests(unittest.TestCase):
         self.submit(1, classification="blunder")
         self.assertFalse(self.demo.armed)
         self.sender.assert_not_called()
+
+    def test_new_gestures_need_observed_short_rehearsals(self):
+        from vbot_policy import SMALL_PRESETS, MAX_SMALL_DURATION_MS
+        originals = set(self.demo._small_presets(self.demo.target))
+        new = [p for p in SMALL_PRESETS if p not in originals]
+        self.assertGreaterEqual(len(new), 8)
+        for preset in new:
+            entry = {"preset":preset, "status":"SUCCEEDED", "errorCategory":0,
+                     "movementConfirmed":True, "durationMs":MAX_SMALL_DURATION_MS}
+            self.demo.verification["presets"].append(entry)
+            self.assertIn(preset, self.demo._small_presets(self.demo.target))
+            for duration in [None, False, 0, -1, MAX_SMALL_DURATION_MS+1, float("nan"), float("inf"), "2000"]:
+                entry["durationMs"] = duration
+                self.assertNotIn(preset, self.demo._small_presets(self.demo.target))
+            entry["durationMs"] = 2000
+            entry["movementConfirmed"] = False
+            self.assertNotIn(preset, self.demo._small_presets(self.demo.target))
+
+    def test_random_draw_can_revisit_a_gesture_before_all_others_are_used(self):
+        self.demo.chooser = Mock(side_effect=["actions/WAVE.json", "atom/look_left.json", "actions/WAVE.json"])
+        chosen = []
+        for ply in [1, 3, 5]:
+            chosen.append(self.submit(ply)["preset"])
+            self.now += 11
+        self.assertEqual(chosen, ["actions/WAVE.json", "atom/look_left.json", "actions/WAVE.json"])
+        self.assertNotIn("actions/WAVE.json", self.demo.chooser.call_args_list[1].args[0])
+        self.assertIn("actions/WAVE.json", self.demo.chooser.call_args_list[2].args[0])
+        self.assertIn("atom/look_right.json", self.demo.chooser.call_args_list[2].args[0])
+
+    def test_new_body_gestures_are_filtered_out_of_fast_game_pool(self):
+        from vbot_policy import SMALL_PRESETS, HEAD_PRESETS
+        self.demo.verification["presets"] += [
+            {"preset":p, "status":"SUCCEEDED", "errorCategory":0,
+             "movementConfirmed":True, "durationMs":2500} for p in SMALL_PRESETS]
+        def choose(options):
+            self.assertTrue(set(options).issubset(HEAD_PRESETS))
+            return options[-1]
+        self.demo.chooser = choose
+        event = self.submit(1, brief=True)
+        self.assertIn(event["preset"], HEAD_PRESETS)
+        self.assertNotIn(event["preset"], ["actions/SHAKEHAND.json", "actions/HIGH_FIVE_R.json"])
+
+    def test_helper_and_controller_allow_the_same_documented_presets(self):
+        import importlib.util
+        from vbot_demo import PRESETS
+        spec = importlib.util.spec_from_file_location("helper_allowlist", ROOT / "vbot-demo/robot_action.py")
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        self.assertEqual(set(PRESETS), set(module.PRESETS))
 
     def test_ordinary_moves_randomize_verified_brief_presets_and_avoid_repeats(self):
         first=self.submit(1);self.now+=11;second=self.submit(3)

@@ -66,3 +66,48 @@ test('sad preview has a readable label and never claims physical completion',()=
   const {vbotEventText}=load(async()=>({ok:true}));
   assert.equal(vbotEventText({status:'rehearsed',preset:'actions/GRIEVANCE.json'}),'Preview: Sad reaction; no robot motion');
 });
+
+
+test('expanded gesture names are readable in live requests and completions',()=>{
+  const {vbotReactionLabel,vbotEventText}=load(async()=>({ok:true}));
+  assert.equal(vbotReactionLabel('actions/HIGH_FIVE_L.json'),'Left high-five');
+  assert.equal(vbotReactionLabel('actions/SHAKEHAND.json'),'Handshake');
+  assert.equal(vbotEventText({status:'completed',preset:'actions/SAYYES.json'}),'Approving yes completed');
+  assert.equal(vbotEventText({status:'requested',preset:'atom/look_up.json'}),'Look up requested; awaiting robot result');
+});
+
+test('one explicit enable checks readiness before connecting, without an expiring manual precheck',async()=>{
+  const calls=[];
+  const {connectVbotWithReadiness}=load(async(url,options)=>{
+    calls.push([url.split('/').pop(),JSON.parse(options.body)]);
+    return {ok:true,json:async()=>({readinessFresh:true,readiness:{ready:true,target:'vbot@robot.example'},armed:url.endsWith('/connect')})};
+  });
+  const payload={gameId:'AbCd1234',playerColor:'white',mode:'live',target:'vbot@robot.example',preset:'actions/ROCKYOU.json',applicationVersion:'unknown',confirmSafeWorkspace:true,confirmHandsetStop:true};
+  assert.equal((await connectVbotWithReadiness(payload,()=>true)).armed,true);
+  assert.deepEqual(calls.map(c=>c[0]),['check','connect']);
+  assert.deepEqual(calls[1][1],payload);
+});
+
+test('failed readiness or a changed match never arms or retries',async()=>{
+  for(const mode of ['failed','changed','transport']) {
+    let current=true;const calls=[];
+    const {connectVbotWithReadiness}=load(async(url)=>{
+      calls.push(url.split('/').pop());
+      if(mode==='transport') throw new Error('offline');
+      if(mode==='changed') current=false;
+      return {ok:true,json:async()=>({readinessFresh:true,readiness:{ready:mode!=='failed',target:'vbot@robot.example',reason:'Not standing'}})};
+    });
+    await assert.rejects(()=>connectVbotWithReadiness({gameId:'AbCd1234',playerColor:'white',mode:'live',target:'vbot@robot.example',confirmSafeWorkspace:true,confirmHandsetStop:true},()=>current));
+    assert.deepEqual(calls,['check']);
+  }
+});
+
+test('preview connection skips the robot probe and missing onsite confirmation sends nothing',async()=>{
+  const calls=[];const {connectVbotWithReadiness}=load(async(url)=>{
+    calls.push(url.split('/').pop());return {ok:true,json:async()=>({armed:true,mode:'rehearsal'})};
+  });
+  await connectVbotWithReadiness({gameId:'AbCd1234',mode:'rehearsal'},()=>true);
+  assert.deepEqual(calls,['connect']);
+  await assert.rejects(()=>connectVbotWithReadiness({gameId:'AbCd1234',mode:'live',confirmSafeWorkspace:false,confirmHandsetStop:false},()=>true));
+  assert.deepEqual(calls,['connect']);
+});

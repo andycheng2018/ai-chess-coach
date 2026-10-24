@@ -50,9 +50,18 @@ session. Deploy the updated helper for this settling behavior to apply on the de
 The current coach emits `good`, `inaccuracy`, `mistake` and `blunder`. Book moves are
 normally `good`; no new engine labels are fabricated. The policy can also accept
 server-originated `book`, `excellent`, or `best` if the canonical coach adds them later.
-Ordinary good moves randomly choose only locally rehearsed WAVE/look-left/look-right
-presets, avoiding immediate repeats where possible. Handshake and stand-up are not
-randomized until individually rehearsed; the helper never changes posture automatically.
+Ordinary good moves make a fresh random draw from eligible, locally rehearsed gestures:
+wave; look left/right/forward/up/down; handshake/left handshake; right/left high-five;
+and approving yes. No shuffle bag or ordered rotation is used. Only an immediate repeat
+is excluded when an alternative is available. Moves arriving during an action or rest
+are skipped permanently, never queued or caught up later.
+
+Each exact target/preset needs an operator-confirmed successful rehearsal and a measured
+terminal duration greater than zero and at most 10 seconds before entering live normal
+reactions. A documented name alone establishes neither duration nor installed availability.
+Unrehearsed or longer presets stay out of the live pool; the companion's **Good-move gestures**
+list shows readiness. Fast/low/unknown clocks select only the head presets. The helper
+never stands the robot automatically or bypasses the preset's own transitions/checks.
 
 ROCKYOU is reserved for a good move with one of these conservative signals:
 
@@ -338,3 +347,14 @@ or arm VBOT, and requires a human move followed by a bot reply in the displayed 
 It remains local to the current view and exact game/account/move branch; a changed
 account, game, rewind, divergence, or reload requires confirmation again. App move
 history by itself never proves physical movement.
+
+### Connection freshness and live-session lifetime
+
+After confirming the workspace and onsite Stop, **Check & enable live reactions** performs
+one fresh read-only readiness check and then binds the selected game. A separate manual
+precheck is optional. A failed check or a match change during that check leaves reactions off;
+no automatic retry or rearming occurs. The 30-second probe lifetime applies to starting a
+session, not to an already-enabled match. Per-action preflight and postflight checks remain.
+Selecting the same game only opens its board; it does not set the game to recovering or
+implicitly arm the robot. Switching games and terminal results turn reactions off.
+Disarm events record whether this was an operator action, game change, or game completion.

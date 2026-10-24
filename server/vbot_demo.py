@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 
-from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES
+from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES, MAX_SMALL_DURATION_MS
 
 PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET)
 REMOTE_ROOT = "/userdata/vbot/chess-demo"
@@ -199,6 +199,7 @@ class VbotDemo:
                     "compatibility": self.compatibility,
                     "verification": self.verification, "policy": RULES,
                     "smallPresets": self._small_presets(self.target),
+                    "smallPresetCandidates": list(SMALL_PRESETS),
                     "sadPresetVerified": bool(self._verified_entry(self.target, SAD_PRESET)),
                     "danceCooldownRemaining": max(0, round(RULES["danceIntervalSeconds"] - (self.clock()-self.last_dance_finished), 1))}
 
@@ -212,7 +213,19 @@ class VbotDemo:
                      item.get("movementConfirmed") is True), None)
 
     def _small_presets(self, target):
-        return [preset for preset in SMALL_PRESETS if self._verified_entry(target, preset)]
+        return [preset for preset in SMALL_PRESETS
+                if (entry := self._verified_entry(target, preset))
+                and isinstance(entry.get("durationMs"), (int, float))
+                and not isinstance(entry["durationMs"], bool)
+                and 0 < entry["durationMs"] <= MAX_SMALL_DURATION_MS]
+
+    def _choose_small(self, pool):
+        # Fresh random draw on every eligible event; no shuffle bag, rotation,
+        # queued gestures or catch-up. Avoid just the immediately previous choice.
+        options = [preset for preset in pool if preset != self.last_small_preset] or pool
+        preset = self.chooser(options)
+        self.last_small_preset = preset
+        return preset
 
     def _identity_matches(self, target: str) -> bool:
         try:
@@ -293,7 +306,18 @@ class VbotDemo:
                 return self.status()  # A stale tab cannot disable a newer arming session.
             self.armed = False
             self.generation += 1
-            self._event("disarmed", message="Future dances disabled. An action already running must finish or be stopped onsite.")
+            reasons = {
+                "operator_off": "Turned off by the operator.",
+                "match_finished": "Match finished; reactions turned off.",
+                "match_changed": "Selected match changed; reactions turned off.",
+                "match_changed_during_connect": "Match changed while connecting; reactions turned off.",
+                "supervised_rehearsal": "Paused for a supervised preset rehearsal.",
+                "server_shutdown": "Coach server stopped; reactions turned off.",
+            }
+            reason_code = (payload or {}).get("reason", "unspecified")
+            if reason_code not in reasons: reason_code = "unspecified"
+            self._event("disarmed", reasonCode=reason_code, reason=reasons.get(reason_code),
+                        message="Future dances disabled. An action already running must finish or be stopped onsite.")
             return self.status()
 
     def reconcile(self, payload: dict, game_reader, *, timeout=1.5, wait=time.sleep) -> dict:
@@ -451,11 +475,9 @@ class VbotDemo:
             pool = self._small_presets(self.target) if self.mode == "live" else list(SMALL_PRESETS)
             if decision.get("briefOnly"):
                 pool = [p for p in pool if p in HEAD_PRESETS]
-            options = [p for p in pool if p != self.last_small_preset] or pool
-            if not options:
+            if not pool:
                 return self._event("skipped", reason="No rehearsed brief preset is available for this pace/target.", tier=tier, **fields)
-            preset = self.chooser(options)
-            self.last_small_preset = preset
+            preset = self._choose_small(pool)
         self.cooldown = RULES["danceRestSeconds"] if tier in {"major", "sad"} else RULES["smallRestSeconds"]
         self.last_started = self.clock()
         context = {"tier":tier, "reason":decision["reason"], "paceReason":pace_reason,

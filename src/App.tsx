@@ -1940,30 +1940,16 @@ export default function App() {
   }, [token]);
 
   const handleSelectGame = useCallback((selectedGameId: string) => {
-    setActiveGameId(selectedGameId);
-    setGameStatus('recovering');
+    const changedGame = gameIdRef.current !== selectedGameId;
+    if (changedGame) {
+      setActiveGameId(selectedGameId);
+      setGameStatus('recovering');
+    }
     setCurrentView('arena');
     setMenuModalOpen(false);
-    setStatus(`Switched to match ${selectedGameId}.`);
-
-    void fetch(`${CONTROL_URL}/api/vbot/status`)
-      .then((r) => r.json())
-      .then((vbotStatus) => {
-        if (vbotStatus?.target) {
-          void fetch(`${CONTROL_URL}/api/vbot/arm`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              mode: vbotStatus.mode || 'live',
-              gameId: selectedGameId,
-              preset: vbotStatus.preset || 'actions/ROCKYOU.json',
-              confirmSafeWorkspace: true,
-              confirmHandsetStop: true,
-            }),
-          }).catch(() => {});
-        }
-      })
-      .catch(() => {});
+    setStatus(changedGame ? `Switched to match ${selectedGameId}.` : `Showing match ${selectedGameId}.`);
+    // Selection only changes the chess view. The companion owns explicit arming
+    // and scoped disarming; never race it with a second, implicit /arm request.
   }, [setActiveGameId]);
 
   useEffect(() => { gameIdRef.current = gameId; }, [gameId]);

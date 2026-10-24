@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { vbotNeedsDetach, vbotManagedSession, vbotRequest, type VbotStatus } from './vbotDemo';
+import { connectVbotWithReadiness, type VbotConnectPayload, vbotNeedsDetach, vbotManagedSession, vbotRequest, type VbotStatus } from './vbotDemo';
 
 export type CompanionContext = {
   gameId: string | null; playerColor: 'white' | 'black';
@@ -43,11 +43,15 @@ export function useVbotCompanion(context: CompanionContext) {
     setPending(true); setActionError('');
     const originGame = current.current.gameId;
     try {
-      let next = await vbotRequest(path, payload);
+      let next = path === 'connect'
+        ? await connectVbotWithReadiness(payload as VbotConnectPayload, () => mounted.current
+          && current.current.gameId === originGame && current.current.canArm
+          && current.current.playerColor === (payload as VbotConnectPayload).playerColor)
+        : await vbotRequest(path, payload);
       // A game can finish/change during a slow connection request. Disarm only
       // that exact session, never a newer session armed from another tab.
       if (path === 'connect' && (current.current.gameId !== originGame || !current.current.canArm)) {
-        next = await vbotRequest('disarm', { gameId: next.gameId, generation: next.generation });
+        next = await vbotRequest('disarm', { gameId: next.gameId, generation: next.generation, reason: 'match_changed_during_connect' });
       }
       if (mounted.current) { setStatus(next); setConnectionError(''); }
     } catch (error) {
@@ -64,7 +68,7 @@ export function useVbotCompanion(context: CompanionContext) {
     managed.current = session;
     if (!session || !vbotNeedsDetach(status, context) || inFlight.current || detaching.current) return;
     detaching.current = true;
-    void perform('disarm', session)
+    void perform('disarm', { ...session, reason: context.ended ? 'match_finished' : 'match_changed' })
       .finally(() => { detaching.current = false; });
   }, [status, context.gameId, context.resolved, context.ended, perform]);
 
@@ -78,7 +82,7 @@ export function useVbotCompanion(context: CompanionContext) {
         preset: 'actions/ROCKYOU.json', applicationVersion: status?.verification?.applicationVersion || 'unknown',
         confirmSafeWorkspace: confirmed, confirmHandsetStop: confirmed });
     },
-    off: () => status ? perform('disarm', { gameId: status.gameId, generation: status.generation }) : Promise.resolve(),
+    off: () => status ? perform('disarm', { gameId: status.gameId, generation: status.generation, reason: 'operator_off' }) : Promise.resolve(),
   };
 }
 

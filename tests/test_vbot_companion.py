@@ -32,6 +32,24 @@ class NativeCompanionTests(unittest.TestCase):
         self.demo.disarm(); self.now += 31
         with self.assertRaises(ValueError): self.demo.connect_game(self.payload, lambda _: self.game)
         self.demo.sender.assert_not_called()
+    def test_expired_connection_probe_does_not_disarm_a_live_game_or_reprobe(self):
+        self.demo.check_device({'target':self.payload['target']})
+        self.demo.connect_game(self.payload,lambda _:self.game)
+        self.now += 3600
+        for _ in range(5):
+            status = self.demo.status()
+            self.assertTrue(status['armed'])
+            self.assertFalse(status['readinessFresh'])
+        self.checker.assert_called_once()
+        self.demo.sender.assert_not_called()
+
+    def test_scoped_disarm_records_specific_lifecycle_reason(self):
+        status=self.demo.arm({'gameId':'AbCd1234'})
+        self.demo.disarm({'gameId':status['gameId'],'generation':status['generation'],'reason':'match_changed'})
+        event=self.demo.status()['events'][0]
+        self.assertEqual(event['reasonCode'],'match_changed')
+        self.assertIn('Selected match changed',event['reason'])
+
     def test_failed_probe_and_invalid_targets_cannot_enable_motion(self):
         with self.assertRaises(ValueError): self.demo.check_device({'target': '-oProxyCommand=bad'})
         self.checker.assert_not_called()

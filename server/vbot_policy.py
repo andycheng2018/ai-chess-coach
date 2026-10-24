@@ -8,8 +8,12 @@ import math
 from statistics import median
 
 GOOD_LABELS = {"good", "excellent", "best", "book"}
-SMALL_PRESETS = ("actions/WAVE.json", "atom/look_left.json", "atom/look_right.json")
-HEAD_PRESETS = SMALL_PRESETS[1:]
+HEAD_PRESETS = ("atom/look_left.json", "atom/look_right.json", "atom/look_forward.json",
+                "atom/look_up.json", "atom/look_down.json")
+SMALL_PRESETS = ("actions/WAVE.json", *HEAD_PRESETS, "actions/SHAKEHAND.json",
+                 "actions/SHAKEHAND_L.json", "actions/HIGH_FIVE_R.json",
+                 "actions/HIGH_FIVE_L.json", "actions/SAYYES.json")
+MAX_SMALL_DURATION_MS = 10000
 SAD_PRESET = "actions/GRIEVANCE.json"
 RULES = {"materialGainCp": 200, "singleSwingCp": 200, "trendGainCp": 150,
          "baselineMoves": 5, "recentMoves": 3, "minimumDepth": 12,

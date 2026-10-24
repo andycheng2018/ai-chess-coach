@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { vbotEventText } from '../vbotDemo';
+import { vbotEventText, vbotReactionLabel } from '../vbotDemo';
 import type { VbotCompanionControl } from '../useVbotCompanion';
 
 type Props = { control: VbotCompanionControl; gameId: string | null; canArm: boolean; ended: boolean; blockedReason?: string };
@@ -24,7 +24,14 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason }:
   return <section id="vbot-companion" className="vbot-companion" aria-label="VBOT companion">
     <div className="vbot-header"><div><span className="vbot-kicker">ROBOT COMPANION</span><h3>VBOT reacts with you</h3></div>
       <span className={`vbot-badge ${linked ? 'on' : ''}`} role="status">{badge}</span></div>
-    <p className="vbot-copy">Good moves earn a brief gesture. Major gains can earn Rock You. Blunders get a sad reaction.</p>
+    <p className="vbot-copy">Good moves earn a random brief gesture. Major gains can earn Rock You. Blunders get a sad reaction.</p>
+    {!!status?.smallPresetCandidates?.length && <details className="vbot-settings">
+      <summary>Good-move gestures · {status.smallPresets?.length || 0} ready</summary>
+      <p className="vbot-footnote">Random choice each time, with no immediate repeat when another gesture is available. New moves during a reaction or rest are skipped, never queued. Fast games use head gestures only.</p>
+      <ul>{status.smallPresetCandidates.map(preset => <li key={preset}>
+        {vbotReactionLabel(preset)} · {status.smallPresets?.includes(preset) ? 'Ready' : 'Needs a successful short rehearsal'}
+      </li>)}</ul>
+    </details>}
     <p className="vbot-footnote">{status?.sadPresetVerified
       ? 'Sad reaction rehearsed. Body performances are spaced three minutes apart and disabled in fast games or time trouble.'
       : 'Sad reaction awaits a supervised rehearsal on this robot. Live sad reactions stay off until then.'}</p>
@@ -47,15 +54,15 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason }:
         </details>
         <div className="vbot-actions"><button className="ghost" disabled={locked || !target.trim()} onClick={() => void control.check(target.trim())}>{pending ? 'Checking…' : 'Check robot'}</button>
           <button className="ghost" disabled={locked || !canArm} onClick={() => void control.connect('rehearsal', target.trim(), false)}>Preview without motion</button></div>
-        {status?.readiness?.target === target.trim() && <p className={`vbot-readiness ${ready ? 'ready' : ''}`} role="status">{ready ? 'Robot passed readiness. Confirm the space below to enable motion.'
-          : status.readiness.ready ? 'Readiness check expired. Check again before enabling motion.' : status.readiness.reason || 'Robot is not ready.'}</p>}
+        {status?.readiness?.target === target.trim() && <p className={`vbot-readiness ${ready ? 'ready' : ''}`} role="status">{ready ? 'Robot passed readiness. Enabling live reactions includes a fresh check.'
+          : status.readiness.ready ? 'Readiness will be checked automatically when you enable reactions.' : status.readiness.reason || 'Robot is not ready.'}</p>}
         {!ended && gameId && <div className="vbot-live-setup">
           <label><input type="checkbox" checked={space} onChange={e => setSpace(e.target.checked)} disabled={locked} />VBOT is standing on clear level ground, unplugged, with room to move.</label>
           <label><input type="checkbox" checked={stop} onChange={e => setStop(e.target.checked)} disabled={locked} />I’m supervising, people/pets are clear, and the app’s Stop is ready.</label>
-          <button className="primary" disabled={locked || !canArm || !ready || !space || !stop} onClick={() => void control.connect('live', target.trim(), space && stop)}>Enable live reactions</button>
+          <button className="primary" disabled={locked || !canArm || !target.trim() || !space || !stop} onClick={() => void control.connect('live', target.trim(), space && stop)}>{pending ? 'Checking & enabling…' : 'Check & enable live reactions'}</button>
         </div>}
       </>}
-    <p className="vbot-footnote">Finishing or switching matches turns reactions off. Turning reactions off prevents new actions; use VBOT’s app Stop to stop movement already underway.</p>
+    <p className="vbot-footnote">Connection-check expiry does not turn off live reactions. Finishing or switching matches turns reactions off. Turning reactions off prevents new actions; use VBOT’s app Stop to stop movement already underway.</p>
     {events.length > 0 && <details className="vbot-history" open={Boolean(attention && !linked)}><summary>Recent reactions</summary>
       <ol>{events.map((e, i) => <li key={`${e.time}-${e.status}-${i}`}><time>{new Date(e.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</time>
         <span>{e.playedMove && <strong>{e.playedMove} · </strong>}{vbotEventText(e)}</span></li>)}</ol>

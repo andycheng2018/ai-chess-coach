@@ -29,6 +29,7 @@ export type VbotStatus = {
   mode: 'live' | 'rehearsal'; gameId: string; target: string; busy: boolean;
   cooldownRemaining: number; danceCooldownRemaining: number; events: VbotEvent[];
   readinessFresh?: boolean; sadPresetVerified?: boolean;
+  smallPresets?: string[]; smallPresetCandidates?: string[];
   readiness?: { ready: boolean; target: string; reason?: string; checkedAt: number } | null;
   verification?: { applicationVersion?: string | null } | null;
 };
@@ -46,19 +47,54 @@ export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm
   return response.json();
 }
 
+export type VbotConnectPayload = {
+  gameId: string; playerColor: 'white' | 'black'; mode: 'live' | 'rehearsal';
+  target: string; preset: string; applicationVersion: string;
+  confirmSafeWorkspace: boolean; confirmHandsetStop: boolean;
+};
+
+/** One explicit enable action performs its own fresh check. No polling-time
+ * probes, retries, or automatic rearming of an expired/disarmed session. */
+export async function connectVbotWithReadiness(payload: VbotConnectPayload, isCurrent: () => boolean): Promise<VbotStatus> {
+  if (!isCurrent()) throw new Error('The selected match changed. Enable reactions from the current match.');
+  if (payload.mode === 'live') {
+    if (!payload.confirmSafeWorkspace || !payload.confirmHandsetStop) {
+      throw new Error('Confirm the workspace and onsite Stop before enabling reactions.');
+    }
+    const checked = await vbotRequest('check', { target: payload.target });
+    if (!isCurrent()) throw new Error('The selected match changed during the check. No reactions enabled.');
+    if (!checked.readinessFresh || !checked.readiness?.ready || checked.readiness.target !== payload.target) {
+      throw new Error(checked.readiness?.reason || 'Robot is not ready. Inspect VBOT before trying again.');
+    }
+  }
+  return vbotRequest('connect', payload);
+}
+
 export function vbotNeedsDetach(status: VbotStatus, context: { gameId: string | null; resolved: boolean; ended: boolean }): boolean {
   return status.armed && context.resolved && (status.gameId !== context.gameId || context.ended);
 }
 
+export function vbotReactionLabel(preset: string): string {
+  const labels: Record<string, string> = {
+    'actions/WAVE.json': 'Wave', 'atom/look_left.json': 'Look left',
+    'atom/look_right.json': 'Look right', 'atom/look_forward.json': 'Look forward',
+    'atom/look_up.json': 'Look up', 'atom/look_down.json': 'Look down',
+    'actions/SHAKEHAND.json': 'Handshake', 'actions/SHAKEHAND_L.json': 'Left handshake',
+    'actions/HIGH_FIVE_R.json': 'Right high-five', 'actions/HIGH_FIVE_L.json': 'Left high-five',
+    'actions/SAYYES.json': 'Approving yes', 'actions/ROCKYOU.json': 'Rock You',
+    'actions/GRIEVANCE.json': 'Sad reaction',
+  };
+  return labels[preset] || preset.split('/').pop()?.replace('.json', '').replaceAll('_', ' ') || 'Reaction';
+}
+
 export function vbotEventText(event: VbotEvent): string {
-  const name = event.preset === 'actions/GRIEVANCE.json' ? 'Sad reaction'
-    : event.preset?.split('/').pop()?.replace('.json', '').replaceAll('_', ' ');
+  const name = event.preset ? vbotReactionLabel(event.preset) : undefined;
   if (event.status === 'completed') return event.readyForNext === false
     ? `${name || 'Reaction'} finished; paused: ${event.postflightReason || 'robot needs attention'}`
     : `${name || 'Reaction'} completed`;
   if (event.status === 'requested') return `${name || 'Reaction'} requested; awaiting robot result`;
   if (event.status === 'armed') return 'Reactions enabled for this match';
-  if (event.status === 'disarmed') return 'Reactions turned off';
+  if (event.status === 'disarmed') return event.reason || 'Reactions turned off';
   if (event.status === 'rehearsed') return `Preview: ${name || 'reaction'}; no robot motion`;
   return event.reason || event.message || event.status;
 }
