@@ -31,30 +31,66 @@ def diagnostic(value):
     return value[:1500]
 
 
-def readiness_problem(samples):
+def readiness_details(samples):
     battery, system, body, head = (samples.get(key, []) for key in ("battery", "system", "body", "head"))
+    def blocked(code, reason):
+        return {"ready": False, "code": code, "reason": reason}
     if len(battery) < 2 or len(system) < 2 or len(body) < 3 or len(head) < 2:
-        return "Fresh robot telemetry is incomplete."
+        return blocked("incomplete", "Fresh robot telemetry is incomplete.")
     if len({m["heartbeat"] for m in system}) < 2 or len({m["heartbeat"] for m in body}) < 3:
-        return "Robot state heartbeats are not advancing."
+        return blocked("stale", "Robot state heartbeats are not advancing.")
     if any(m["soc"] < 50 or m["charger"] or m["alarm"] != 0 for m in battery):
-        return "Battery must be at least 50%, unplugged, and reporting no BMS alarm."
+        return blocked("battery", "Battery must be at least 50%, unplugged, and reporting no BMS alarm.")
     if any(m["powerSaving"] or not m["active"] or m["severity"] != 0 or m["state"] != "FUNCTION" for m in system):
-        return "Robot must be active in FUNCTION, outside low power mode, with severity zero."
+        return blocked("system", "Robot must be active in FUNCTION, outside low power mode, with severity zero.")
     if any(m["posture"] != 1 or m["motion"] != 0 or m["action"] != "RL_TROT" for m in body):
-        return "Robot must be standing idle. Inspect it onsite, stand it using the app, then rearm."
-    if any(m["state"] != 0 or m["pending"] or m["fault"] for m in head):
-        return "Head is busy or reporting a pending action/fault."
-    return None
+        return blocked("posture", "Robot must be standing idle. Inspect it onsite, stand it using the app, then rearm.")
+    if any(m["fault"] for m in head):
+        return blocked("head_fault", "Head reports a fault. Inspect the robot before rearming.")
+    if any(m["pending"] for m in head):
+        return blocked("head_pending", "Head still has a pending action.")
+    if any(m["state"] != 0 for m in head):
+        return blocked("head_busy", "Head is still busy.")
+    return {"ready": True, "code": "ready", "reason": None}
 
 
-def check_readiness(node, sdk):
+def readiness_problem(samples):
+    return readiness_details(samples)["reason"]
+
+
+def settle_postflight(read_check, *, timeout=12, clock=time.monotonic, wait=time.sleep):
+    """Observe settling after known completion; never submit or retry a goal.
+
+    Only head busy/pending can be observed again. A fault or any other failed
+    gate stops immediately. Every attempt rechecks ALL fresh safety telemetry.
+    """
+    started = clock()
+    deadline = started + timeout
+    attempts = 0
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            break
+        result = read_check(min(8, remaining))
+        attempts += 1
+        if result["ready"] or result.get("code") not in {"head_busy", "head_pending"}:
+            return {**result, "attempts": attempts, "waitedSeconds": round(clock() - started, 2)}
+        remaining = deadline - clock()
+        if remaining <= 0:
+            break
+        wait(min(.25, remaining))
+    return {"ready": False, "code": "settling_timeout",
+            "reason": "Head did not settle within the post-action observation window. Inspect it before rearming.",
+            "attempts": attempts, "waitedSeconds": round(clock() - started, 2)}
+
+
+def check_readiness(node, sdk, *, timeout=8, detailed=False):
     """Fresh bounded subscriptions only; never change posture, mode, or services."""
     from bms.BmsState import BmsState
     from sm.SmStatus import SmStatus
     from locomotion.LocomotionStatus import LocomotionStatus
     from locomotion.HeadStatus import HeadStatus
-    deadline = time.monotonic() + 8
+    deadline = time.monotonic() + timeout
     def observe(route, cls, extract, count, predicate=lambda m: True):
         inbox = queue.Queue(maxsize=16)
         def receive(payload, context):
@@ -75,9 +111,10 @@ def check_readiness(node, sdk):
             "body": observe("/locomotion/status", LocomotionStatus, lambda m: dict(heartbeat=m.HeartbeatSeq(), posture=m.Posture(), motion=m.Motion(), action=text(m.CurrentAction())), 3),
             "head": observe("/locomotion/head_status", HeadStatus, lambda m: dict(state=m.State(), pending=text(m.PendingAction()), fault=text(m.FaultReason())), 2),
         }
-        return readiness_problem(samples)
+        result = readiness_details(samples)
     except Exception:
-        return "Fresh readiness telemetry could not be verified. Inspect the robot and connection before rearming."
+        result = {"ready": False, "code": "telemetry", "reason": "Fresh readiness telemetry could not be verified. Inspect the robot and connection before rearming."}
+    return result if detailed else result["reason"]
 
 
 def emit(**fields):
@@ -144,12 +181,12 @@ def main(argv=None):
             info = client.info()
             if info is None or not info.supports_cancel or info.schema_hash_hex != SCHEMA_HASH:
                 raise RuntimeError("A cancellable RCP provider with the exact client schema is required.")
-            reason = check_readiness(node, sdk)
+            readiness = check_readiness(node, sdk, detailed=True)
             if args.check_ready:
-                emit(event="readiness", requestId=args.request_id, ready=reason is None, reason=reason)
-                return 0 if reason is None else 1
-            if reason:
-                emit(event="not_ready", requestId=args.request_id, reason=reason)
+                emit(event="readiness", requestId=args.request_id, **readiness)
+                return 0 if readiness["ready"] else 1
+            if not readiness["ready"]:
+                emit(event="not_ready", requestId=args.request_id, **readiness)
                 return 1
             requests.mkdir(mode=0o700, exist_ok=True)
             record = {"requestId": args.request_id, "preset": args.preset, "goalId": goal_id}
@@ -176,12 +213,15 @@ def main(argv=None):
                 if not terminal_observed:
                     raise RuntimeError("Action result did not contain a terminal lifecycle state")
                 data = ExecuteTaskResultT.InitFromPackedBuf(result.result, 0) if result.result else None
-                postflight = check_readiness(node, sdk) if result.status == sdk.ActionStatus.SUCCEEDED else "Inspect the failed/canceled task before rearming."
+                postflight = (settle_postflight(lambda timeout: check_readiness(node, sdk, timeout=timeout, detailed=True))
+                              if result.status == sdk.ActionStatus.SUCCEEDED else
+                              {"ready": False, "code": "action_failed", "reason": "Inspect the failed/canceled task before rearming."})
                 summary = dict(event="terminal", requestId=args.request_id, goalId=goal_id,
                                status=result.status.name, code=result.code.name, message=diagnostic(result.message),
                                durationMs=data.durationMs if data else None,
                                errorCategory=data.errorCategory if data else None,
-                               readyForNext=postflight is None, postflightReason=postflight)
+                               readyForNext=postflight["ready"], postflightReason=postflight["reason"],
+                               postflightReadiness=postflight)
                 emit(**summary)
                 record["terminal"] = summary
                 temporary = requests / (args.request_id + ".terminal.tmp")

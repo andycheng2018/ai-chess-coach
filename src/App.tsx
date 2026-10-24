@@ -15,6 +15,8 @@ import { ProfileModal } from './components/ProfileModal';
 import { MenuModal } from './components/MenuModal';
 import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativeOAuth } from './auth';
 import { notifyVbotMove } from './vbotDemo';
+import { useVbotCompanion } from './useVbotCompanion';
+import { VbotCompanion } from './components/VbotCompanion';
 import { reconcilePendingMove, resolveMoveFailure, type PendingMoveAttempt } from './pendingMove';
 import { moveLineChanged, shouldApplyBackupSnapshot } from './gameSync';
 import { requireSenseTrainingGame } from './senseRecovery';
@@ -54,6 +56,7 @@ import {
   streamEvents,
   streamGame,
   type Account,
+  type PlayingGame,
   type StreamEvent,
 } from './lichess';
 
@@ -1694,6 +1697,8 @@ export default function App() {
   const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
+  const [playingGames, setPlayingGames] = useState<PlayingGame[]>([]);
+  const [refreshingGames, setRefreshingGames] = useState(false);
   // A remembered room is restored only after Lichess confirms that this
   // account and the training bot are the players in that exact joined game.
   const [senseRobotGameId, setSenseRobotGameId] = useState<string | null>(null);
@@ -1873,6 +1878,16 @@ export default function App() {
 
   const isCoachGame = players.white.name.toLowerCase() === BOT_USERNAME.toLowerCase()
     || players.black.name.toLowerCase() === BOT_USERNAME.toLowerCase();
+  // The companion backend independently verifies its canonical bot stream before
+  // binding/dispatch. A reconnecting browser board must not require a second desk.
+  const vbotCanArm = Boolean(account && activeGame && isCoachGame);
+  const vbotBlockReason = !account ? 'Sign in to Lichess to connect VBOT to your training game.'
+    : !gameId ? 'Start or resume a training match to enable reactions.'
+    : !activeGame ? 'Reactions are available during an active match.'
+    : !isCoachGame ? 'Choose a game against your training bot to enable reactions.' : '';
+  const vbotEnded = Boolean(gameId && !['idle', 'recovering', 'created', 'started'].includes(gameStatus));
+  const vbotCompanion = useVbotCompanion({ gameId, playerColor: myColor,
+    resolved: recoveryChecked, ended: vbotEnded, canArm: vbotCanArm });
   const coachArrows: Arrow[] = useMemo(() => {
     if (!hintsEnabled || !coachResult) return [];
     // A best-move arrow belongs to the position *before* the student's move,
@@ -1898,6 +1913,51 @@ export default function App() {
     setGameId(nextGameId);
     storeActiveGame(nextGameId, account?.username);
   }, [account?.username]);
+
+  const refreshPlayingGames = useCallback(async () => {
+    if (!token) {
+      setPlayingGames([]);
+      return [];
+    }
+    setRefreshingGames(true);
+    try {
+      const games = await getPlayingGames(token);
+      setPlayingGames(games);
+      return games;
+    } catch (error) {
+      console.warn('Could not refresh active games:', error);
+      return [];
+    } finally {
+      setRefreshingGames(false);
+    }
+  }, [token]);
+
+  const handleSelectGame = useCallback((selectedGameId: string) => {
+    setActiveGameId(selectedGameId);
+    setGameStatus('recovering');
+    setCurrentView('arena');
+    setMenuModalOpen(false);
+    setStatus(`Switched to match ${selectedGameId}.`);
+
+    void fetch(`${CONTROL_URL}/api/vbot/status`)
+      .then((r) => r.json())
+      .then((vbotStatus) => {
+        if (vbotStatus?.target) {
+          void fetch(`${CONTROL_URL}/api/vbot/arm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mode: vbotStatus.mode || 'live',
+              gameId: selectedGameId,
+              preset: vbotStatus.preset || 'actions/ROCKYOU.json',
+              confirmSafeWorkspace: true,
+              confirmHandsetStop: true,
+            }),
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, [setActiveGameId]);
 
   useEffect(() => { gameIdRef.current = gameId; }, [gameId]);
   useEffect(() => {
@@ -2156,6 +2216,7 @@ export default function App() {
     }
 
     getPlayingGames(token).then((games) => {
+      setPlayingGames(games);
       if (cancelled || gameIdRef.current) return;
       const coachGame = games.find((game) => game.opponent?.username?.toLowerCase() === BOT_USERNAME.toLowerCase());
       if (coachGame?.gameId) {
@@ -2186,45 +2247,55 @@ export default function App() {
       if (alive) setBot({ running: false, connected: false, error: String(error) });
     });
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
+    void refreshPlayingGames();
+    const timer = window.setInterval(() => {
+      void refresh();
+      void refreshPlayingGames();
+    }, 3000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [token, account]);
+  }, [token, account, refreshPlayingGames]);
 
   useEffect(() => {
     if (!token || !account) return;
     const controller = new AbortController();
     void retryingStream(
       (signal) => streamEvents(token, (event: StreamEvent) => {
-        if (event.type === 'gameStart' && event.game) {
-          const opponent = event.game.opponent?.username?.toLowerCase();
-          if (opponent === BOT_USERNAME.toLowerCase()) {
-            // A normal Lichess gameStart must stay a normal online game.
-            // Preserve SenseRobot mode only when this is the exact game
-            // that was activated by a successful room join.
-            const startedGameId = event.game.id;
+        if (event.type === 'gameStart') {
+          void refreshPlayingGames();
+          if (event.game) {
+            const opponent = event.game.opponent?.username?.toLowerCase();
+            if (opponent === BOT_USERNAME.toLowerCase()) {
+              // A normal Lichess gameStart must stay a normal online game.
+              // Preserve SenseRobot mode only when this is the exact game
+              // that was activated by a successful room join.
+              const startedGameId = event.game.id;
 
-            setSenseRobotGameId((current) =>
-              current === startedGameId ? current : null
-            );
-            setActiveGameId(event.game.id);
-            setGameStatus('recovering');
-            setStatus(`Game started against ${BOT_USERNAME}.`);
+              setSenseRobotGameId((current) =>
+                current === startedGameId ? current : null
+              );
+              setActiveGameId(event.game.id);
+              setGameStatus('recovering');
+              setStatus(`Game started against ${BOT_USERNAME}.`);
+            }
           }
         }
-        if (event.type === 'gameFinish' && event.game?.id === gameIdRef.current) {
-          forgetStoredGame();
-          pendingMoveRef.current = null;
-          setMoveInFlight(false);
-          // The per-game stream carries the authoritative terminal status and
-          // winner. Do not overwrite it with a generic "finished" value.
-          setStatus('Training game finished. Finalizing your result…');
+        if (event.type === 'gameFinish') {
+          void refreshPlayingGames();
+          if (event.game?.id === gameIdRef.current) {
+            forgetStoredGame();
+            pendingMoveRef.current = null;
+            setMoveInFlight(false);
+            // The per-game stream carries the authoritative terminal status and
+            // winner. Do not overwrite it with a generic "finished" value.
+            setStatus('Training game finished. Finalizing your result…');
+          }
         }
       }, signal),
       controller.signal,
       () => setStatus('Reconnecting to Lichess…'),
     );
     return () => controller.abort();
-  }, [token, account, setActiveGameId, BOT_USERNAME]);
+  }, [token, account, setActiveGameId, BOT_USERNAME, refreshPlayingGames]);
 
   useEffect(() => {
     if (!token || !gameId || !account) return;
@@ -4306,21 +4377,29 @@ export default function App() {
       username={account?.username}
       botConnected={Boolean(bot.connected)}
       botLabel={botLabel}
-      hasActiveGame={Boolean(activeGame || gameId)}
+      hasActiveGame={Boolean(activeGame || gameId || playingGames.length > 0)}
       onLogout={() => { logout(); setToken(null); }}
+      playingGames={playingGames}
+      activeGameId={gameId}
+      onSelectGame={handleSelectGame}
+      onRefreshGames={refreshPlayingGames}
+      refreshingGames={refreshingGames}
     />
 
     <NavBar
       currentView={currentView}
       onSelectView={(view) => {
         if (view === 'profile') setProfileModalOpen(true);
-        else if (view === 'menu') setMenuModalOpen(true);
+        else if (view === 'menu') {
+          void refreshPlayingGames();
+          setMenuModalOpen(true);
+        }
         else setCurrentView(view);
       }}
       username={account?.username}
       botConnected={Boolean(bot.connected)}
       botLabel={botLabel}
-      hasActiveGame={Boolean(activeGame || gameId)}
+      hasActiveGame={Boolean(activeGame || gameId || playingGames.length > 0)}
       onOpenAnalysis={openAnalysis}
       onOpenSenseSetup={() => setSenseSetupOpen(true)}
       onLogout={() => { logout(); setToken(null); }}
@@ -4331,17 +4410,23 @@ export default function App() {
       currentView={currentView}
       onSelectView={(view) => {
         if (view === 'profile') setProfileModalOpen(true);
-        else if (view === 'menu') setMenuModalOpen(true);
+        else if (view === 'menu') {
+          void refreshPlayingGames();
+          setMenuModalOpen(true);
+        }
         else setCurrentView(view);
       }}
       username={account?.username}
       botConnected={Boolean(bot.connected)}
       botLabel={botLabel}
-      hasActiveGame={Boolean(activeGame || gameId)}
+      hasActiveGame={Boolean(activeGame || gameId || playingGames.length > 0)}
       onOpenAnalysis={openAnalysis}
       onOpenSenseSetup={() => setSenseSetupOpen(true)}
       onOpenProfile={() => setProfileModalOpen(true)}
-      onOpenMenu={() => setMenuModalOpen(true)}
+      onOpenMenu={() => {
+        void refreshPlayingGames();
+        setMenuModalOpen(true);
+      }}
       navHidden={navHidden}
     />
 
@@ -4361,17 +4446,66 @@ export default function App() {
         onStartGame={() => void startCoachGame()}
         startingGame={startingGame}
         recoveryChecked={recoveryChecked}
-        hasActiveGame={Boolean(activeGame || gameId)}
+        hasActiveGame={Boolean(activeGame || gameId || playingGames.length > 0)}
         onEnterArena={() => setCurrentView('arena')}
         onOpenAnalysis={openAnalysis}
         onOpenSenseSetup={() => setSenseSetupOpen(true)}
         onOpenProfile={() => setProfileModalOpen(true)}
+        onOpenMenu={() => {
+          void refreshPlayingGames();
+          setMenuModalOpen(true);
+        }}
+        playingGames={playingGames}
         onLogin={() => void loginWithLichess().catch((error) => setStatus(String(error)))}
         isLoggedIn={Boolean(token)}
       />
     ) : (
       <main className="arena-layout">
       <section className="match-arena-window">
+        <button type="button" className="vbot-shortcut" onClick={() => document.getElementById('vbot-companion')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+          <span>🐾 VBOT companion</span><strong>{vbotCompanion.offline ? 'Unavailable' : vbotCompanion.status?.armed && vbotCompanion.status.gameId === gameId ? vbotCompanion.status.mode === 'live' ? 'Live reactions' : 'Preview only' : 'Off · connect robot'} →</strong>
+        </button>
+        {/* Arena top navigation bar with back button */}
+        <div className="arena-header-bar">
+          <button
+            type="button"
+            className="arena-back-btn"
+            onClick={() => {
+              void refreshPlayingGames();
+              setMenuModalOpen(true);
+            }}
+            title="Go to menu to see all live games"
+          >
+            <span className="back-icon">←</span>
+            <span>All Live Games & Menu</span>
+            {playingGames.length > 0 && (
+              <span className="arena-live-count-badge">
+                {playingGames.length}
+              </span>
+            )}
+          </button>
+
+          <div className="arena-header-meta">
+            {gameId && (
+              <span className="arena-game-id-badge">
+                Match: <strong>{gameId}</strong>
+              </span>
+            )}
+            {playingGames.length > 1 && (
+              <button
+                type="button"
+                className="arena-switch-game-btn"
+                onClick={() => {
+                  void refreshPlayingGames();
+                  setMenuModalOpen(true);
+                }}
+              >
+                Switch Game ({playingGames.length}) ▾
+              </button>
+            )}
+          </div>
+        </div>
+
         <PlayerBar player={players[topSide]} clock={displayedClock[topSide]} active={activeGame && turnColor === topSide} side={topSide} />
         <section className="board-panel">
           <ChessBoard
@@ -4470,6 +4604,8 @@ export default function App() {
             Connect my SenseRobot
           </button>
         </section>}
+
+        <VbotCompanion control={vbotCompanion} gameId={gameId} canArm={vbotCanArm} ended={vbotEnded} blockedReason={vbotBlockReason} />
 
         {gameId && <section className="card game-card">
           <div className="active-game-banner">

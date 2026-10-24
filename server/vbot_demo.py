@@ -107,10 +107,45 @@ def send_dance(target: str, preset: str, request_id: str) -> dict:
             "postflightReason": terminal.get("postflightReason")}
 
 
+def check_robot(target: str) -> dict:
+    """Explicit read-only probe using the same strict SSH identity as dispatch."""
+    request_id = uuid.uuid4().hex
+    command = ssh_command(target, PRESETS[0], request_id)
+    command[-1] = shlex.join([REMOTE_ROOT + "/.venv/bin/python", "-I",
+                             REMOTE_ROOT + "/robot_action.py", "--check-ready",
+                             "--request-id", request_id])
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=25, check=False)
+    except subprocess.TimeoutExpired:
+        return {"ready": False, "code": "timeout", "reason": "Robot readiness check timed out. Check its power and Wi-Fi."}
+    for line in result.stdout.splitlines():
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict) and item.get("requestId") == request_id and item.get("event") == "readiness":
+            if isinstance(item.get("ready"), bool):
+                return {"ready": item["ready"] and result.returncode == 0,
+                        "code": item.get("code", "ready" if item["ready"] else "not_ready"),
+                        "reason": item.get("reason")}
+    error = result.stderr.lower()
+    if "host key verification failed" in error or "remote host identification has changed" in error:
+        reason = "SSH host identity could not be verified. Inspect the saved host key; do not bypass verification."
+    elif "permission denied" in error:
+        reason = "SSH authentication failed. Check this Mac's existing public-key access."
+    else:
+        reason = "Robot readiness could not be verified. Check power, Wi-Fi, SSH access, and the deployed helper."
+    return {"ready": False, "code": "unavailable", "reason": reason}
+
+
 class VbotDemo:
     def __init__(self, *, sender=send_dance, clock=time.monotonic, verification=None,
-                 fingerprint_reader=known_host_fingerprints, chooser=random.choice):
+                 fingerprint_reader=known_host_fingerprints, chooser=random.choice, checker=check_robot):
         self.sender, self.clock, self.chooser = sender, clock, chooser
+        self.checker = checker
+        self.readiness = None
+        self.readiness_at = float("-inf")
+        self.probe_generation = 0
         self.policy = CelebrationPolicy()
         self.stream_line = ()
         self.last_small_preset = None
@@ -135,7 +170,7 @@ class VbotDemo:
         self.events = deque(maxlen=80)
 
     def _event(self, status: str, **fields) -> dict:
-        event = {"time": int(time.time() * 1000), "status": status, **fields}
+        event = {"time": int(time.time() * 1000), "status": status, "gameId": self.game_id, **fields}
         self.events.appendleft(event)
         return event
 
@@ -153,7 +188,10 @@ class VbotDemo:
 
     def status(self) -> dict:
         with self.lock:
-            return {"armed": self.armed, "mode": self.mode, "gameId": self.game_id,
+            return {"companionApiVersion": 1, "generation": self.generation,
+                    "readiness": self.readiness,
+                    "readinessFresh": self.readiness is not None and self.clock() - self.readiness_at <= 30,
+                    "armed": self.armed, "mode": self.mode, "gameId": self.game_id,
                     "target": self.target, "preset": self.preset, "presets": PRESETS,
                     "cooldownSeconds": self.cooldown, "busy": self.busy,
                     "cooldownRemaining": max(0, round(self.cooldown - (self.clock() - max(self.last_started, self.last_finished)), 1)),
@@ -181,6 +219,33 @@ class VbotDemo:
         except (OSError, subprocess.SubprocessError):
             return False
 
+    def check_device(self, payload: dict) -> dict:
+        target = str(payload.get("target", self.target)).strip()
+        ssh_command(target, PRESETS[0], uuid.uuid4().hex)  # Validate before any subprocess.
+        with self.lock:
+            if self.busy or self.armed:
+                raise ValueError("Turn reactions off before checking the robot.")
+            self.probe_generation += 1
+            probe, generation = self.probe_generation, self.generation
+        result = self.checker(target)
+        with self.lock:
+            if probe != self.probe_generation or generation != self.generation:
+                raise ValueError("The connection changed during this check. Check again before enabling motion.")
+            self.readiness = {**result, "target": target, "checkedAt": int(time.time() * 1000)}
+            self.readiness_at = self.clock()
+            return self.status()
+
+    def connect_game(self, payload: dict, game_reader) -> dict:
+        game_id = str(payload.get("gameId", ""))
+        game = game_reader(game_id)
+        if (not game or game.get("gameId") != game_id or
+                game.get("state", {}).get("status") not in {"created", "started"} or
+                game.get("botColor") not in {"white", "black"}):
+            raise ValueError("Reconnect an active training game before enabling reactions.")
+        if payload.get("playerColor") not in {"white", "black"} or payload["playerColor"] == game["botColor"]:
+            raise ValueError("Only the human player's training game can enable reactions.")
+        return self.arm({**payload, "requireReadiness": payload.get("mode") == "live"})
+
     def arm(self, payload: dict) -> dict:
         mode = payload.get("mode", "rehearsal")
         game_id = str(payload.get("gameId", "")).strip()
@@ -192,6 +257,11 @@ class VbotDemo:
         if not re.fullmatch(r"[A-Za-z0-9]{8}", game_id):
             raise ValueError("Enter the eight-character Lichess game ID.")
         if mode == "live":
+            if payload.get("requireReadiness"):
+                with self.lock:
+                    if (not self.readiness or not self.readiness.get("ready") or
+                            self.readiness.get("target") != target or self.clock() - self.readiness_at > 30):
+                        raise ValueError("Check this robot's readiness again before enabling live reactions.")
             if payload.get("confirmSafeWorkspace") is not True or payload.get("confirmHandsetStop") is not True:
                 raise ValueError("Confirm clear space and an onsite handset stopping procedure before live motion.")
             ssh_command(target, preset, uuid.uuid4().hex)
@@ -216,8 +286,10 @@ class VbotDemo:
             self._event("armed", mode=mode, gameId=game_id, preset=preset)
             return self.status()
 
-    def disarm(self) -> dict:
+    def disarm(self, payload=None) -> dict:
         with self.lock:
+            if payload and (payload.get("gameId") != self.game_id or payload.get("generation") != self.generation):
+                return self.status()  # A stale tab cannot disable a newer arming session.
             self.armed = False
             self.generation += 1
             self._event("disarmed", message="Future dances disabled. An action already running must finish or be stopped onsite.")
@@ -398,16 +470,22 @@ class VbotDemo:
             with self.lock:
                 self._event(outcome["status"], requestId=request_id, **{k: v for k, v in outcome.items() if k != "status"})
                 if outcome.get("readyForNext") is False:
+                    self.readiness = None
+                    self.readiness_at = float("-inf")
                     self.armed = False
                     self._event("not_ready", requestId=request_id,
                                 reason=outcome.get("postflightReason") or "Robot is not ready for another action. Inspect and rearm onsite.")
         except (RobotNotReady, RobotRejected) as error:
             with self.lock:
+                self.readiness = None
+                self.readiness_at = float("-inf")
                 self.armed = False
                 self._event("not_ready" if isinstance(error, RobotNotReady) else "rejected",
                             requestId=request_id, reason=str(error))
         except Exception:
             with self.lock:
+                self.readiness = None
+                self.readiness_at = float("-inf")
                 self.armed = False
                 self._event("unknown", requestId=request_id,
                             message="Robot action not confirmed. Demo disarmed; inspect the robot before rearming. No automatic retry.")

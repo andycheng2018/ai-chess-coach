@@ -5,7 +5,7 @@ export type Challenge = {
   destUser?: { name?: string; id?: string; title?: string };
   status?: string;
 };
-type LichessOpponent = { id?: string; username?: string };
+type LichessOpponent = { id?: string; username?: string; rating?: number; title?: string };
 
 export type StreamEvent = {
   type: string;
@@ -14,9 +14,14 @@ export type StreamEvent = {
 };
 export type PlayingGame = {
   gameId: string;
+  fullId?: string;
   color?: 'white' | 'black';
   opponent?: LichessOpponent;
   isMyTurn?: boolean;
+  lastMove?: string;
+  variant?: { key?: string; name?: string };
+  speed?: string;
+  perf?: string;
 };
 
 export class LichessHttpError extends Error {

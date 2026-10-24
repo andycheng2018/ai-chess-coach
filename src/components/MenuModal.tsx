@@ -1,5 +1,6 @@
 import React from 'react';
 import type { AppView } from './NavBar';
+import type { PlayingGame } from '../lichess';
 
 type Props = {
   open: boolean;
@@ -12,6 +13,11 @@ type Props = {
   botLabel: string;
   hasActiveGame: boolean;
   onLogout: () => void;
+  playingGames?: PlayingGame[];
+  activeGameId?: string | null;
+  onSelectGame?: (gameId: string) => void;
+  onRefreshGames?: () => void;
+  refreshingGames?: boolean;
 };
 
 export const MenuModal: React.FC<Props> = ({
@@ -25,6 +31,11 @@ export const MenuModal: React.FC<Props> = ({
   botLabel,
   hasActiveGame,
   onLogout,
+  playingGames = [],
+  activeGameId,
+  onSelectGame,
+  onRefreshGames,
+  refreshingGames = false,
 }) => {
   if (!open) return null;
 
@@ -40,6 +51,114 @@ export const MenuModal: React.FC<Props> = ({
             ✕
           </button>
         </div>
+
+        {/* Live Games Section */}
+        {onSelectGame && (
+          <div className="menu-live-games-section">
+            <div className="menu-section-header">
+              <div className="section-title-wrap">
+                <span className="section-kicker">ALL LIVE MATCHES</span>
+                <h3 className="section-title">
+                  Active Games {playingGames.length > 0 ? `(${playingGames.length})` : ''}
+                </h3>
+              </div>
+              {onRefreshGames && (
+                <button
+                  type="button"
+                  className="icon-button refresh-games-btn"
+                  onClick={onRefreshGames}
+                  title="Refresh active games from Lichess"
+                  disabled={refreshingGames}
+                >
+                  <span className={refreshingGames ? 'spin' : ''}>🔄</span>
+                </button>
+              )}
+            </div>
+
+            {playingGames.length > 0 ? (
+              <div className="menu-live-games-list">
+                {playingGames.map((game) => {
+                  const isCurrent = game.gameId === activeGameId;
+                  const isWhite = game.color === 'white';
+                  const opponentName = game.opponent?.username || 'Opponent';
+                  const isBot =
+                    opponentName.toLowerCase() === botLabel.toLowerCase() ||
+                    game.opponent?.title === 'BOT';
+                  const variantName = game.variant?.name || 'Standard';
+
+                  return (
+                    <div
+                      key={game.gameId}
+                      className={`menu-live-game-card ${isCurrent ? 'current-active' : ''}`}
+                      onClick={() => onSelectGame(game.gameId)}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      <div className="game-card-left">
+                        <span className="game-color-icon">{isWhite ? '♔' : '♚'}</span>
+                        <div className="game-card-details">
+                          <div className="game-card-header-line">
+                            <strong className="game-card-opponent">
+                              vs. {opponentName}
+                              {isBot && <span className="game-bot-badge">BOT</span>}
+                            </strong>
+                            {game.opponent?.rating && (
+                              <span className="game-card-rating">~{game.opponent.rating}</span>
+                            )}
+                          </div>
+                          <div className="game-card-meta-line">
+                            <span className="game-meta-item">You play {game.color}</span>
+                            <span className="game-meta-dot">·</span>
+                            <span className="game-meta-item">{variantName}</span>
+                            <span className="game-meta-dot">·</span>
+                            <span
+                              className={`game-turn-pill ${
+                                game.isMyTurn ? 'my-turn' : 'waiting-turn'
+                              }`}
+                            >
+                              {game.isMyTurn ? '● Your turn' : 'Opponent turn'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="game-card-right">
+                        {isCurrent ? (
+                          <span className="current-match-badge">ACTIVE NOW</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="primary small-action-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectGame(game.gameId);
+                            }}
+                          >
+                            Play Match →
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="menu-no-games-box">
+                <p>No active games in progress on Lichess.</p>
+                {onRefreshGames && (
+                  <button
+                    type="button"
+                    className="ghost small-btn"
+                    onClick={onRefreshGames}
+                    disabled={refreshingGames}
+                  >
+                    Check for Live Games
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="menu-items-list">
           <button

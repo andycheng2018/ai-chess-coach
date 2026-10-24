@@ -1747,7 +1747,11 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == "/api/vbot/arm":
                     response = vbot_demo.arm(payload)
                 elif self.path == "/api/vbot/disarm":
-                    response = vbot_demo.disarm()
+                    response = vbot_demo.disarm(payload)
+                elif self.path == "/api/vbot/check":
+                    response = vbot_demo.check_device(payload)
+                elif self.path == "/api/vbot/connect":
+                    response = vbot_demo.connect_game(payload, runtime.game_state)
                 elif self.path == "/api/vbot/celebrate":
                     response = vbot_demo.reconcile(payload, runtime.game_state)
                 elif self.path == "/api/vbot/rehearse":

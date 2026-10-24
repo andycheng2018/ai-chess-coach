@@ -6,6 +6,29 @@ This local extension connects the existing Lichess/coach integration to a docume
 VBOT EDU robot preset. It does not create another Lichess account, stream, or chess evaluator.
 The path is **human move → existing Lichess stream → existing engine verdict → gesture or milestone dance → RCP preset**.
 
+## Native controls in Chess Buddy
+
+Open **Training Arena → VBOT companion**. The panel follows the selected training
+match, so there is no game-ID entry or separate dashboard to coordinate. **Check robot**
+is an explicit read-only SSH/provider/telemetry check; merely opening the app or polling
+status never connects to the robot. Use **Preview without motion** first, then check
+readiness and confirm the workspace/Stop controls before **Enable live reactions**.
+The Mac's existing SSH key and exact rehearsed-preset verification remain required.
+
+The panel shows requested, completed, resting, skipped, and paused states, including
+the exact block reason. A successful gesture followed by failed readiness remains a
+successful gesture with future reactions paused. Turning reactions off, finishing a
+match, or selecting another match requires deliberate rearming for subsequent motion.
+Old moves are never replayed. Turning reactions off is not an emergency stop; use the
+VBOT app's Stop for a running action. The legacy `/vbot` desk remains available for
+advanced diagnostics, but is no longer needed for ordinary play.
+
+After a successful action, the helper may observe transient head busy/pending status
+for at most 12 seconds, with no new goal submission. Every attempt rechecks all fresh
+telemetry. Head faults, battery/system/posture failures, missing/stale telemetry, and
+unknown action outcomes still stop immediately. Persistent head activity pauses the
+session. Deploy the updated helper for this settling behavior to apply on the device.
+
 ## Rehearse on the Mac
 
 1. Double-click **Open VBOT Chess Demo.command** in the repository root. It uses the
