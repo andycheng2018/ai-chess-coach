@@ -17,6 +17,10 @@ import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativ
 import { notifyVbotMove } from './vbotDemo';
 import { useVbotCompanion } from './useVbotCompanion';
 import { VbotCompanion } from './components/VbotCompanion';
+import { GameQrDialog } from './components/GameQrDialog';
+import { JoinRoomDialog } from './components/JoinRoomDialog';
+import { SenseRobotGameStatus } from './components/SenseRobotGameStatus';
+import { recoverJoinedRoom, requireExactJoinedRoom } from './roomJoin';
 import { reconcilePendingMove, resolveMoveFailure, type PendingMoveAttempt } from './pendingMove';
 import { moveLineChanged, shouldApplyBackupSnapshot } from './gameSync';
 import { requireSenseTrainingGame } from './senseRecovery';
@@ -1697,6 +1701,9 @@ export default function App() {
   const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
+  const [qrGameId, setQrGameId] = useState<string | null>(null);
+  const [roomLinkOpen, setRoomLinkOpen] = useState(false);
+  useEffect(() => { setQrGameId(null); }, [gameId]);
   const [playingGames, setPlayingGames] = useState<PlayingGame[]>([]);
   const [refreshingGames, setRefreshingGames] = useState(false);
   // A remembered room is restored only after Lichess confirms that this
@@ -3757,35 +3764,53 @@ export default function App() {
     }
   }
 
-  async function connectSenseRobotRoom(roomUrl?: string): Promise<string> {
+  async function connectSenseRobotRoom(roomUrl?: string, allowGameSwitch = false): Promise<string> {
     if (!account || !token) throw new Error('Sign in with your robot’s Lichess account first.');
-    if (scanningRoom || startingGame || activeGame || gameId || !recoveryChecked) {
+    if (scanningRoom || startingGame || (!allowGameSwitch && (activeGame || gameId)) || !recoveryChecked) {
       throw new Error('Wait for the current game check, or finish your open game first.');
     }
+    const originGame = gameIdRef.current;
     setScanningRoom(true);
     setSenseConnectionError('');
     try {
       setStatus(roomUrl ? 'Checking room link…' : 'Scan the SenseRobot game-room QR…');
       const room = parseSenseRoomUrl(roomUrl ?? await scanSenseRoomUrl());
-      setStatus('Preparing coach bot…');
-      let state = await setBotLevel(level);
-      setBot(state);
-      if (!state.running) { state = await startBot(); setBot(state); }
-      if (!state.connected) { state = await waitForBotReady(); setBot(state); }
-      setStatus('Joining your SenseRobot room…');
-      const joined = await joinSenseRoom(room.challengeId, room.color, account.username);
-      setBot(joined);
-      if (!joined.gameId) throw new Error('Lichess has not reported a game for this room yet.');
+      // Recover this exact accepted room before attempting another acceptance.
+      const games = await getPlayingGames(token);
+      const existing = recoverJoinedRoom(room, BOT_USERNAME, games);
+      let joinedGameId: string;
+      if (existing) {
+        joinedGameId = existing;
+      } else {
+        setStatus('Preparing coach bot…');
+        let state = await setBotLevel(level);
+        setBot(state);
+        if (!state.running) { state = await startBot(); setBot(state); }
+        if (!state.connected) { state = await waitForBotReady(); setBot(state); }
+        if (getToken() !== token) throw new Error('The Lichess account changed. Check the linked account before joining.');
+        setStatus('Joining your SenseRobot room…');
+        const joined = await joinSenseRoom(room.challengeId, room.color, account.username);
+        setBot(joined);
+        joinedGameId = requireExactJoinedRoom(room.challengeId, joined.gameId);
+      }
+      if (getToken() !== token || (gameIdRef.current !== originGame && gameIdRef.current !== joinedGameId)) {
+        throw new Error('The account or selected game changed during the join. Reopen this exact room to recover it; no acceptance is retried automatically.');
+      }
       // Save the successful join before attaching the game stream. A redirect
       // or refresh may resume this exact room, but never an unrelated game.
-      saveSenseSetup({ ...readSenseSetup(), open: true, joinedGameId: joined.gameId,
+      saveSenseSetup({ ...readSenseSetup(), open: true, joinedGameId,
         joinedUsername: account.username, level });
-      setGameStreamConnected(false);
-      setSenseRobotGameId(joined.gameId);
-      setActiveGameId(joined.gameId);
-      setGameStatus('recovering');
-      setStatus(`Room joined. Waiting for ${account.username} and ${joined.username || BOT_USERNAME} to sync…`);
-      return joined.gameId;
+      setSenseRobotGameId(joinedGameId);
+      if (gameIdRef.current !== joinedGameId) {
+        setGameStreamConnected(false);
+        setActiveGameId(joinedGameId);
+        setGameStatus('recovering');
+        setStatus(`Room joined. Waiting for ${account.username} and ${BOT_USERNAME} to sync…`);
+      } else {
+        // Rebinding the same ID would not restart its effect; preserve its live stream.
+        setStatus('This exact room is already connected. Confirm SenseRobot shows the same game.');
+      }
+      return joinedGameId;
     } catch (error) {
       setStatus(`Could not join SenseRobot room: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
@@ -4486,6 +4511,8 @@ export default function App() {
           </button>
 
           <div className="arena-header-meta">
+            <button type="button" className="ghost" disabled={scanningRoom || startingGame} onClick={() => setRoomLinkOpen(true)}>Join room link</button>
+            {gameId && <button type="button" className="ghost" disabled={gameStatus === 'recovering' || !account || players[myColor].name.toLowerCase() !== account.username.toLowerCase()} onClick={() => setQrGameId(gameId)}>Show game QR</button>}
             {gameId && (
               <span className="arena-game-id-badge">
                 Match: <strong>{gameId}</strong>
@@ -4505,6 +4532,8 @@ export default function App() {
             )}
           </div>
         </div>
+
+        {gameId && account && isSenseRobotGame && <SenseRobotGameStatus key={`${gameId}-${account.username}`} gameId={gameId} username={account.username} playerColor={myColor} moves={movesText} san={position.san} connected={gameStreamConnected} />}
 
         <PlayerBar player={players[topSide]} clock={displayedClock[topSide]} active={activeGame && turnColor === topSide} side={topSide} />
         <section className="board-panel">
@@ -5410,6 +5439,10 @@ export default function App() {
         </div>
       </div>
     )}
+
+    {roomLinkOpen && <JoinRoomDialog username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)} onClose={() => setRoomLinkOpen(false)} />}
+
+    {qrGameId && qrGameId === gameId && <GameQrDialog key={`${gameId}-${myColor}`} gameId={gameId} playerColor={myColor} username={account?.username} ended={vbotEnded} onJoinRoom={() => { setQrGameId(null); setRoomLinkOpen(true); }} onClose={() => setQrGameId(null)} />}
 
     {endGameConfirm && gameId && activeGame && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm end game" onMouseDown={(event) => { if (event.target === event.currentTarget) setEndGameConfirm(false); }}>
       <div className="confirm-modal">

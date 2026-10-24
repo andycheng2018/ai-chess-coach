@@ -3891,3 +3891,27 @@ header {
 /* Keep these controls clear of the fixed 52px navigation rail. */
 .vbot-companion { margin-left:44px; }
 .vbot-shortcut { margin-left:44px; width:calc(100% - 44px); }
+
+/* Local QR overlay: native dialog keeps focus and Escape behavior contained. */
+.game-qr-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; margin: auto; padding: 24px; border: 1px solid var(--border); border-radius: 18px; background: var(--panel); color: #e8e6e3; box-shadow: 0 24px 80px #0009; }
+.game-qr-dialog::backdrop { background: #000b; backdrop-filter: blur(5px); }
+.game-qr-dialog h2 { margin: 6px 0; }
+.game-qr-dialog label { display: block; margin: 12px 0 6px; }
+.game-qr-dialog select { width: 100%; padding: 10px; }
+.game-qr-image { min-height: 180px; margin: 16px auto; background: #fff; color: #111; text-align: center; border-radius: 8px; overflow: hidden; }
+.game-qr-image img { display: block; width: 100%; height: auto; }
+.game-qr-link { display: block; overflow-wrap: anywhere; text-align: center; }
+.game-qr-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin: 16px 0; }
+.game-qr-actions a { padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px; text-decoration: none; }
+
+.game-qr-id { text-transform: none; }
+
+.room-join-dialog input { width: 100%; padding: 12px; margin-bottom: 12px; }
+.room-join-dialog .sense-notice { margin-block: 14px; }
+
+.sense-game-status { margin: 10px 0 18px 44px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); font-size: 13px; }
+.sense-game-status > div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.sense-game-status > div span { color: var(--green); }
+.sense-game-status p { margin: 9px 0; }
+.sense-game-status details { margin-top: 10px; color: var(--muted); }
+.sense-physical-confirmed { color: var(--green); }

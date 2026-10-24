@@ -298,3 +298,43 @@ behavior. Until rehearsed, the native companion shows that it is pending and liv
 blunders are explicitly skipped. Rehearsal mode can preview a synthetic blunder
 without contacting a robot. All existing arming, preflight, result and postflight
 checks still apply.
+
+### Join a SenseRobot room from the live board
+
+Select **Join room link** beside the live-board match ID. Create a room on SenseRobot,
+paste its invitation, and check the preview: the invitation's `color` belongs to the
+coach bot; your player takes the opposite color. Select **Join as black/white**.
+The app recovers an already joined exact room before attempting acceptance, verifies
+the account/opponent/color, and refuses a different returned game ID. Switching to
+this room leaves other games open. Reopening the currently selected room preserves
+its live stream; no repeated acceptance or automatic retry is sent.
+
+Joining on Lichess does not establish physical synchronization: confirm SenseRobot
+has entered the same game before moving pieces. This action can open a supplied room
+while another game is selected; the longer setup wizard retains its original checks.
+
+### Show the current game QR
+
+**Show game QR** shares a public game-viewing URL with an explicit board orientation.
+It does not claim a seat or create a SenseRobot invitation. The dialog makes this
+separation explicit and links to **Join a SenseRobot room link**. It does not promise
+that scanning a started game's viewing QR will enroll SenseRobot in that game.
+Use the robot's Create Room flow for a new room-based physical-board session. A QR or error screen alone does not establish that an existing physical game is inactive. The room parser rejects
+viewing links instead of silently presenting them as invitations.
+
+QR generation is local, with copy/save, finished-game labels, matching game-ID casing,
+and Escape/focus handling. Player tokens and private seat URLs are never encoded.
+
+### Invitation screen versus actual physical play
+
+A SenseRobot invitation screen can remain visible while physical moves and replies
+reach Lichess. Treat the screen as a display state, not a definitive disconnection
+signal. Compare the exact game ID and move sequence before creating another room.
+Multiple open games can otherwise make the QR room and actual playing game differ.
+
+In SenseRobot mode, the board displays Lichess connection separately from a person's
+physical-play confirmation. The confirmation is informational, does not gate chess
+or arm VBOT, and requires a human move followed by a bot reply in the displayed line.
+It remains local to the current view and exact game/account/move branch; a changed
+account, game, rewind, divergence, or reload requires confirmation again. App move
+history by itself never proves physical movement.

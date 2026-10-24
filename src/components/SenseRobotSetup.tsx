@@ -280,8 +280,9 @@ export function SenseRobotSetup(props: Props) {
         </>}
         {step === 'connected' && <>
           <div className="sense-success">✓</div>
-          <h3>Your game is connected.</h3>
-          <p>Move on SenseRobot. Your board in Chess Coach follows the same Lichess game, and the coach watches your play.</p>
+          <h3>Lichess game connected.</h3>
+          <p>Chess Buddy follows this Lichess game. Confirm a physical move and the robot’s reply match its move list before treating the board as synchronized.</p>
+          <p className="fine-print">A QR invitation can remain visible while gameplay works. Check actual moves and the game ID before attempting another join.</p>
           <p className="sense-notice">{props.moves > 0 ? `${props.moves} move${props.moves === 1 ? '' : 's'} synced from Lichess.` : 'Waiting for the first move. The board will update automatically.'}</p>
           <button className="primary wide" onClick={props.onClose}>Go to my board</button>
         </>}
