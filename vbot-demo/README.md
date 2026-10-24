@@ -201,7 +201,7 @@ request record and only create this evidence after actual observation. The backe
 checks the saved host key at arming and dispatch, while SSH still verifies the live host.
 
 Each action now checks fresh BMS, system, body and head samples. The demo requires
-at least 50% battery, unplugged, no BMS alarm, active FUNCTION with severity zero and
+at least 20% battery, unplugged, no BMS alarm, active FUNCTION with severity zero and
 no power saving, advancing heartbeats, standing idle RL_TROT, and an idle head with
 no pending action/fault. These are conservative demo gates, not manufacturer-wide
 operating limits. A read-only check is available after deployment:

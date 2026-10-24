@@ -43,8 +43,8 @@ def readiness_details(samples):
         return blocked("incomplete", "Fresh robot telemetry is incomplete.")
     if len({m["heartbeat"] for m in system}) < 2 or len({m["heartbeat"] for m in body}) < 3:
         return blocked("stale", "Robot state heartbeats are not advancing.")
-    if any(m["soc"] < 50 or m["charger"] or m["alarm"] != 0 for m in battery):
-        return blocked("battery", "Battery must be at least 50%, unplugged, and reporting no BMS alarm.")
+    if any(m["soc"] < 20 or m["charger"] or m["alarm"] != 0 for m in battery):
+        return blocked("battery", "Battery must be at least 20%, unplugged, and reporting no BMS alarm.")
     if any(m["powerSaving"] or not m["active"] or m["severity"] != 0 or m["state"] != "FUNCTION" for m in system):
         return blocked("system", "Robot must be active in FUNCTION, outside low power mode, with severity zero.")
     if any(m["posture"] != 1 or m["motion"] != 0 or m["action"] != "RL_TROT" for m in body):
