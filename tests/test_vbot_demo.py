@@ -58,9 +58,24 @@ class DemoTests(unittest.TestCase):
         self.sender.assert_not_called()
 
     def test_other_engine_classifications_never_dance(self):
-        for label in ["inaccuracy", "mistake", "blunder"]:
+        for label in ["inaccuracy", "mistake"]:
             with self.subTest(label=label):
                 self.assertEqual(self.event(self.record(classification=label))["status"], "skipped")
+        self.sender.assert_not_called()
+
+    def test_canonical_blunder_previews_sad_and_cannot_be_upgraded_by_client(self):
+        result = self.event(self.record(classification="blunder"), classification="good", tier="major")
+        self.assertEqual(result["status"], "rehearsed")
+        self.assertEqual(result["tier"], "sad")
+        self.assertEqual(result["preset"], "actions/GRIEVANCE.json")
+        self.sender.assert_not_called()
+        self.now += 181
+        self.assertIn("already handled", self.event(self.record(recordId="duplicate", classification="blunder"))["reason"])
+
+    def test_synthetic_blunder_preview_never_becomes_major(self):
+        result = self.demo.rehearse("blunder", "major")
+        self.assertEqual(result["tier"], "sad")
+        self.assertTrue(result["synthetic"])
         self.sender.assert_not_called()
 
     def test_client_cannot_upgrade_engine_mistake_to_good(self):
@@ -258,14 +273,57 @@ class TierDispatchTests(unittest.TestCase):
         self.demo.arm({"mode":"live","gameId":"AbCd1234","target":"vbot@robot.example", "applicationVersion":"unknown",
                        "confirmSafeWorkspace":True,"confirmHandsetStop":True})
 
-    def submit(self,ply,tier="small",brief=False):
+    def submit(self,ply,tier="small",brief=False,classification="good"):
         with self.demo.lock:
-            result=self.demo._submit({"gameId":"AbCd1234","ply":ply,"playerColor":"white","playedMove":"e4","classification":"good"},
+            result=self.demo._submit({"gameId":"AbCd1234","ply":ply,"playerColor":"white","playedMove":"e4","classification":classification},
                                      {"tier":tier,"reason":"verified test signal","briefOnly":brief})
         deadline=time.monotonic()+2
         while self.demo.status()["busy"] and time.monotonic()<deadline:time.sleep(.005)
         self.assertFalse(self.demo.status()["busy"])
         return result
+
+    def verify_sad(self):
+        self.demo.verification["presets"].append({"preset":"actions/GRIEVANCE.json",
+            "status":"SUCCEEDED", "errorCategory":0, "movementConfirmed":True})
+
+    def test_sad_live_requires_exact_rehearsal_even_with_application_version(self):
+        self.demo.compatibility = {"basis":"application-version", "applicationVersion":"V1.6.0"}
+        result = self.submit(1, classification="blunder")
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("supervised", result["reason"])
+        self.sender.assert_not_called()
+
+    def test_verified_sad_dispatches_once_and_shares_body_performance_interval(self):
+        self.verify_sad()
+        result = self.submit(1, classification="blunder")
+        self.assertEqual(result["tier"], "sad")
+        self.assertEqual(result["preset"], "actions/GRIEVANCE.json")
+        self.assertEqual(self.demo.cooldown, 20)
+        self.now += 21
+        self.assertIn("already handled", self.submit(1, classification="blunder")["reason"])
+        self.assertIn("three-minute", self.submit(3, classification="blunder")["reason"])
+        self.assertEqual(self.submit(5, "major")["tier"], "small")
+        self.assertEqual(self.sender.call_count, 2)
+
+    def test_sad_is_not_sent_for_fast_games_or_when_busy_and_is_not_replayed(self):
+        self.verify_sad()
+        self.assertEqual(self.submit(1, brief=True, classification="blunder")["status"], "skipped")
+        self.assertIn("already handled", self.submit(1, classification="blunder")["reason"])
+        self.demo.busy = True
+        with self.demo.lock:
+            result = self.demo._submit({"gameId":"AbCd1234", "ply":3, "playerColor":"white", "classification":"blunder"})
+        self.demo.busy = False
+        self.assertIn("busy", result["reason"])
+        self.assertIn("already handled", self.submit(3, classification="blunder")["reason"])
+        self.sender.assert_not_called()
+
+    def test_sad_rechecks_host_identity_even_with_application_version(self):
+        self.verify_sad()
+        self.demo.compatibility = {"basis":"application-version"}
+        self.demo.fingerprint_reader = lambda _: set()
+        self.submit(1, classification="blunder")
+        self.assertFalse(self.demo.armed)
+        self.sender.assert_not_called()
 
     def test_ordinary_moves_randomize_verified_brief_presets_and_avoid_repeats(self):
         first=self.submit(1);self.now+=11;second=self.submit(3)

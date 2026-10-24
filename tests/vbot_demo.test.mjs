@@ -56,3 +56,13 @@ test('a stale tab cannot adopt or automatically disarm another game session',()=
   assert.equal(vbotManagedSession({armed:true,gameId:'Other123',generation:2},null,'AbCd1234'),null);
   assert.equal(vbotManagedSession({armed:false,...owned},owned,'AbCd1234'),null);
 });
+
+test('canonical blunder follows the same identity-only notification path',async()=>{
+  const calls=[];const {notify}=load(async(url,options)=>{calls.push(JSON.parse(options.body));return {ok:true};});
+  await notify({...record,classification:'blunder'},'AbCd1234','white');
+  assert.deepEqual(calls,[{recordId:'engine-1',gameId:'AbCd1234',playerColor:'white'}]);
+});
+test('sad preview has a readable label and never claims physical completion',()=>{
+  const {vbotEventText}=load(async()=>({ok:true}));
+  assert.equal(vbotEventText({status:'rehearsed',preset:'actions/GRIEVANCE.json'}),'Preview: Sad reaction; no robot motion');
+});

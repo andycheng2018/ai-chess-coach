@@ -10,6 +10,7 @@ from statistics import median
 GOOD_LABELS = {"good", "excellent", "best", "book"}
 SMALL_PRESETS = ("actions/WAVE.json", "atom/look_left.json", "atom/look_right.json")
 HEAD_PRESETS = SMALL_PRESETS[1:]
+SAD_PRESET = "actions/GRIEVANCE.json"
 RULES = {"materialGainCp": 200, "singleSwingCp": 200, "trendGainCp": 150,
          "baselineMoves": 5, "recentMoves": 3, "minimumDepth": 12,
          "smallRestSeconds": 10, "danceRestSeconds": 20, "danceIntervalSeconds": 180,
@@ -61,6 +62,11 @@ class CelebrationPolicy:
         self.identity, self.last_ply, self.profile = identity, ply, profile
         fast, pace_reason = fast_or_unknown(game, identity[1])
         decision = {"tier":"small", "reason":"Ordinary good move.", "briefOnly":fast, "paceReason":pace_reason}
+        if record.get("classification") == "blunder":
+            # Trust the canonical coach verdict, even for mate-valued/missing cp.
+            # A blunder ends the improvement baseline; it can never earn a dance.
+            self.points.clear()
+            return {**decision, "tier":"sad", "reason":"Coach labeled this move a blunder."}
         if record.get("classification") not in GOOD_LABELS:
             decision = {**decision, "tier":"none", "reason":"Coach did not label this move good."}
         score = record.get("evaluationAfter")

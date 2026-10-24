@@ -100,7 +100,16 @@ class PolicyTests(unittest.TestCase):
     def test_bad_move_cannot_earn_major_even_with_material_or_score_gain(self):
         for label in ['inaccuracy','mistake','blunder']:
             decision=CelebrationPolicy().observe(record(score=500,classification=label,fenBefore='4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1',playedMoveUci='d2d5',opponentReplyUci='e8e7'),GAME)
-            self.assertEqual(decision['tier'],'none')
+            self.assertEqual(decision['tier'],'sad' if label == 'blunder' else 'none')
+
+    def test_blunder_uses_coach_label_with_missing_or_mate_evaluation_and_resets_baseline(self):
+        for color in ['white', 'black']:
+            for score in [None, -20000, 400]:
+                policy = CelebrationPolicy()
+                policy.observe(record(1, -100, playerColor=color), GAME)
+                result = policy.observe(record(3, score, classification='blunder', playerColor=color), GAME)
+                self.assertEqual(result['tier'], 'sad')
+                self.assertEqual(len(policy.points), 0)
 
 
 if __name__=='__main__':unittest.main()

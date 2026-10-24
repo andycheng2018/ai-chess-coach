@@ -14,7 +14,7 @@ import signal
 import time
 import uuid
 
-PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", "actions/WAVE.json", "atom/look_left.json", "atom/look_right.json")
+PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", "actions/WAVE.json", "atom/look_left.json", "atom/look_right.json", "actions/GRIEVANCE.json")
 SESSION = "/opt/vita/aorta/edu/edu_session.json5"
 VERSIONS = {"aorta-sdk": "2026.9.23", "aorta-msgs": "2026.9.23", "vbot-edu-msgs": "2026.9.24", "flatbuffers": "25.12.19"}
 SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"

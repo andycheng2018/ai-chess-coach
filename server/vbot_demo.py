@@ -13,9 +13,9 @@ import threading
 import time
 import uuid
 
-from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, RULES
+from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES
 
-PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS)
+PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET)
 REMOTE_ROOT = "/userdata/vbot/chess-demo"
 SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"
 PROFILE_PATH = Path(__file__).resolve().parents[1] / "vbot-demo" / "device-verification.local.json"
@@ -199,6 +199,7 @@ class VbotDemo:
                     "compatibility": self.compatibility,
                     "verification": self.verification, "policy": RULES,
                     "smallPresets": self._small_presets(self.target),
+                    "sadPresetVerified": bool(self._verified_entry(self.target, SAD_PRESET)),
                     "danceCooldownRemaining": max(0, round(RULES["danceIntervalSeconds"] - (self.clock()-self.last_dance_finished), 1))}
 
     def _verified_entry(self, target: str, preset: str) -> dict | None:
@@ -407,7 +408,7 @@ class VbotDemo:
             return self._submit({"gameId": self.game_id, "ply": uuid.uuid4().hex,
                                  "playerColor": "white", "classification": classification,
                                  "playedMove": "e4", "synthetic": True},
-                                {"tier":"major" if scenario == "major" else "small",
+                                {"tier":"sad" if classification == "blunder" else "major" if scenario == "major" else "small",
                                  "reason":"Synthetic tier example; not a real engine/material signal.", "briefOnly":False})
 
     def _submit(self, record: dict, decision=None) -> dict:
@@ -416,8 +417,8 @@ class VbotDemo:
             return self._event("skipped", reason="Demo is disarmed.", **fields)
         if record["gameId"] != self.game_id:
             return self._event("skipped", reason="Another game is selected.", **fields)
-        if record["classification"] not in GOOD_LABELS:
-            return self._event("skipped", reason="Coach did not label this move good.", **fields)
+        if record["classification"] not in GOOD_LABELS | {"blunder"}:
+            return self._event("skipped", reason="No reaction for this coach classification.", **fields)
         key = (record["gameId"], record["playerColor"], record["ply"])
         if key in self.seen:
             return self._event("skipped", reason="This ply was already handled.", **fields)
@@ -428,12 +429,24 @@ class VbotDemo:
         if self.busy or self.clock() - max(self.last_started, self.last_finished) < self.cooldown:
             return self._event("skipped", reason="Action busy or within cooldown; not queued.", **fields)
         decision = decision or {"tier":"small", "reason":"Ordinary good move.", "briefOnly":False}
-        tier = decision["tier"]
+        # Classification comes from the stored server result, never the client.
+        tier = "sad" if record["classification"] == "blunder" else decision["tier"]
+        if tier not in {"small", "major", "sad"} or (tier == "sad" and record["classification"] != "blunder"):
+            return self._event("skipped", reason="No eligible reaction for this verdict.", **fields)
         pace_reason = decision.get("paceReason")
         if tier == "major" and (decision.get("briefOnly") or self.clock()-self.last_dance_finished < RULES["danceIntervalSeconds"]):
             tier = "small"
             pace_reason = pace_reason or "Full dance is within its three-minute interval; using a brief acknowledgment."
         preset = self.preset
+        if tier == "sad":
+            # GRIEVANCE includes body movement; never treat it as a brief gesture.
+            if decision.get("briefOnly"):
+                return self._event("skipped", reason="Sad body performance disabled for fast, low, or unverified clocks.", tier=tier, **fields)
+            if self.clock()-self.last_dance_finished < RULES["danceIntervalSeconds"]:
+                return self._event("skipped", reason="Sad performance is within the three-minute body-performance interval; not queued.", tier=tier, **fields)
+            if self.mode == "live" and not self._verified_entry(self.target, SAD_PRESET):
+                return self._event("skipped", reason="Sad reaction needs a supervised GRIEVANCE rehearsal on this robot before live use.", tier=tier, **fields)
+            preset = SAD_PRESET
         if tier == "small":
             pool = self._small_presets(self.target) if self.mode == "live" else list(SMALL_PRESETS)
             if decision.get("briefOnly"):
@@ -443,12 +456,12 @@ class VbotDemo:
                 return self._event("skipped", reason="No rehearsed brief preset is available for this pace/target.", tier=tier, **fields)
             preset = self.chooser(options)
             self.last_small_preset = preset
-        self.cooldown = RULES["danceRestSeconds"] if tier == "major" else RULES["smallRestSeconds"]
+        self.cooldown = RULES["danceRestSeconds"] if tier in {"major", "sad"} else RULES["smallRestSeconds"]
         self.last_started = self.clock()
         context = {"tier":tier, "reason":decision["reason"], "paceReason":pace_reason,
                    "metrics":decision.get("metrics"), "preset":preset, **fields}
         if self.mode == "rehearsal":
-            if tier == "major": self.last_dance_finished = self.clock()
+            if tier in {"major", "sad"}: self.last_dance_finished = self.clock()
             return self._event("rehearsed", message="Would request this acknowledgment; no robot contacted.", **context)
         self.busy = True
         request_id = uuid.uuid4().hex
@@ -463,12 +476,12 @@ class VbotDemo:
                 if not self.armed or generation != self.generation:
                     self._event("skipped", requestId=request_id, reason="Disarmed before dispatch.")
                     return
-                verify_identity = self.compatibility.get("basis") == "tested-preset"
+                verify_identity = tier == "sad" or self.compatibility.get("basis") == "tested-preset"
             if verify_identity and (not self._verified_entry(target, preset) or not self._identity_matches(target)):
                 raise RobotNotReady("The saved SSH host key no longer matches the rehearsed robot. No goal submitted.")
             outcome = self.sender(target, preset, request_id)
             with self.lock:
-                self._event(outcome["status"], requestId=request_id, **{k: v for k, v in outcome.items() if k != "status"})
+                self._event(outcome["status"], requestId=request_id, **{"preset":preset, "tier":tier, **{k: v for k, v in outcome.items() if k != "status"}})
                 if outcome.get("readyForNext") is False:
                     self.readiness = None
                     self.readiness_at = float("-inf")
@@ -493,7 +506,7 @@ class VbotDemo:
             with self.lock:
                 self.busy = False
                 self.last_finished = self.clock()
-                if tier == "major": self.last_dance_finished = self.clock()
+                if tier in {"major", "sad"}: self.last_dance_finished = self.clock()
 
 
 demo = VbotDemo()

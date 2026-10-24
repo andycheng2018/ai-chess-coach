@@ -28,7 +28,7 @@ export type VbotStatus = {
   companionApiVersion?: number; generation: number; armed: boolean;
   mode: 'live' | 'rehearsal'; gameId: string; target: string; busy: boolean;
   cooldownRemaining: number; danceCooldownRemaining: number; events: VbotEvent[];
-  readinessFresh?: boolean;
+  readinessFresh?: boolean; sadPresetVerified?: boolean;
   readiness?: { ready: boolean; target: string; reason?: string; checkedAt: number } | null;
   verification?: { applicationVersion?: string | null } | null;
 };
@@ -51,7 +51,8 @@ export function vbotNeedsDetach(status: VbotStatus, context: { gameId: string | 
 }
 
 export function vbotEventText(event: VbotEvent): string {
-  const name = event.preset?.split('/').pop()?.replace('.json', '').replaceAll('_', ' ');
+  const name = event.preset === 'actions/GRIEVANCE.json' ? 'Sad reaction'
+    : event.preset?.split('/').pop()?.replace('.json', '').replaceAll('_', ' ');
   if (event.status === 'completed') return event.readyForNext === false
     ? `${name || 'Reaction'} finished; paused: ${event.postflightReason || 'robot needs attention'}`
     : `${name || 'Reaction'} completed`;

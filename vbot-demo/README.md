@@ -281,3 +281,20 @@ Run the generated-code/lifecycle witness with that venv's Python:
 
 This witness mocks `Node`; it checks real FlatBuffers unions and result decoding,
 duplicate/admission handling and cancellation cleanup without contacting a robot.
+
+### Blunder reaction
+
+A canonical coach **blunder** selects the documented `actions/GRIEVANCE.json`
+performance. Mistakes and inaccuracies do not trigger it. This is a body performance,
+not a brief head gesture: fast/unknown clocks and time trouble suppress it; it shares
+the three-minute performance interval and 20-second rest with milestone dances.
+Busy/cooldown moves are skipped, never queued. A blunder also resets the improvement
+baseline, so it cannot accidentally become a celebration.
+
+Live sad reactions require an exact successful, physically confirmed rehearsal in
+`device-verification.local.json` for the selected SSH target, with a matching saved
+host key. Merely adding it to the helper allowlist does not verify installation or
+behavior. Until rehearsed, the native companion shows that it is pending and live
+blunders are explicitly skipped. Rehearsal mode can preview a synthetic blunder
+without contacting a robot. All existing arming, preflight, result and postflight
+checks still apply.

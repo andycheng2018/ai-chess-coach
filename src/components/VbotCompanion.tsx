@@ -22,9 +22,12 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason }:
   const attention = events.find(e => ['not_ready', 'rejected', 'unknown'].includes(e.status));
 
   return <section id="vbot-companion" className="vbot-companion" aria-label="VBOT companion">
-    <div className="vbot-header"><div><span className="vbot-kicker">ROBOT COMPANION</span><h3>VBOT celebrates with you</h3></div>
+    <div className="vbot-header"><div><span className="vbot-kicker">ROBOT COMPANION</span><h3>VBOT reacts with you</h3></div>
       <span className={`vbot-badge ${linked ? 'on' : ''}`} role="status">{badge}</span></div>
-    <p className="vbot-copy">Good moves earn a brief wave or head gesture. Major gains can earn Rock You.</p>
+    <p className="vbot-copy">Good moves earn a brief gesture. Major gains can earn Rock You. Blunders get a sad reaction.</p>
+    <p className="vbot-footnote">{status?.sadPresetVerified
+      ? 'Sad reaction rehearsed. Body performances are spaced three minutes apart and disabled in fast games or time trouble.'
+      : 'Sad reaction awaits a supervised rehearsal on this robot. Live sad reactions stay off until then.'}</p>
     <p className="vbot-match">{ended ? 'Match finished · reactions off' : gameId ? `Follows this match · ${gameId}` : 'Start or resume a training match to link VBOT.'}</p>
     {status?.armed && !linked && <p className="vbot-notice">VBOT is enabled for match {status.gameId}. Turn that session off before connecting this match.</p>}
     {linked && <p className="vbot-notice">{status?.mode === 'rehearsal' ? 'Previewing new coach verdicts. The robot will stay still.'
