@@ -23,6 +23,7 @@ import { SenseRobotGameStatus } from './components/SenseRobotGameStatus';
 import { recoverJoinedRoom, requireExactJoinedRoom } from './roomJoin';
 import { reconcilePendingMove, resolveMoveFailure, type PendingMoveAttempt } from './pendingMove';
 import { moveLineChanged, shouldApplyBackupSnapshot } from './gameSync';
+import { observeCoachStream, type CoachStreamCursor } from './coachStream';
 import { requireSenseTrainingGame } from './senseRecovery';
 import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import {
@@ -1814,7 +1815,6 @@ export default function App() {
   const coachQueueRef = useRef<CoachJob[]>([]);
   const latestCoachJobIdRef = useRef(0);
   const coachProcessingRef = useRef(false);
-  const observedCoachPlyRef = useRef<number | null>(null);
   const goodMoveRunRef = useRef(0);
   const lastMistakePlyRef = useRef<number | null>(null);
   const lastPraisePlyRef = useRef<number | null>(null);
@@ -2319,15 +2319,36 @@ export default function App() {
       setMoveInFlight(false);
       if (result.outcome === 'confirmed') {
         setStatus('Move played.');
-        analyzeConfirmedMoveRef.current(pendingMove.fenBefore, pendingMove.uci,
-          moves.slice(0, pendingMove.basePly + 1));
       } else {
         setRollbackSignal((value) => value + 1);
         setStatus('Board state changed while your move was syncing. Resynced with Lichess.');
       }
     };
 
-    const applyState = (state: any, clockEnabled?: boolean) => {
+    let coachCursor: CoachStreamCursor | null = null;
+    let coachIdentity: { playerColor: 'white' | 'black'; initialFen: string } | null = null;
+    const observeConfirmedMoves = (moves: string[], status: string, resync: boolean) => {
+      if (!coachIdentity) return;
+      const observation = observeCoachStream(coachCursor, {
+        gameId, account: account.username, ...coachIdentity, moves, status, resync,
+      });
+      coachCursor = observation.cursor;
+      if (observation.invalidated) {
+        // Never let analysis from an old branch/reconnect reach speech or VBOT.
+        latestCoachJobIdRef.current += 1;
+        coachAbortRef.current?.abort();
+        coachQueueRef.current = [];
+        setPlayerMoveAnalysisPending(false);
+        setCoachExplanationPending(false);
+        stopCoachSpeech();
+      }
+      if (observation.move) {
+        const { fenBefore, uci, moves: confirmedMoves } = observation.move;
+        analyzeConfirmedMoveRef.current(fenBefore, uci, confirmedMoves);
+      }
+    };
+
+    const applyState = (state: any, clockEnabled?: boolean, resync = false) => {
       const nextMoves = String(state?.moves || '');
       const nextStatus = String(state?.status || 'started');
       const nextWinner: Winner =
@@ -2348,6 +2369,9 @@ export default function App() {
       setGameStatus(nextStatus);
       if (nextWinner) setWinner(nextWinner);
       syncPendingMove(nextMoves);
+      // One trigger for Mac, SenseRobot and other-client moves. The backup
+      // cache only paints the board; it cannot dispatch coaching or motion.
+      observeConfirmedMoves(nextMoveList, nextStatus, resync);
       if (nextStatus !== 'started' && nextStatus !== 'created') {
         setGameStreamConnected(false);
         forgetStoredGame();
@@ -2373,6 +2397,7 @@ export default function App() {
     };
 
     const onGameEvent = (event: any) => {
+      if (controller.signal.aborted || gameIdRef.current !== gameId) return;
       if (event.type === 'gameFull') {
         const whiteName = String(event.white?.name || event.white?.id || 'White');
         const blackName = String(event.black?.name || event.black?.id || 'Black');
@@ -2399,6 +2424,8 @@ export default function App() {
           setSenseRobotGameId(null);
           if (remembered) setSenseConnectionError('This game has a different opponent. Finish it and create a new room for the training bot.');
         }
+        coachIdentity = opponent.toLowerCase() === BOT_USERNAME.toLowerCase()
+          ? { playerColor: color, initialFen: event.initialFen || 'startpos' } : null;
         setGameStreamConnected(true);
         setPlayers({
           white: { name: whiteName, rating: event.white?.rating, title: event.white?.title },
@@ -2409,7 +2436,7 @@ export default function App() {
         setInitialFen(event.initialFen || 'startpos');
         setCurrentTimeControlLabel(formatTimeControl(event.clock));
         storeActiveGame(gameId, account.username);
-        applyState(event.state || {}, Boolean(event.clock));
+        applyState(event.state || {}, Boolean(event.clock), true);
         setRecoveryChecked(true);
         if ((event.state?.status || 'started') === 'started' || (event.state?.status || 'started') === 'created') {
           setStatus('Training game connected.');
@@ -2571,7 +2598,6 @@ export default function App() {
     coachQueueRef.current = [];
     latestCoachJobIdRef.current += 1;
     coachProcessingRef.current = false;
-    observedCoachPlyRef.current = null;
     goodMoveRunRef.current = 0;
     lastMistakePlyRef.current = null;
     lastPraisePlyRef.current = null;
@@ -3397,100 +3423,6 @@ export default function App() {
     analyzeConfirmedMoveRef.current = analyzeStudentMove;
   }, [analyzeStudentMove]);
 
-  useEffect(() => {
-    // Normal phone games use the exact local pre-move FEN captured when the
-    // player makes the move. Only SenseRobot games need stream-observed
-    // coaching because the move is made on the physical board.
-    if (!gameId || !isCoachGame || !isSenseRobotGame) {
-      observedCoachPlyRef.current = null;
-      return;
-    }
-
-    const moves = movesText.trim()
-      ? movesText.trim().split(/\s+/)
-      : [];
-
-    const currentPly = moves.length;
-
-    // First observation after connecting/reconnecting.
-    //
-    // Don't suddenly analyze every historical move from
-    // a game that was already in progress.
-    if (observedCoachPlyRef.current == null) {
-      observedCoachPlyRef.current = currentPly;
-      return;
-    }
-
-    const previousPly = observedCoachPlyRef.current;
-
-    if (currentPly <= previousPly) {
-      observedCoachPlyRef.current = currentPly;
-      return;
-    }
-
-    // Mark these moves as observed before starting analysis
-    // so React updates/re-renders cannot analyze them twice.
-    observedCoachPlyRef.current = currentPly;
-
-    let latestStudentMoveIndex = -1;
-
-    // Look only at NEW moves.
-    //
-    // Array index 0 = ply 1 = White
-    // Array index 1 = ply 2 = Black
-    // etc.
-    for (
-      let moveIndex = previousPly;
-      moveIndex < currentPly;
-      moveIndex += 1
-    ) {
-      const moverColor: 'white' | 'black' =
-        moveIndex % 2 === 0
-          ? 'white'
-          : 'black';
-
-      if (moverColor === myColor) {
-        latestStudentMoveIndex = moveIndex;
-      }
-    }
-
-    // The only new move(s) were made by the bot.
-    if (latestStudentMoveIndex < 0) {
-      return;
-    }
-
-    const uci = moves[latestStudentMoveIndex];
-
-    if (!uci) {
-      return;
-    }
-
-    // Rebuild the exact board immediately BEFORE
-    // the student's move.
-    const movesBeforeStudentMove = moves
-      .slice(0, latestStudentMoveIndex)
-      .join(' ');
-
-    const beforePosition = replay(
-      initialFen,
-      movesBeforeStudentMove,
-    );
-
-    analyzeStudentMove(
-      beforePosition.chess.fen(),
-      uci,
-      moves.slice(0, latestStudentMoveIndex + 1),
-    );
-  }, [
-    gameId,
-    movesText,
-    initialFen,
-    myColor,
-    isCoachGame,
-    isSenseRobotGame,
-    analyzeStudentMove,
-  ]);
-
   const submitMove = useCallback(async (
     fenBefore: string,
     basePly: number,
@@ -3531,7 +3463,7 @@ export default function App() {
       if (pendingMoveRef.current === attempt) {
         setStatus('Move accepted — syncing board…');
       }
-      // Coaching starts exactly once when the stream confirms this attempt.
+      // The primary stream starts coaching once, regardless of the input device.
     } catch (error) {
       // A stream confirmation, rewind, or game change may have already resolved
       // this exact attempt. Its late HTTP reply must not alter the new position.
