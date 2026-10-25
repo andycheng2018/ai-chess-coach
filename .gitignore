@@ -23,3 +23,7 @@ vbot-demo/unresolved-action.json
 # Local network names, LAN addresses and robot identity associations.
 /vbot-demo/networks.local.json
 /vbot-demo/.networks.local.json.*.tmp
+
+# Keep local robot verification backups and interrupted rehearsal writes private.
+/vbot-demo/device-verification.local.json.bak-*
+/vbot-demo/.verification-rehearsal-*.tmp

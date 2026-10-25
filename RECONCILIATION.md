@@ -55,3 +55,44 @@ its separate main stash containing local coaching journal data is not applied.
 - Live `/api/coach/opening` recognizes the standard Ruy Lopez move sequence.
 
 Physical SenseRobot hardware was not exercised during this branch reconciliation.
+
+
+## Follow-up: demo work and retained stashes — October 25, 2026
+
+The current branch remains `add-llm-log`. This follow-up creates local commits;
+it does not merge into `main`, push, restart the application, or contact/control
+physical robots.
+
+### Current work committed in focused batches
+
+| Commit | Scope | Independent staged-snapshot verification |
+| --- | --- | --- |
+| `128920a` | Account recovery, preserved sign-in, room-link recovery and selected-game stability | 120 Node + 159 Python tests; production build |
+| `4814329` | Capture lessons, unrated intentional-blunder opponent, one-time win celebration, stochastic gesture expansion and 10% battery cutoff | 126 Node + 193 Python tests; production build |
+| `c9ccda0` | Passive Mac network recognition, remembered robot IPs and SSH identity continuity | 130 Node + 213 Python tests; production build |
+
+Each snapshot was materialized from the Git index and tested separately, so
+later working-tree changes could not hide a dependency in an earlier commit.
+The final feature tree passes **343 tests** and the production build. The existing
+Vite large-chunk advisory remains. Staged credential-pattern checks and
+`git diff --cached --check` passed. The backend entrypoint retains its executable
+file mode.
+
+### Stash reconciliation
+
+- UI stash `840d31274288ee0a5cee74c0ef143bca9465a550` was already deliberately
+  restored in `eb22eeb` (the academy UI integration documented above). The current
+  navbar/sidebar retain those components, HomeHub/MenuModal add live-game
+  recovery, ProfileModal has whitespace cleanup, CoachWindow adds Luna chat and
+  journal/opening state, and App/CSS retain newer integrations. Reapplying the
+  older snapshot would regress current behavior; no older UI source was reapplied.
+- Journal stash `f762b21de58bd04868c669caec4b1336efb4c33d` contains 130 valid
+  records absent from the current local journal. Its exact bytes were recovered
+  to ignored, owner-only
+  `logs/stash-recovery/f762b21de58bd04868c669caec4b1336efb4c33d.jsonl`.
+  The active `logs/coach_logs.jsonl` was not rewritten or replayed, so historical
+  snapshots cannot override newer accepted learning records.
+- Both original GitHub Desktop stashes remain intact as recovery references.
+- Local coaching logs, Wi-Fi/LAN address memory, robot verification/rehearsal
+  records, verification backups and credentials are excluded from these commits.
+  Verification backup/temp patterns are now ignored explicitly as well.
