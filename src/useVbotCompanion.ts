@@ -37,7 +37,7 @@ export function useVbotCompanion(context: CompanionContext) {
     return () => { mounted.current = false; revision.current++; window.clearInterval(timer); };
   }, [refresh]);
 
-  const perform = useCallback(async (path: 'check' | 'connect' | 'disarm' | 'finish', payload: object) => {
+  const perform = useCallback(async (path: 'check' | 'connect' | 'disarm' | 'finish' | 'networks/remember', payload: object) => {
     if (inFlight.current) return;
     inFlight.current = true; revision.current++;
     setPending(true); setActionError('');
@@ -79,6 +79,7 @@ export function useVbotCompanion(context: CompanionContext) {
   return {
     status, pending, offline: Boolean(connectionError), error: actionError || connectionError,
     check: (target: string) => perform('check', { target }),
+    remember: (target: string, label: string, networkId: string) => perform('networks/remember', { target, label, networkId }),
     connect: (mode: 'live' | 'rehearsal', target: string, confirmed: boolean) => {
       const c = current.current;
       if (!c.canArm || !c.gameId) return Promise.resolve();

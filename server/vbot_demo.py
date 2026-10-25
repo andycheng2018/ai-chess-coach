@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 
+from vbot_networks import NetworkBook, normalize_target
 from capture_practice import PRACTICE_ID, exercise as capture_exercise, assess_capture
 from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES, MAX_SMALL_DURATION_MS, JUMP_PRESETS
 
@@ -60,11 +61,13 @@ def known_host_fingerprints(target: str) -> set[str]:
             if len(line.split()) > 1 and line.split()[1].startswith("SHA256:")}
 
 
-def ssh_command(target: str, preset: str, request_id: str) -> list[str]:
+def ssh_command(target: str, preset: str, request_id: str, *, host_key_alias=None) -> list[str]:
     if not re.fullmatch(r"(?:vbot@)?[A-Za-z0-9][A-Za-z0-9_.-]{0,252}", target):
         raise ValueError("Use an SSH alias or vbot@hostname/IP, without spaces or options.")
     if preset not in PRESETS or not re.fullmatch(r"[a-f0-9]{32}", request_id):
         raise ValueError("Invalid preset or request identity.")
+    if host_key_alias is not None:
+        host_key_alias=normalize_target(host_key_alias).removeprefix("vbot@")
     remote = shlex.join([
         REMOTE_ROOT + "/.venv/bin/python", "-I", REMOTE_ROOT + "/robot_action.py",
         "--execute", "--confirm-motion", "--request-id", request_id, "--preset", preset,
@@ -72,12 +75,13 @@ def ssh_command(target: str, preset: str, request_id: str) -> list[str]:
     return ["ssh", "-T", "-l", "vbot", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=5", "-o", "ConnectionAttempts=1",
             "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
-            "-o", "ControlPath=none", "-o", "ForwardAgent=no", target, remote]
+            "-o", "ControlPath=none", "-o", "ForwardAgent=no",
+            *(["-o", "HostKeyAlias="+host_key_alias] if host_key_alias else []), target, remote]
 
 
-def send_dance(target: str, preset: str, request_id: str) -> dict:
+def send_dance(target: str, preset: str, request_id: str, *, host_key_alias=None) -> dict:
     # A timeout or a lost SSH stream can leave a task running. Never retry it.
-    result = subprocess.run(ssh_command(target, preset, request_id), capture_output=True,
+    result = subprocess.run(ssh_command(target, preset, request_id, host_key_alias=host_key_alias), capture_output=True,
                             text=True, timeout=125, check=False)
     terminal = None
     not_ready = None
@@ -108,10 +112,10 @@ def send_dance(target: str, preset: str, request_id: str) -> dict:
             "postflightReason": terminal.get("postflightReason")}
 
 
-def check_robot(target: str) -> dict:
+def check_robot(target: str, *, host_key_alias=None) -> dict:
     """Explicit read-only probe using the same strict SSH identity as dispatch."""
     request_id = uuid.uuid4().hex
-    command = ssh_command(target, PRESETS[0], request_id)
+    command = ssh_command(target, PRESETS[0], request_id, host_key_alias=host_key_alias)
     command[-1] = shlex.join([REMOTE_ROOT + "/.venv/bin/python", "-I",
                              REMOTE_ROOT + "/robot_action.py", "--check-ready",
                              "--request-id", request_id])
@@ -141,15 +145,25 @@ def check_robot(target: str) -> dict:
 
 class VbotDemo:
     def __init__(self, *, sender=send_dance, clock=time.monotonic, verification=None,
-                 fingerprint_reader=known_host_fingerprints, chooser=random.choice, checker=check_robot, victory_wait=time.sleep):
+                 fingerprint_reader=known_host_fingerprints, chooser=random.choice, checker=check_robot, victory_wait=time.sleep, network_book=None):
         self.sender, self.clock, self.chooser = sender, clock, chooser
         self.victory_wait = victory_wait
+        self.network_book = network_book
+        self.network_key = None
+        self.network_initialized = False
+        self.network_needs_target = False
         self.finish_pending = False
         self.victory_pending = False
         self.finish_generation = None
         self.finished_games = OrderedDict()
         self.player_color = None
         self.checker = checker
+        # New LAN addresses use the SAME already-trusted robot host key. SSH
+        # HostKeyAlias does not accept a new key or modify known_hosts.
+        if network_book is not None and sender is send_dance:
+            self.sender = lambda target,preset,request_id: send_dance(target,preset,request_id,host_key_alias=self._ssh_identity_anchor())
+        if network_book is not None and checker is check_robot:
+            self.checker = lambda target: check_robot(target,host_key_alias=self._ssh_identity_anchor())
         self.readiness = None
         self.readiness_at = float("-inf")
         self.probe_generation = 0
@@ -195,9 +209,45 @@ class VbotDemo:
             while len(self.records) > 256:
                 self.records.popitem(last=False)
 
+    def _sync_network(self, force=False):
+        if self.network_book is None: return
+        network = self.network_book.current(force=force)
+        key = (network.get("id"), network.get("subnet"), network.get("gateway"))
+        snapshot = self.network_book.snapshot()
+        with self.lock:
+            changed = self.network_initialized and key != self.network_key
+            if not self.network_initialized or changed:
+                self.network_initialized = True
+                self.network_key = key
+                self.network_needs_target = True
+                self.readiness = None
+                self.readiness_at = float("-inf")
+                self.probe_generation += 1
+            if changed and self.armed:
+                self.disarm({"gameId":self.game_id,"generation":self.generation,"reason":"network_changed"})
+            if self.network_needs_target and not self.busy and not self.armed:
+                # A remembered address is a candidate, never automatic live arming.
+                self.target = snapshot.get("suggestedTarget") or ""
+                self.network_needs_target = False
+
+    def remember_network(self, payload):
+        if self.network_book is None: raise ValueError("Network memory is unavailable on this controller.")
+        self._sync_network(force=True)
+        with self.lock:
+            if self.armed or self.busy: raise ValueError("Turn reactions off before changing remembered addresses.")
+            if not isinstance(payload.get("networkId"),str):
+                raise ValueError("Select the current network before remembering an address.")
+            target=normalize_target(payload.get("target"))
+            snapshot=self.network_book.remember(target,label=payload.get("label",""),
+                network_id=payload.get("networkId"))
+            self.target=target
+            return self.status()
+
     def status(self) -> dict:
+        self._sync_network()
         with self.lock:
             return {"sessionKind": self.session_kind, "companionApiVersion": 1, "generation": self.generation,
+                    "network": self.network_book.snapshot() if self.network_book is not None else None,
                     "readiness": self.readiness,
                     "readinessFresh": self.readiness is not None and self.clock() - self.readiness_at <= 30,
                     "armed": self.armed, "mode": self.mode, "gameId": self.game_id,
@@ -217,7 +267,8 @@ class VbotDemo:
     def _verified_entry(self, target: str, preset: str) -> dict | None:
         profile = self.verification or {}
         canonical = target if target.startswith("vbot@") else "vbot@" + target
-        if canonical != profile.get("target"):
+        if canonical != profile.get("target") and not (self.network_book is not None and
+                self.network_book.target_verified(canonical,profile.get("hostKeyFingerprint"))):
             return None
         return next((item for item in profile.get("presets", []) if item.get("preset") == preset and
                      item.get("status") == "SUCCEEDED" and item.get("errorCategory") == 0 and
@@ -251,13 +302,22 @@ class VbotDemo:
         self.last_small_preset = preset
         return preset
 
+    def _ssh_identity_anchor(self):
+        profile=self.verification or {}
+        anchor=profile.get("target")
+        if not anchor or profile.get("hostKeyFingerprint") not in self.fingerprint_reader(anchor):
+            raise ValueError("The robot's saved SSH host identity is unavailable or changed. Inspect it before connecting.")
+        return normalize_target(anchor)
+
     def _identity_matches(self, target: str) -> bool:
         try:
-            return (self.verification or {}).get("hostKeyFingerprint") in self.fingerprint_reader(target)
+            anchor=self._ssh_identity_anchor() if self.network_book is not None else target
+            return (self.verification or {}).get("hostKeyFingerprint") in self.fingerprint_reader(anchor)
         except (OSError, ValueError, subprocess.SubprocessError):
             return False
 
     def check_device(self, payload: dict) -> dict:
+        self._sync_network(force=True)
         target = str(payload.get("target", self.target)).strip()
         ssh_command(target, PRESETS[0], uuid.uuid4().hex)  # Validate before any subprocess.
         with self.lock:
@@ -265,10 +325,25 @@ class VbotDemo:
                 raise ValueError("Turn reactions off before checking the robot.")
             self.probe_generation += 1
             probe, generation = self.probe_generation, self.generation
+        fingerprint = (self.verification or {}).get("hostKeyFingerprint")
+        network = self.network_book.current() if self.network_book is not None else None
+        if self.network_book is not None:
+            self._ssh_identity_anchor()  # Strictly pin every candidate to the existing robot identity.
         result = self.checker(target)
+        self._sync_network(force=True)
         with self.lock:
             if probe != self.probe_generation or generation != self.generation:
                 raise ValueError("The connection changed during this check. Check again before enabling motion.")
+            # A positive helper reply proves SSH reached the pinned robot even
+            # when battery/posture currently prevents motion. Failures never learn.
+            if network and network.get("id") and result.get("code") in {
+                    "ready","battery","system","posture","head_fault","head_pending","head_busy","stale","incomplete"}:
+                try:
+                    self.network_book.remember(target,fingerprint=fingerprint,verified=True,network_id=network["id"])
+                except ValueError as error:
+                    # Manual connections can use a second/wired LAN; do not save
+                    # them against the unrelated default network.
+                    result={**result,"rememberWarning":str(error)}
             self.target = target
             self.readiness = {**result, "target": target, "checkedAt": int(time.time() * 1000)}
             self.readiness_at = self.clock()
@@ -320,6 +395,7 @@ class VbotDemo:
             return response
 
     def arm(self, payload: dict) -> dict:
+        self._sync_network(force=True)
         mode = payload.get("mode", "rehearsal")
         game_id = str(payload.get("gameId", "")).strip()
         preset = payload.get("preset", PRESETS[0])
@@ -378,6 +454,7 @@ class VbotDemo:
                 "match_changed_during_connect": "Match changed while connecting; reactions turned off.",
                 "supervised_rehearsal": "Paused for a supervised preset rehearsal.",
                 "server_shutdown": "Coach server stopped; reactions turned off.",
+                "network_changed": "Mac network changed; reactions turned off. Check the address on this network before enabling again.",
             }
             reason_code = (payload or {}).get("reason", "unspecified")
             if reason_code not in reasons: reason_code = "unspecified"
@@ -666,6 +743,7 @@ class VbotDemo:
 
     def _run(self, target, preset, request_id, generation, tier="small"):
         try:
+            self._sync_network(force=True)
             with self.lock:
                 if not self.armed or generation != self.generation:
                     self._event("skipped", requestId=request_id, reason="Disarmed before dispatch.")
@@ -707,4 +785,4 @@ class VbotDemo:
                 if tier in {"major", "sad"}: self.last_dance_finished = self.clock()
 
 
-demo = VbotDemo()
+demo = VbotDemo(network_book=NetworkBook())

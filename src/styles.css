@@ -3933,3 +3933,7 @@ header {
 .demo-opponent-control label { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-weight: 700; }
 .demo-opponent-control select { padding: 8px; border-radius: 7px; font: inherit; max-width: 100%; }
 .demo-opponent-control p { margin: 8px 0 0; font-size: .9rem; line-height: 1.4; }
+
+.vbot-network-summary { padding: 10px 12px; border: 1px solid #57654a; border-radius: 8px; margin: 12px 0; font-size: .9rem; }
+.vbot-network-summary p { margin: 5px 0 0; }
+.vbot-settings select { width: 100%; padding: 8px; margin: 6px 0 12px; }

@@ -19,3 +19,7 @@ vbot-demo/unresolved-action.json
 
 # Local screenshot of the superseded rehearsal policy.
 /vbot-demo/rehearsal.png
+
+# Local network names, LAN addresses and robot identity associations.
+/vbot-demo/networks.local.json
+/vbot-demo/.networks.local.json.*.tmp
