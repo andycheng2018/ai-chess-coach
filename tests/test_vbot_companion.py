@@ -134,6 +134,22 @@ class SettlingTests(unittest.TestCase):
     def test_hard_fault_after_transient_state_is_not_retried_away(self):
         check=Mock(side_effect=[{'ready':False,'code':'head_pending'}, {'ready':False,'code':'head_fault','reason':'Fault'}, {'ready':True}])
         self.assertEqual(self.settle(check)['code'],'head_fault'); self.assertEqual(check.call_count,2)
+    def test_ten_percent_demo_cutoff_preserves_other_battery_and_system_gates(self):
+        def samples(soc=10, charger=False, alarm=0, power_saving=False):
+            return {'battery':[dict(soc=soc,charger=charger,alarm=alarm)]*2,
+                    'system':[dict(heartbeat=i,state='FUNCTION',powerSaving=power_saving,severity=0,active=True) for i in [1,2]],
+                    'body':[dict(heartbeat=i,posture=1,motion=0,action='RL_TROT') for i in [1,2,3]],
+                    'head':[dict(state=0,pending='',fault='')]*2}
+        for soc in [10,11,19,20,49,50,100]:
+            self.assertTrue(helper.readiness_details(samples(soc=soc))['ready'])
+        for changes in [dict(soc=9),dict(soc=0),dict(charger=True),dict(alarm=1),dict(power_saving=True)]:
+            self.assertFalse(helper.readiness_details(samples(**changes))['ready'])
+        mixed=samples(soc=10)
+        mixed['battery']=[dict(soc=10,charger=False,alarm=0),dict(soc=9,charger=False,alarm=0)]
+        result=helper.readiness_details(mixed)
+        self.assertFalse(result['ready']); self.assertEqual(result['code'],'battery')
+        self.assertIn('at least 10%',result['reason'])
+
     def test_readiness_distinguishes_busy_pending_and_fault(self):
         samples={'battery':[dict(soc=80,charger=False,alarm=0)]*2,
                  'system':[dict(heartbeat=i,state='FUNCTION',powerSaving=False,severity=0,active=True) for i in [1,2]],

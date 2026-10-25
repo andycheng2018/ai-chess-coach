@@ -282,6 +282,24 @@ class TierDispatchTests(unittest.TestCase):
         self.assertFalse(self.demo.status()["busy"])
         return result
 
+    def test_demo_capture_bypasses_major_interval_but_keeps_rest_pace_and_dedup(self):
+        self.submit(1, 'major')
+        def reward(ply, brief=False):
+            with self.demo.lock:
+                result=self.demo._submit({'gameId':'AbCd1234','ply':ply,'playerColor':'white',
+                    'playedMove':'Nxh4','classification':'good'},
+                    {'tier':'major','reason':'server-confirmed capture','demoCapture':True,'briefOnly':brief})
+            deadline=time.monotonic()+2
+            while self.demo.status()['busy'] and time.monotonic()<deadline:time.sleep(.005)
+            return result
+        self.now+=10
+        self.assertEqual(reward(3)['status'],'skipped')
+        self.now+=11
+        self.assertEqual(reward(3)['status'],'skipped')  # never queue a resting capture
+        self.assertEqual(reward(5)['preset'],'actions/ROCKYOU.json')
+        self.now+=21
+        self.assertEqual(reward(7,brief=True)['tier'],'small')
+
     def verify_sad(self):
         self.demo.verification["presets"].append({"preset":"actions/GRIEVANCE.json",
             "status":"SUCCEEDED", "errorCategory":0, "movementConfirmed":True,"durationMs":3000})
@@ -372,6 +390,31 @@ class TierDispatchTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("helper_allowlist", ROOT / "vbot-demo/robot_action.py")
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         self.assertEqual(set(PRESETS), set(module.PRESETS))
+
+    def test_explicit_demo_approval_enables_jump_without_forging_rehearsal(self):
+        from vbot_policy import JUMP_PRESETS
+        jump = JUMP_PRESETS[0]
+        self.demo.verification['demoApproval'] = {'enabled':True,'target':self.demo.target,
+            'presets':[jump],'expiresAt':time.time()+60}
+        self.assertIsNone(self.demo._verified_entry(self.demo.target,jump))
+        def choose(options):
+            self.assertEqual(options.count(jump),4)
+            return jump
+        self.demo.chooser=choose
+        event=self.submit(1)
+        self.assertEqual(event['preset'],jump)
+        self.assertEqual(self.demo.cooldown,5)
+        self.sender.assert_called_once()
+
+    def test_demo_approval_expires_and_cannot_enable_another_target(self):
+        from vbot_policy import JUMP_PRESETS
+        jump=JUMP_PRESETS[0]
+        approval={'enabled':True,'target':self.demo.target,'presets':[jump],'expiresAt':time.time()+60}
+        self.demo.verification['demoApproval']=approval
+        self.assertIn(jump,self.demo._small_presets(self.demo.target))
+        self.assertNotIn(jump,self.demo._small_presets('vbot@other.example'))
+        approval['expiresAt']=time.time()-1
+        self.assertNotIn(jump,self.demo._small_presets(self.demo.target))
 
     def test_ordinary_moves_randomize_verified_brief_presets_and_avoid_repeats(self):
         first=self.submit(1);self.now+=11;second=self.submit(3)

@@ -16,6 +16,7 @@ import requests
 import yaml
 
 from coach.stockfish_analyzer import configure_supported_options, find_stockfish
+from demo_opponent import choose_demo_move
 
 LICHESS_URL = "https://lichess.org"
 ROOT = Path(__file__).resolve().parent.parent
@@ -262,6 +263,8 @@ class LichessBotRuntime:
         self._game_start_condition = threading.Condition(self._lock)
         self._recent_game_starts: list[tuple[float, str, str]] = []
         self._game_states: dict[str, dict[str, Any]] = {}
+        self._demo_games: set[str] = set()
+        self.game_observer = None
 
     def level(self) -> BotLevel:
         with self._lock:
@@ -495,6 +498,9 @@ class LichessBotRuntime:
                 "level": level.id,
                 "displayElo": level.display_elo,
                 "lastMoveMs": self._last_move_ms,
+                "demoGames": sorted(self._demo_games),
+                "unratedGames": sorted(key for key, game in self._game_states.items()
+                    if game.get("rated") is False and game.get("state", {}).get("status") in ACTIVE_STATUSES),
                 "activeGames": sum(1 for thread in self._game_threads.values() if thread.is_alive()),
                 "lastGameId": self._last_game_id,
                 "error": error or None,
@@ -502,6 +508,21 @@ class LichessBotRuntime:
             if message:
                 payload["message"] = message
             return payload
+
+    def set_demo_mode(self, game_id: str, enabled: bool) -> dict[str, Any]:
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be true or false.")
+        with self._lock:
+            game = self._game_states.get(game_id)
+            if not game or game.get("state", {}).get("status") not in ACTIVE_STATUSES:
+                raise ValueError("Wait for this exact active game to connect to the coach bot.")
+            if enabled and game.get("rated") is not False:
+                raise ValueError("Intentional blunders require a confirmed unrated game.")
+            if enabled:
+                self._demo_games.add(game_id)
+            else:
+                self._demo_games.discard(game_id)
+        return self.status(message="Demo opponent enabled for this game." if enabled else "Normal opponent restored.")
 
     def game_state(self, game_id: str) -> dict[str, Any] | None:
         game_id = game_id.strip()
@@ -518,6 +539,8 @@ class LichessBotRuntime:
             return {
                 "gameId": cached["gameId"],
                 "botColor": cached.get("botColor"),
+                "rated": cached.get("rated"),
+                "demoMode": game_id in self._demo_games and cached.get("rated") is False,
                 "timeControlKnown": cached.get("timeControlKnown", False),
                 "clock": dict(cached["clock"]) if isinstance(cached.get("clock"), dict) else None,
                 "initialFen": cached["initialFen"],
@@ -757,6 +780,7 @@ class LichessBotRuntime:
     def _clear_game_state(self, game_id: str) -> None:
         with self._lock:
             self._submitted_ply.pop(game_id, None)
+            self._demo_games.discard(game_id)
             self._takeback_seen = {entry for entry in self._takeback_seen if entry[0] != game_id}
 
     def _ensure_game_thread(self, game_id: str) -> None:
@@ -797,6 +821,7 @@ class LichessBotRuntime:
                 initial_fen = "startpos"
                 bot_color: chess.Color | None = None
                 game_clock = None
+                game_rated = None
                 try:
                     token, _ = self._credentials()
                     self._wait_for_api_cooldown()
@@ -834,6 +859,7 @@ class LichessBotRuntime:
                             if event_type == "gameFull":
                                 initial_fen = str(event.get("initialFen") or "startpos")
                                 game_clock = event.get("clock")
+                                game_rated = event.get("rated") if isinstance(event.get("rated"), bool) else None
                                 white = event.get("white") or {}
                                 black = event.get("black") or {}
                                 white_id = str(white.get("id") or white.get("name") or "").lower()
@@ -858,6 +884,7 @@ class LichessBotRuntime:
                                     "gameId": game_id,
                                     "botColor": "white" if bot_color == chess.WHITE else "black",
                                     "initialFen": initial_fen,
+                                    "rated": game_rated,
                                     "timeControlKnown": True,
                                     "clock": dict(game_clock) if isinstance(game_clock, dict) else None if game_clock is None else {"invalid":True},
                                     "state": dict(state),
@@ -866,6 +893,11 @@ class LichessBotRuntime:
 
                             status = str(state.get("status") or "started")
                             if status not in ACTIVE_STATUSES:
+                                if self.game_observer:
+                                    try:
+                                        self.game_observer(self.game_state(game_id))
+                                    except Exception:
+                                        print("[GAME OBSERVER] Result notification failed; chess stream continues.", flush=True)
                                 print(
                                     f"[GAME TERMINAL] "
                                     f"game={game_id} "
@@ -929,8 +961,14 @@ class LichessBotRuntime:
                 return
             self._submitted_ply[game_id] = ply
             level = BOT_LEVELS[self._level_id]
+            demo_mode = game_id in self._demo_games and self._game_states.get(game_id, {}).get("rated") is False
         try:
-            move, elapsed_ms = self._engine.choose_move(board, level)
+            if demo_mode:
+                started = time.monotonic()
+                move = choose_demo_move(board)
+                elapsed_ms = int((time.monotonic()-started)*1000)
+            else:
+                move, elapsed_ms = self._engine.choose_move(board, level)
             self._request("POST", f"/api/bot/game/{game_id}/move/{move.uci()}", timeout=10)
             with self._lock:
                 self._last_move_ms = elapsed_ms

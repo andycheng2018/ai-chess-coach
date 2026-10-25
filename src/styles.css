@@ -3915,3 +3915,21 @@ header {
 .sense-game-status p { margin: 9px 0; }
 .sense-game-status details { margin-top: 10px; color: var(--muted); }
 .sense-physical-confirmed { color: var(--green); }
+
+.capture-practice-entry { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:14px 24px 14px 76px; }
+.capture-practice-entry span { color:var(--muted); font-size:13px; }
+.capture-practice-dialog { width:min(1120px,calc(100vw - 24px)); padding:22px; }
+.capture-exercise-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:24px; }
+.capture-exercise-layout > * { min-width:0; }
+.capture-board { max-width:460px; margin:12px auto; padding:0; }
+.capture-prompt { font-size:18px; font-weight:700; }
+.capture-hint-toggle { display:flex !important; align-items:center; gap:9px; }
+.capture-hint-toggle input { width:auto; }
+.capture-success { margin:12px 0; padding:14px; border:1px solid var(--green); border-radius:12px; background:#81b64c18; }
+.capture-exercise-layout .vbot-companion { margin-left:0; }
+@media(max-width:760px) { .capture-exercise-layout { grid-template-columns:1fr; } .capture-practice-entry { margin-left:64px; } }
+
+.demo-opponent-control { padding: 12px 16px; border: 1px solid #83b34a; border-radius: 12px; background: #293120; margin-bottom: 12px; }
+.demo-opponent-control label { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-weight: 700; }
+.demo-opponent-control select { padding: 8px; border-radius: 7px; font: inherit; max-width: 100%; }
+.demo-opponent-control p { margin: 8px 0 0; font-size: .9rem; line-height: 1.4; }

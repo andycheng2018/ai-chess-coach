@@ -13,7 +13,8 @@ import threading
 import time
 import uuid
 
-from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES, MAX_SMALL_DURATION_MS
+from capture_practice import PRACTICE_ID, exercise as capture_exercise, assess_capture
+from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES, MAX_SMALL_DURATION_MS, JUMP_PRESETS
 
 PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET)
 REMOTE_ROOT = "/userdata/vbot/chess-demo"
@@ -140,8 +141,14 @@ def check_robot(target: str) -> dict:
 
 class VbotDemo:
     def __init__(self, *, sender=send_dance, clock=time.monotonic, verification=None,
-                 fingerprint_reader=known_host_fingerprints, chooser=random.choice, checker=check_robot):
+                 fingerprint_reader=known_host_fingerprints, chooser=random.choice, checker=check_robot, victory_wait=time.sleep):
         self.sender, self.clock, self.chooser = sender, clock, chooser
+        self.victory_wait = victory_wait
+        self.finish_pending = False
+        self.victory_pending = False
+        self.finish_generation = None
+        self.finished_games = OrderedDict()
+        self.player_color = None
         self.checker = checker
         self.readiness = None
         self.readiness_at = float("-inf")
@@ -165,6 +172,8 @@ class VbotDemo:
         self.compatibility = {"basis": "not-armed", "applicationVersion": None}
         self.busy = False
         self.generation = 0
+        self.practice_attempts = OrderedDict()
+        self.session_kind = "game"
         self.records = OrderedDict()
         self.seen = OrderedDict()
         self.events = deque(maxlen=80)
@@ -188,10 +197,11 @@ class VbotDemo:
 
     def status(self) -> dict:
         with self.lock:
-            return {"companionApiVersion": 1, "generation": self.generation,
+            return {"sessionKind": self.session_kind, "companionApiVersion": 1, "generation": self.generation,
                     "readiness": self.readiness,
                     "readinessFresh": self.readiness is not None and self.clock() - self.readiness_at <= 30,
                     "armed": self.armed, "mode": self.mode, "gameId": self.game_id,
+                    "finishPending": self.finish_pending, "victoryPending": self.victory_pending,
                     "target": self.target, "preset": self.preset, "presets": PRESETS,
                     "cooldownSeconds": self.cooldown, "busy": self.busy,
                     "cooldownRemaining": max(0, round(self.cooldown - (self.clock() - max(self.last_started, self.last_finished)), 1)),
@@ -200,6 +210,7 @@ class VbotDemo:
                     "verification": self.verification, "policy": RULES,
                     "smallPresets": self._small_presets(self.target),
                     "smallPresetCandidates": list(SMALL_PRESETS),
+                    "operatorApprovedPresets": [p for p in SMALL_PRESETS if self._demo_approved(self.target, p) and not self._verified_entry(self.target, p)],
                     "sadPresetVerified": bool(self._verified_entry(self.target, SAD_PRESET)),
                     "danceCooldownRemaining": max(0, round(RULES["danceIntervalSeconds"] - (self.clock()-self.last_dance_finished), 1))}
 
@@ -212,25 +223,38 @@ class VbotDemo:
                      item.get("status") == "SUCCEEDED" and item.get("errorCategory") == 0 and
                      item.get("movementConfirmed") is True), None)
 
+    def _demo_approved(self, target, preset):
+        approval = (self.verification or {}).get("demoApproval") or {}
+        canonical = target if target.startswith("vbot@") else "vbot@" + target
+        expiry = approval.get("expiresAt", 0)
+        return (approval.get("enabled") is True and preset in SMALL_PRESETS
+                and canonical == approval.get("target") == (self.verification or {}).get("target")
+                and isinstance(expiry, (int, float)) and expiry > time.time()
+                and preset in approval.get("presets", []))
+
     def _small_presets(self, target):
-        return [preset for preset in SMALL_PRESETS
-                if (entry := self._verified_entry(target, preset))
-                and isinstance(entry.get("durationMs"), (int, float))
-                and not isinstance(entry["durationMs"], bool)
-                and 0 < entry["durationMs"] <= MAX_SMALL_DURATION_MS]
+        result = []
+        for preset in SMALL_PRESETS:
+            entry = self._verified_entry(target, preset)
+            rehearsed_short = (entry and isinstance(entry.get("durationMs"), (int, float))
+                               and not isinstance(entry["durationMs"], bool)
+                               and 0 < entry["durationMs"] <= MAX_SMALL_DURATION_MS)
+            if rehearsed_short or self._demo_approved(target, preset): result.append(preset)
+        return result
 
     def _choose_small(self, pool):
         # Fresh random draw on every eligible event; no shuffle bag, rotation,
         # queued gestures or catch-up. Avoid just the immediately previous choice.
         options = [preset for preset in pool if preset != self.last_small_preset] or pool
-        preset = self.chooser(options)
+        weighted = [preset for preset in options for _ in range(4 if preset in JUMP_PRESETS else 1)]
+        preset = self.chooser(weighted)
         self.last_small_preset = preset
         return preset
 
     def _identity_matches(self, target: str) -> bool:
         try:
             return (self.verification or {}).get("hostKeyFingerprint") in self.fingerprint_reader(target)
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, ValueError, subprocess.SubprocessError):
             return False
 
     def check_device(self, payload: dict) -> dict:
@@ -245,6 +269,7 @@ class VbotDemo:
         with self.lock:
             if probe != self.probe_generation or generation != self.generation:
                 raise ValueError("The connection changed during this check. Check again before enabling motion.")
+            self.target = target
             self.readiness = {**result, "target": target, "checkedAt": int(time.time() * 1000)}
             self.readiness_at = self.clock()
             return self.status()
@@ -259,6 +284,40 @@ class VbotDemo:
         if payload.get("playerColor") not in {"white", "black"} or payload["playerColor"] == game["botColor"]:
             raise ValueError("Only the human player's training game can enable reactions.")
         return self.arm({**payload, "requireReadiness": payload.get("mode") == "live"})
+
+    def connect_practice(self, payload):
+        if payload.get("gameId") != PRACTICE_ID or payload.get("playerColor") != "white":
+            raise ValueError("Invalid capture-practice session.")
+        return self.arm({**payload, "practice":True, "preset":"actions/ROCKYOU.json",
+                         "requireReadiness":payload.get("mode")=="live"})
+
+    def start_capture(self, payload):
+        lesson=capture_exercise(payload.get("exerciseId"))
+        with self.lock:
+            token=uuid.uuid4().hex
+            self.practice_attempts[token]={"exerciseId":lesson['id'],"created":self.clock(),"result":None}
+            while len(self.practice_attempts)>128: self.practice_attempts.popitem(last=False)
+            return {"attemptId":token,"exerciseId":lesson['id']}
+
+    def capture_reward(self, payload):
+        with self.lock:
+            attempt=self.practice_attempts.get(payload.get("attemptId"))
+            if not attempt or self.clock()-attempt['created']>1800:
+                raise ValueError("Restart this lesson; its practice attempt expired.")
+            if attempt['result'] is not None: return attempt['result']
+            result=assess_capture(attempt['exerciseId'],payload.get("moveUci"))
+            if not result['correct']: return result
+            # Only this server-authored lesson channel can request a practice reward.
+            # It neither manufactures a coach verdict nor changes a Lichess position.
+            if self.session_kind!="capture-practice" or self.game_id!=PRACTICE_ID or not self.armed:
+                reward={"status":"skipped","reason":"Correct! Enable live practice rewards for a new attempt to earn a dance."}
+            else:
+                reward=self._submit({"gameId":PRACTICE_ID,"playerColor":"white","ply":payload['attemptId'],
+                    "classification":"good","playedMove":result['san'],"practiceReward":True},
+                    {"tier":"major","reason":"Correct big-piece capture in Capture Practice.","briefOnly":False})
+            response={**result,"reward":reward}
+            attempt['result']=response
+            return response
 
     def arm(self, payload: dict) -> dict:
         mode = payload.get("mode", "rehearsal")
@@ -290,7 +349,11 @@ class VbotDemo:
             if self.busy:
                 raise ValueError("Wait for the current action to finish before changing the demo.")
             self.mode, self.game_id, self.target, self.preset = mode, game_id, target, preset
+            self.session_kind = "capture-practice" if payload.get("practice") is True and game_id == PRACTICE_ID else "game"
             self.compatibility = compatibility
+            self.player_color = payload.get("playerColor")
+            self.finish_pending = self.victory_pending = False
+            self.finish_generation = None
             self.armed = True
             self.armed_at = self.clock()
             self.policy = CelebrationPolicy()
@@ -305,6 +368,8 @@ class VbotDemo:
             if payload and (payload.get("gameId") != self.game_id or payload.get("generation") != self.generation):
                 return self.status()  # A stale tab cannot disable a newer arming session.
             self.armed = False
+            self.finish_pending = self.victory_pending = False
+            self.finish_generation = None
             self.generation += 1
             reasons = {
                 "operator_off": "Turned off by the operator.",
@@ -319,6 +384,109 @@ class VbotDemo:
             self._event("disarmed", reasonCode=reason_code, reason=reasons.get(reason_code),
                         message="Future dances disabled. An action already running must finish or be stopped onsite.")
             return self.status()
+
+    def observe_game_end(self, game: dict, game_reader) -> None:
+        """Called from the existing canonical bot stream; no second game watcher."""
+        with self.lock:
+            if (not self.armed or self.session_kind != "game" or
+                    game.get("gameId") != self.game_id or
+                    game.get("state", {}).get("status") in {"created", "started"}):
+                return
+            payload = {"gameId": self.game_id, "generation": self.generation}
+        self.finish_game(payload, game_reader)
+
+    def finish_game(self, payload: dict, game_reader) -> dict:
+        """A scoped result notification cannot supply or forge the winner.
+
+        Browser and bot streams may report game end in either order. One worker
+        briefly awaits the canonical cached result, then handles it exactly once.
+        It never retries a robot goal, and Off/game changes cancel any wait.
+        """
+        with self.lock:
+            if (not self.armed or self.session_kind != "game" or
+                    payload.get("gameId") != self.game_id or
+                    payload.get("generation") != self.generation):
+                return self.status()
+            if self.finish_generation == self.generation:
+                return self.status()
+            self.finish_generation = self.generation
+            self.finish_pending = True
+            self._event("finishing", reason="Confirming the final result from the Lichess bot stream.")
+            threading.Thread(target=self._finish_game, args=(self.game_id, self.generation, game_reader), daemon=True).start()
+            return self.status()
+
+    def _finish_game(self, game_id, generation, game_reader):
+        session = {"gameId": game_id, "generation": generation, "reason": "match_finished"}
+        def current():
+            return self.armed and self.game_id == game_id and self.generation == generation
+        try:
+            deadline = self.clock() + 15
+            while True:
+                with self.lock:
+                    if not current(): return
+                game = game_reader(game_id)
+                state = game.get("state", {}) if isinstance(game, dict) else {}
+                if state.get("status") not in {None, "created", "started"}:
+                    break
+                if self.clock() >= deadline:
+                    with self.lock:
+                        if current():
+                            self._event("skipped", reason="Final result was not confirmed within 15 seconds; no victory dance queued.")
+                    return
+                self.victory_wait(.05)
+            with self.lock:
+                if not current(): return
+                updated = game.get("updatedAt")
+                fresh = (isinstance(updated, (int, float)) and not isinstance(updated, bool)
+                         and 0 <= time.time()*1000-updated <= 30000)
+                human_win = (game.get("gameId") == game_id and fresh
+                             and self.player_color in {"white", "black"}
+                             and game.get("botColor") in {"white", "black"}
+                             and game["botColor"] != self.player_color
+                             and state.get("winner") == self.player_color
+                             and state.get("status") in {"mate", "resign", "outoftime", "timeout", "variantEnd", "cheat"})
+                if game_id in self.finished_games:
+                    return
+                self.finished_games[game_id] = True
+                while len(self.finished_games) > 256: self.finished_games.popitem(last=False)
+                if not human_win:
+                    self._event("skipped", reason="No fresh, confirmed human win; no victory dance.")
+                    return
+                if self.mode == "rehearsal":
+                    self._event("rehearsed", preset="actions/ROCKYOU.json", tier="victory",
+                                reason="You won! Victory dance preview; no robot motion.")
+                    return
+                self.victory_pending = True
+                self._event("victory_pending", preset="actions/ROCKYOU.json", tier="victory",
+                            reason="You won! Rock You will follow the current reaction/rest. Turn reactions off to cancel.")
+            # Victory has no running chess clock and bypasses the three-minute
+            # major interval, but still waits for completion and normal rest.
+            deadline = self.clock() + 120
+            while True:
+                with self.lock:
+                    if not current(): return
+                    resting = self.clock()-max(self.last_started, self.last_finished) < self.cooldown
+                    if not self.busy and not resting:
+                        request_id = uuid.uuid4().hex
+                        self.busy = True
+                        self.victory_pending = False
+                        self.last_started = self.clock()
+                        self.cooldown = RULES["danceRestSeconds"]
+                        self._event("requested", requestId=request_id, preset="actions/ROCKYOU.json",
+                                    tier="victory", reason="Lichess confirmed your win.")
+                        target = self.target
+                        break
+                    if self.clock() >= deadline:
+                        self._event("skipped", reason="Victory wait expired; no dance submitted.")
+                        return
+                self.victory_wait(.1)
+            # Use the same SSH identity, helper preflight and terminal-result path.
+            self._run(target, "actions/ROCKYOU.json", request_id, generation, "victory")
+        except Exception:
+            with self.lock:
+                if current(): self._event("skipped", reason="Could not verify the final game result; no automatic retry.")
+        finally:
+            self.disarm(session)  # Scoped: an old worker cannot disarm a newer game.
 
     def reconcile(self, payload: dict, game_reader, *, timeout=1.5, wait=time.sleep) -> dict:
         """Briefly await the existing bot stream, never retry a robot command.
@@ -439,6 +607,8 @@ class VbotDemo:
         fields = {key: record.get(key) for key in ("gameId", "ply", "playedMove", "classification", "synthetic")}
         if not self.armed:
             return self._event("skipped", reason="Demo is disarmed.", **fields)
+        if self.finish_pending:
+            return self._event("skipped", reason="Match is finishing; move reactions are closed.", **fields)
         if record["gameId"] != self.game_id:
             return self._event("skipped", reason="Another game is selected.", **fields)
         if record["classification"] not in GOOD_LABELS | {"blunder"}:
@@ -458,7 +628,9 @@ class VbotDemo:
         if tier not in {"small", "major", "sad"} or (tier == "sad" and record["classification"] != "blunder"):
             return self._event("skipped", reason="No eligible reaction for this verdict.", **fields)
         pace_reason = decision.get("paceReason")
-        if tier == "major" and (decision.get("briefOnly") or self.clock()-self.last_dance_finished < RULES["danceIntervalSeconds"]):
+        practice_reward = self.session_kind == "capture-practice" and record.get("practiceReward") is True
+        if tier == "major" and not practice_reward and (decision.get("briefOnly") or (
+                not decision.get("demoCapture") and self.clock()-self.last_dance_finished < RULES["danceIntervalSeconds"])):
             tier = "small"
             pace_reason = pace_reason or "Full dance is within its three-minute interval; using a brief acknowledgment."
         preset = self.preset
@@ -498,9 +670,13 @@ class VbotDemo:
                 if not self.armed or generation != self.generation:
                     self._event("skipped", requestId=request_id, reason="Disarmed before dispatch.")
                     return
-                verify_identity = tier == "sad" or self.compatibility.get("basis") == "tested-preset"
-            if verify_identity and (not self._verified_entry(target, preset) or not self._identity_matches(target)):
+                verify_identity = tier in {"sad", "victory"} or self.compatibility.get("basis") == "tested-preset" or self._demo_approved(target, preset)
+            if verify_identity and (not (self._verified_entry(target, preset) or self._demo_approved(target, preset)) or not self._identity_matches(target)):
                 raise RobotNotReady("The saved SSH host key no longer matches the rehearsed robot. No goal submitted.")
+            with self.lock:
+                if not self.armed or generation != self.generation:
+                    self._event("skipped",requestId=request_id,reason="Connection/session changed before dispatch.")
+                    return
             outcome = self.sender(target, preset, request_id)
             with self.lock:
                 self._event(outcome["status"], requestId=request_id, **{"preset":preset, "tier":tier, **{k: v for k, v in outcome.items() if k != "status"}})

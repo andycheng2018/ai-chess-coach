@@ -14,11 +14,7 @@ import signal
 import time
 import uuid
 
-PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", "actions/WAVE.json",
-           "atom/look_left.json", "atom/look_right.json", "atom/look_forward.json",
-           "atom/look_up.json", "atom/look_down.json", "actions/SHAKEHAND.json",
-           "actions/SHAKEHAND_L.json", "actions/HIGH_FIVE_R.json", "actions/HIGH_FIVE_L.json",
-           "actions/SAYYES.json", "actions/GRIEVANCE.json")
+PRESETS = ('actions/ROCKYOU.json', 'actions/CHEER_R.json', 'actions/WAVE.json', 'atom/look_left.json', 'atom/look_right.json', 'atom/look_forward.json', 'atom/look_up.json', 'atom/look_down.json', 'actions/SHAKEHAND.json', 'actions/SHAKEHAND_L.json', 'actions/HIGH_FIVE_R.json', 'actions/HIGH_FIVE_L.json', 'actions/SAYYES.json', 'actions/GRIEVANCE.json', 'actions/HAPPY_LITTLE_JUMP.json', 'actions/HAPPY_JUMP.json', 'actions/JUMP_IN_PLACE.json')
 SESSION = "/opt/vita/aorta/edu/edu_session.json5"
 VERSIONS = {"aorta-sdk": "2026.9.23", "aorta-msgs": "2026.9.23", "vbot-edu-msgs": "2026.9.24", "flatbuffers": "25.12.19"}
 SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"
@@ -43,8 +39,8 @@ def readiness_details(samples):
         return blocked("incomplete", "Fresh robot telemetry is incomplete.")
     if len({m["heartbeat"] for m in system}) < 2 or len({m["heartbeat"] for m in body}) < 3:
         return blocked("stale", "Robot state heartbeats are not advancing.")
-    if any(m["soc"] < 20 or m["charger"] or m["alarm"] != 0 for m in battery):
-        return blocked("battery", "Battery must be at least 20%, unplugged, and reporting no BMS alarm.")
+    if any(m["soc"] < 10 or m["charger"] or m["alarm"] != 0 for m in battery):
+        return blocked("battery", "Battery must be at least 10%, unplugged, and reporting no BMS alarm.")
     if any(m["powerSaving"] or not m["active"] or m["severity"] != 0 or m["state"] != "FUNCTION" for m in system):
         return blocked("system", "Robot must be active in FUNCTION, outside low power mode, with severity zero.")
     if any(m["posture"] != 1 or m["motion"] != 0 or m["action"] != "RL_TROT" for m in body):

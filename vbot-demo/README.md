@@ -86,7 +86,7 @@ These are tunable deterministic heuristics, not p-values or a calibrated statist
 Full dances are disabled for fast clocks (initial + 40 increments <10 minutes),
 under two minutes remaining, or unknown time control. These modes use rehearsed head
 gestures only. Untimed games allow milestone dances. Full dances are at least three
-minutes apart; gestures rest ten seconds after completion, dances twenty. Busy/cooldown
+minutes apart; gestures rest five seconds after completion, dances twenty. Busy/cooldown
 moves skip without a backlog, and a clock-suppressed major moment becomes a small gesture.
 The engine verdict remains independent of spoken/LLM praise. Synthetic ordinary/major
 examples are rehearsal-only and clearly labeled; a sample is not a real engine signal.
@@ -201,7 +201,7 @@ request record and only create this evidence after actual observation. The backe
 checks the saved host key at arming and dispatch, while SSH still verifies the live host.
 
 Each action now checks fresh BMS, system, body and head samples. The demo requires
-at least 20% battery, unplugged, no BMS alarm, active FUNCTION with severity zero and
+at least 10% battery, unplugged, no BMS alarm, active FUNCTION with severity zero and
 no power saving, advancing heartbeats, standing idle RL_TROT, and an idle head with
 no pending action/fault. These are conservative demo gates, not manufacturer-wide
 operating limits. A read-only check is available after deployment:
@@ -358,3 +358,56 @@ session, not to an already-enabled match. Per-action preflight and postflight ch
 Selecting the same game only opens its board; it does not set the game to recovering or
 implicitly arm the robot. Switching games and terminal results turn reactions off.
 Disarm events record whether this was an operator action, game change, or game completion.
+
+### Joining a room after sign-in expires or an account check fails
+
+The **Join room link** dialog needs a verified player account and a valid original
+invitation. Use its **Sign in with Lichess** action if signed out, or **Retry account check**
+if a temporary lookup failed. Account lookup has a bounded timeout; network errors and
+rate limits preserve the existing login. Only an authentication rejection clears it.
+A valid invitation is saved locally for up to 30 minutes across OAuth and reopened afterward.
+Signing in never accepts the room automatically: verify the displayed bot/player colors,
+then choose **Join as black/white**. The example placeholder is not a supplied invitation.
+
+## Capture Practice tutorial
+
+Open **🎯 Capture Practice** near the top of Chess Buddy. Four authored one-move
+positions teach pawn/rook/knight captures of a queen and a bishop capture of a rook.
+Use **Show me the capture** for a hint arrow, then click or drag the capturing piece.
+Incorrect moves keep the exercise available; a correct capture shows the piece and points.
+The exercises use the on-screen practice board and do not alter your Lichess game.
+
+For robot rewards, turn off any other VBOT session, confirm the workspace/Stop controls,
+then choose **Check & enable dance rewards** inside the tutorial. A server-validated
+correct capture requests the complete `actions/ROCKYOU.json` preset. Practice rewards
+have their own explicit session: they do not fabricate Stockfish records or need a live
+Lichess game. The normal game's three-minute major-signal downgrade does not apply to
+these authored rewards; existing busy checks and 20-second post-dance rest still apply.
+Repeated submissions of the same lesson attempt return its saved result without another
+robot request. Old solved attempts never replay after enabling rewards. Closing the
+practice dialog turns off its future rewards; use the handset Stop for current movement.
+
+### Explicit demo approval for untested gesture presets
+
+The owner can explicitly approve known catalog presets for immediate demonstration
+without writing false physical-verification records. Such approval is scoped to the
+saved robot target and an expiry time; the current demo approval lasts two hours.
+The UI distinguishes these entries as **Demo enabled · not individually rehearsed**.
+SSH identity, provider/schema, battery, posture, system, head and terminal-result checks
+still apply. A missing or aborted preset is not retried automatically.
+Jump presets (`HAPPY_LITTLE_JUMP`, `HAPPY_JUMP`, `JUMP_IN_PLACE`) receive four times the
+random-selection weight of other eligible gestures. There is no ordered rotation or queue.
+Fast/low/unknown-clock games continue to use only head gestures. Names do not establish
+installed availability, duration or amplitude.
+
+### Intentional-blunder opponent
+
+On the live Training Arena board, choose **Opponent mode → Demo: intentional blunders**. The server enables this only for the exact active game with Lichess-confirmed `rated: false`; other games and the normal strength setting stay unchanged. The choice resets when the game ends or the coach server restarts. It applies from the next bot decision, not a move already being calculated.
+
+The bot offers legal queen/rook captures when possible and otherwise brings its queen into play; this behavior has no calibrated Elo. A canonical good/book/excellent/best verdict at depth 12+ and at least two net material points after the expected reply qualifies a big capture for Rock You, even if the player is still losing. Demo captures bypass the usual three-minute major interval; busy actions, the 20-second post-dance rest, fast/low/unknown clocks, explicit live arming and robot readiness remain enforced. Skipped captures are never queued. Switching back to Normal practice restores the selected strength.
+
+### Win celebration
+
+Enable live VBOT reactions before the game ends. A fresh final result in the existing Lichess bot stream that names the human player as winner requests **actions/ROCKYOU.json** once, then turns reactions off. Checkmate, resignation and timeout wins qualify; losses, draws, aborted games, stale/unconfirmed results and practice sessions do not. Client notifications carry only game/session identity, never an authoritative winner. Preview mode shows the victory event without contacting VBOT.
+
+If a reaction is already running or resting, the companion shows a cancellable victory wait (up to two minutes). Turning reactions off or switching games cancels it. The normal three-minute major interval and running chess clock limits do not suppress a victory after the game has ended; action completion/rest, verified SSH identity, fresh robot preflight, terminal result and postflight checks still apply. A readiness refusal or unknown outcome disarms without retry. The browser result and bot stream can arrive in either order; the controller allows 15 seconds for the canonical result before turning off without a dance. Reconnects and duplicate terminal events cannot replay a handled win.

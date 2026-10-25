@@ -3,7 +3,7 @@ import { connectVbotWithReadiness, type VbotConnectPayload, vbotNeedsDetach, vbo
 
 export type CompanionContext = {
   gameId: string | null; playerColor: 'white' | 'black';
-  resolved: boolean; ended: boolean; canArm: boolean;
+  resolved: boolean; ended: boolean; canArm: boolean; practice?: boolean;
 };
 
 export function useVbotCompanion(context: CompanionContext) {
@@ -37,7 +37,7 @@ export function useVbotCompanion(context: CompanionContext) {
     return () => { mounted.current = false; revision.current++; window.clearInterval(timer); };
   }, [refresh]);
 
-  const perform = useCallback(async (path: 'check' | 'connect' | 'disarm', payload: object) => {
+  const perform = useCallback(async (path: 'check' | 'connect' | 'disarm' | 'finish', payload: object) => {
     if (inFlight.current) return;
     inFlight.current = true; revision.current++;
     setPending(true); setActionError('');
@@ -67,8 +67,12 @@ export function useVbotCompanion(context: CompanionContext) {
     const session = vbotManagedSession(status, managed.current, context.gameId);
     managed.current = session;
     if (!session || !vbotNeedsDetach(status, context) || inFlight.current || detaching.current) return;
+    if (context.ended && session.gameId === context.gameId && status.finishPending) return;
     detaching.current = true;
-    void perform('disarm', { ...session, reason: context.ended ? 'match_finished' : 'match_changed' })
+    // Let the server confirm the winner before the end-of-game disarm.
+    // A selected-game change still cancels immediately, even during a win wait.
+    const finishing = context.ended && session.gameId === context.gameId;
+    void perform(finishing ? 'finish' : 'disarm', { ...session, reason: finishing ? 'match_finished' : 'match_changed' })
       .finally(() => { detaching.current = false; });
   }, [status, context.gameId, context.resolved, context.ended, perform]);
 
@@ -79,7 +83,7 @@ export function useVbotCompanion(context: CompanionContext) {
       const c = current.current;
       if (!c.canArm || !c.gameId) return Promise.resolve();
       return perform('connect', { gameId: c.gameId, playerColor: c.playerColor, mode, target,
-        preset: 'actions/ROCKYOU.json', applicationVersion: status?.verification?.applicationVersion || 'unknown',
+        preset: 'actions/ROCKYOU.json', practice: c.practice === true, applicationVersion: status?.verification?.applicationVersion || 'unknown',
         confirmSafeWorkspace: confirmed, confirmHandsetStop: confirmed });
     },
     off: () => status ? perform('disarm', { gameId: status.gameId, generation: status.generation, reason: 'operator_off' }) : Promise.resolve(),
