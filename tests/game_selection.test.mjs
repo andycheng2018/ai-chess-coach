@@ -32,3 +32,28 @@ test('switching games never implicitly arms VBOT beside the companion lifecycle'
   assert.deepEqual(calls.find(([name])=>name==='setActiveGameId'),['setActiveGameId','AbCd1234']);
   assert.deepEqual(calls.find(([name])=>name==='setGameStatus'),['setGameStatus','recovering']);
 });
+
+let gameEventHandler;
+function findGameEvents(node){
+ if(ts.isCallExpression(node)&&node.expression.getText(file)==='streamEvents')gameEventHandler=node.arguments[1].getText(file);
+ ts.forEachChild(node,findGameEvents);
+}
+findGameEvents(file);assert.ok(gameEventHandler);
+function streamEventsFor(selected){
+ const calls=[];const ctx={gameIdRef:{current:selected},BOT_USERNAME:'MonkeyKingZach',refreshPlayingGames:()=>{},pendingMoveRef:{current:null},forgetStoredGame:()=>{}};
+ for(const name of ['setSenseRobotGameId','setActiveGameId','setGameStatus','setStatus','setMoveInFlight'])ctx[name]=value=>calls.push([name,value]);
+ vm.runInNewContext(ts.transpileModule('var event='+gameEventHandler,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,ctx);
+ return {calls,event:ctx.event};
+}
+test('replayed starts for other active games cannot steal the selected SenseRobot room',()=>{
+ const run=streamEventsFor('n7aV30Jv');run.event({type:'gameStart',game:{id:'RRhxJyOf',opponent:{username:'MonkeyKingZach'}}});
+ assert.equal(run.calls.length,0);
+});
+test('a duplicate start for the selected game cannot strand it in recovering',()=>{
+ const run=streamEventsFor('n7aV30Jv');run.event({type:'gameStart',game:{id:'n7aV30Jv',opponent:{username:'MonkeyKingZach'}}});
+ assert.equal(run.calls.length,0);
+});
+test('a new coach game can still attach when no room was selected',()=>{
+ const run=streamEventsFor(null);run.event({type:'gameStart',game:{id:'n7aV30Jv',opponent:{username:'MonkeyKingZach'}}});
+ assert.deepEqual(run.calls.find(([name])=>name==='setActiveGameId'),['setActiveGameId','n7aV30Jv']);
+});

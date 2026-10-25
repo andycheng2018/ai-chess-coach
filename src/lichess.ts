@@ -53,7 +53,9 @@ async function checkedFetch(url: string, init: RequestInit = {}): Promise<Respon
 }
 
 export async function getAccount(token: string): Promise<Account> {
-  return (await checkedFetch(`${BASE_URL}/api/account`, { headers: authHeaders(token) })).json();
+  return (await checkedFetch(`${BASE_URL}/api/account`, {
+    headers: authHeaders(token), signal: AbortSignal.timeout(10000),
+  })).json();
 }
 
 // Lichess may prefix display usernames with titles ("BOT MonkeyKingZach").

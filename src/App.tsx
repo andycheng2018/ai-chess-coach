@@ -20,7 +20,7 @@ import { VbotCompanion } from './components/VbotCompanion';
 import { GameQrDialog } from './components/GameQrDialog';
 import { JoinRoomDialog } from './components/JoinRoomDialog';
 import { SenseRobotGameStatus } from './components/SenseRobotGameStatus';
-import { recoverJoinedRoom, requireExactJoinedRoom } from './roomJoin';
+import { recoverJoinedRoom, requireExactJoinedRoom, requireUnjoinedRoom, readRoomJoinDraft, clearRoomJoinDraft } from './roomJoin';
 import { reconcilePendingMove, resolveMoveFailure, type PendingMoveAttempt } from './pendingMove';
 import { moveLineChanged, shouldApplyBackupSnapshot } from './gameSync';
 import { observeCoachStream, type CoachStreamCursor } from './coachStream';
@@ -1703,7 +1703,9 @@ export default function App() {
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
   const [qrGameId, setQrGameId] = useState<string | null>(null);
-  const [roomLinkOpen, setRoomLinkOpen] = useState(false);
+  const [roomLinkOpen, setRoomLinkOpen] = useState(() => readRoomJoinDraft() !== null);
+  const [accountCheckError, setAccountCheckError] = useState('');
+  const [accountCheckNonce, setAccountCheckNonce] = useState(0);
   useEffect(() => { setQrGameId(null); }, [gameId]);
   const [playingGames, setPlayingGames] = useState<PlayingGame[]>([]);
   const [refreshingGames, setRefreshingGames] = useState(false);
@@ -2174,16 +2176,28 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!token) { setAccount(null); return; }
+    if (!token) { setAccount(null); setAccountCheckError(''); return; }
+    let cancelled = false;
+    setAccountCheckError('');
+    setAccount(null);
     getAccount(token)
-      .then(setAccount)
+      .then(next => { if (!cancelled && getToken() === token) setAccount(next); })
       .catch((error) => {
+        if (cancelled || getToken() !== token) return;
         setStatus(`Lichess account error: ${String(error)}`);
-        setSenseConnectionError(`Could not confirm your Lichess account: ${String(error)}. Please sign in again.`);
-        logout();
-        setToken(null);
+        setSenseConnectionError('Could not confirm your Lichess account. Retry the account check.');
+        // Network failures, 429s and server outages do not invalidate a login.
+        if (error instanceof LichessHttpError && error.status === 401) {
+          logout(); setToken(null);
+        } else {
+          const detail = error instanceof LichessHttpError
+            ? `Lichess account check failed (HTTP ${error.status}).`
+            : 'Could not reach Lichess to check your account.';
+          setAccountCheckError(`${detail} Your sign-in is preserved; retry the account check.`);
+        }
       });
-  }, [token]);
+    return () => { cancelled = true; };
+  }, [token, accountCheckNonce]);
 
   useEffect(() => {
     if (!token || !account) {
@@ -2257,7 +2271,9 @@ export default function App() {
           void refreshPlayingGames();
           if (event.game) {
             const opponent = event.game.opponent?.username?.toLowerCase();
-            if (opponent === BOT_USERNAME.toLowerCase()) {
+            if (opponent === BOT_USERNAME.toLowerCase() && !gameIdRef.current) {
+              // Reconnecting can replay starts for other active games. Never
+              // steal an explicitly selected room or reset its already-live stream.
               // A normal Lichess gameStart must stay a normal online game.
               // Preserve SenseRobot mode only when this is the exact game
               // that was activated by a successful room join.
@@ -3700,6 +3716,9 @@ export default function App() {
       if (existing) {
         joinedGameId = existing;
       } else {
+        // A different browser account may be trying to accept an invitation
+        // that has already become a game. Recover the player's seat, never POST again.
+        requireUnjoinedRoom(room, await getCachedGameState(room.challengeId), account.username);
         setStatus('Preparing coach bot…');
         let state = await setBotLevel(level);
         setBot(state);
@@ -5358,7 +5377,10 @@ export default function App() {
       </div>
     )}
 
-    {roomLinkOpen && <JoinRoomDialog username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)} onClose={() => setRoomLinkOpen(false)} />}
+    {roomLinkOpen && <JoinRoomDialog username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)}
+      onLogin={loginWithLichess} authChecking={Boolean(token && !account && !accountCheckError)} authError={accountCheckError}
+      onRetryAccount={() => setAccountCheckNonce(value => value + 1)}
+      onClose={() => { clearRoomJoinDraft(); setRoomLinkOpen(false); }} />}
 
     {qrGameId && qrGameId === gameId && <GameQrDialog key={`${gameId}-${myColor}`} gameId={gameId} playerColor={myColor} username={account?.username} ended={vbotEnded} onJoinRoom={() => { setQrGameId(null); setRoomLinkOpen(true); }} onClose={() => setQrGameId(null)} />}
 

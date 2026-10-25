@@ -36,3 +36,38 @@ test('late or unrelated backend results cannot switch to a different game',()=>{
  assert.equal(requireExactJoinedRoom('4TKUBiH1','4TKUBiH1'),'4TKUBiH1');
  for(const actual of [undefined,null,'','xYDhW2TU']) assert.throws(()=>requireExactJoinedRoom('4TKUBiH1',actual),/exact room/);
 });
+
+const {saveRoomJoinDraft,readRoomJoinDraft,clearRoomJoinDraft}=load('roomJoin');
+function draftStorage(){const values=new Map();return {getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};}
+test('the supplied n7aV30Jv invitation parses as bot Black and player White',()=>{
+ const room=roomJoinPreview('https://lichess.org/game/n7aV30Jv?color=black');
+ assert.equal(room.challengeId,'n7aV30Jv');assert.equal(room.color,'black');assert.equal(room.playerColor,'white');
+});
+test('OAuth room draft restores only public room/color and does not auto-join',()=>{
+ const storage=draftStorage();
+ assert.equal(saveRoomJoinDraft('https://lichess.org/game/n7aV30Jv?color=black&unrelated=discard',storage,1000),true);
+ assert.equal(readRoomJoinDraft(storage,1001),'https://lichess.org/game/n7aV30Jv?color=black');
+ clearRoomJoinDraft(storage);assert.equal(readRoomJoinDraft(storage,1002),null);
+});
+test('room draft expires and rejects private/foreign links or unavailable storage',()=>{
+ const storage=draftStorage();saveRoomJoinDraft('https://lichess.org/game/n7aV30Jv?color=black',storage,1000);
+ assert.equal(readRoomJoinDraft(storage,999),null);
+ assert.equal(readRoomJoinDraft(storage,1000+30*60*1000+1),null);
+ for(const url of ['https://example.com/n7aV30Jv?color=black','https://lichess.org/game/n7aV30Jvseat?color=black']) assert.equal(saveRoomJoinDraft(url,storage,1000),false);
+ const blocked={getItem:()=>{throw Error('unavailable');},setItem:()=>{throw Error('unavailable');},removeItem:()=>{throw Error('unavailable');}};
+ assert.equal(saveRoomJoinDraft('',blocked,1000),false);assert.equal(readRoomJoinDraft(blocked,1000),null);assert.doesNotThrow(()=>clearRoomJoinDraft(blocked));
+});
+test('starting sign-in before pasting still restores the room dialog',()=>{
+ const storage=draftStorage();assert.equal(saveRoomJoinDraft('',storage,1000),true);
+ assert.equal(readRoomJoinDraft(storage,1001),'');
+});
+
+const {requireUnjoinedRoom}=load('roomJoin');
+test('already-created game without a confirmed player seat cannot submit another acceptance',()=>{
+ const room=roomJoinPreview('https://lichess.org/game/n7aV30Jv?color=black');
+ const cached={gameId:'n7aV30Jv',state:{status:'started'}};
+ assert.throws(()=>requireUnjoinedRoom(room,cached,'SecondAccount222'),/already joined.*SecondAccount222.*same player account/);
+ assert.doesNotThrow(()=>requireUnjoinedRoom(room,null,'ZachZhang'));
+ assert.doesNotThrow(()=>requireUnjoinedRoom(room,{...cached,gameId:'Other123'},'ZachZhang'));
+ assert.throws(()=>requireUnjoinedRoom(room,{...cached,state:{status:'mate'}},'ZachZhang'),/already finished/);
+});
