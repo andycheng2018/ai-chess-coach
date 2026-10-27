@@ -3903,6 +3903,7 @@ export default function App() {
     username={account?.username || null} bot={bot} level={level} levels={LEVELS}
     onLevel={next => { if (LEVELS.some(item => item.id === next)) void changeLevel(next as typeof level); }}
     onLogin={async () => { setSenseConnectionError(''); await loginWithLichess(); }} onJoin={connectSenseRobotRoom}
+    onFindRooms={() => { setSenseSetupOpen(false); setRoomLinkOpen(true); }}
     onRetryBot={async () => { setBot(await startBot()); }}
     canUseExistingGame={Boolean(gameId && account && activeGame && isCoachGame && gameStreamConnected && recoveryChecked)}
     onUseExistingGame={useExistingSenseRobotGame} onUseScreen={useScreenForCurrentGame}
@@ -4431,6 +4432,7 @@ export default function App() {
         onEnterArena={() => setCurrentView('arena')}
         onOpenAnalysis={openAnalysis}
         onOpenSenseSetup={() => setSenseSetupOpen(true)}
+        onOpenRooms={() => setRoomLinkOpen(true)}
         onOpenProfile={() => setProfileModalOpen(true)}
         onOpenMenu={() => {
           void refreshPlayingGames();
@@ -4467,7 +4469,7 @@ export default function App() {
           </button>
 
           <div className="arena-header-meta">
-            <button type="button" className="ghost" disabled={scanningRoom || startingGame} onClick={() => setRoomLinkOpen(true)}>Join room link</button>
+            <button type="button" className="ghost" disabled={scanningRoom || startingGame} onClick={() => setRoomLinkOpen(true)}>Lichess rooms & existing games</button>
             {gameId && <button type="button" className="ghost" disabled={gameStatus === 'recovering' || !account || players[myColor].name.toLowerCase() !== account.username.toLowerCase()} onClick={() => setQrGameId(gameId)}>Show game QR</button>}
             {gameId && (
               <span className="arena-game-id-badge">
@@ -5414,7 +5416,7 @@ export default function App() {
     )}
 
     {capturePracticeOpen && <CapturePractice onClose={() => setCapturePracticeOpen(false)} />}
-    {roomLinkOpen && <JoinRoomDialog username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)}
+    {roomLinkOpen && <JoinRoomDialog token={token} autoJoinAllowed={!gameId || vbotEnded} username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)}
       onLogin={loginWithLichess} authChecking={Boolean(token && !account && !accountCheckError)} authError={accountCheckError}
       onRetryAccount={() => setAccountCheckNonce(value => value + 1)}
       onClose={() => { clearRoomJoinDraft(); setRoomLinkOpen(false); }} />}

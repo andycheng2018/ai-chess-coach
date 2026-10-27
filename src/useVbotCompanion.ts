@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { connectVbotWithReadiness, type VbotConnectPayload, vbotNeedsDetach, vbotManagedSession, vbotRequest, type VbotStatus } from './vbotDemo';
+import { connectVbotWithReadiness, type VbotConnectPayload, vbotNeedsDetach, vbotManagedSession, vbotRequest, type VbotStatus, type ReactionProfile } from './vbotDemo';
 
 export type CompanionContext = {
   gameId: string | null; playerColor: 'white' | 'black';
@@ -80,11 +80,11 @@ export function useVbotCompanion(context: CompanionContext) {
     status, pending, offline: Boolean(connectionError), error: actionError || connectionError,
     check: (target: string) => perform('check', { target }),
     remember: (target: string, label: string, networkId: string) => perform('networks/remember', { target, label, networkId }),
-    connect: (mode: 'live' | 'rehearsal', target: string, confirmed: boolean) => {
+    connect: (mode: 'live' | 'rehearsal', target: string, confirmed: boolean, reactionProfile: ReactionProfile = 'balanced') => {
       const c = current.current;
       if (!c.canArm || !c.gameId) return Promise.resolve();
       return perform('connect', { gameId: c.gameId, playerColor: c.playerColor, mode, target,
-        preset: 'actions/ROCKYOU.json', practice: c.practice === true, applicationVersion: status?.verification?.applicationVersion || 'unknown',
+        reactionProfile, preset: 'actions/ROCKYOU.json', practice: c.practice === true, applicationVersion: status?.verification?.applicationVersion || 'unknown',
         confirmSafeWorkspace: confirmed, confirmHandsetStop: confirmed });
     },
     off: () => status ? perform('disarm', { gameId: status.gameId, generation: status.generation, reason: 'operator_off' }) : Promise.resolve(),

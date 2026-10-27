@@ -1,8 +1,8 @@
 export type Account = { id: string; username: string };
 export type Challenge = {
   id: string;
-  challenger?: { name?: string; id?: string; title?: string };
-  destUser?: { name?: string; id?: string; title?: string };
+  challenger?: { name?: string; id?: string; title?: string } | null;
+  destUser?: { name?: string; id?: string; title?: string } | null;
   status?: string;
 };
 type LichessOpponent = { id?: string; username?: string; rating?: number; title?: string };
@@ -66,10 +66,27 @@ function normalizeOpponent(opponent: LichessOpponent | undefined): LichessOppone
   return { ...opponent, username: id || opponent.username };
 }
 
-export async function getPlayingGames(token: string): Promise<PlayingGame[]> {
-  const payload = await (await checkedFetch(`${BASE_URL}/api/account/playing`, { headers: authHeaders(token) })).json();
+export async function getPlayingGames(token: string, signal?: AbortSignal): Promise<PlayingGame[]> {
+  const payload = await (await checkedFetch(`${BASE_URL}/api/account/playing`, { headers: authHeaders(token), signal: signal || AbortSignal.timeout(10000) })).json();
   const games: PlayingGame[] = Array.isArray(payload?.nowPlaying) ? payload.nowPlaying : [];
   return games.map(game => ({ ...game, opponent: normalizeOpponent(game.opponent) }));
+}
+
+/** Account-owned invitations only; no global room search or guessed IDs. */
+export type RoomChallenge = Challenge & {
+  challenger?: { name?: string; id?: string; title?: string } | null;
+  destUser?: { name?: string; id?: string; title?: string } | null;
+  rated?: boolean; variant?: { key?: string }; color?: string; finalColor?: string;
+  open?: { userIds?: string[] };
+  timeControl?: { type?: string; limit?: number; increment?: number; show?: string };
+};
+export async function getOutgoingRoomChallenges(token: string, signal?: AbortSignal): Promise<RoomChallenge[]> {
+  const response = await checkedFetch(`${BASE_URL}/api/challenge`, {
+    headers: authHeaders(token), signal: signal || AbortSignal.timeout(10000),
+  });
+  const payload = await response.json();
+  if (!Array.isArray(payload?.out)) throw new Error('Lichess returned an invalid room list.');
+  return payload.out;
 }
 
 export type ChallengeTimeControl =
