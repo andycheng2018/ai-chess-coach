@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { LunaChat } from './LunaChat';
+import type { ChatPosition } from '../lunaChat';
 import type { ChessTheme, CoachDetail, CoachLanguage, CoachResult } from '../coach';
 import type { TtsStatus } from '../tts';
 
@@ -18,6 +20,9 @@ export type CoachNote = CoachResult & {
 };
 
 type Props = {
+  chatSessionId: string;
+  chatPosition: ChatPosition;
+  onSpeakChat?: (text: string) => void;
   openingLabel: string;
   openingStatus: string;
   historyStatus: 'syncing' | 'synced' | 'offline' | 'unavailable';
@@ -43,6 +48,9 @@ type Props = {
 };
 
 export const CoachWindow: React.FC<Props> = ({
+  chatSessionId,
+  chatPosition,
+  onSpeakChat,
   openingLabel,
   openingStatus,
   historyStatus,
@@ -68,6 +76,7 @@ export const CoachWindow: React.FC<Props> = ({
 }) => {
   const isChinese = coachLanguage === 'zh-CN';
   const isSpeaking = ttsStatus.state === 'speaking';
+  const [mode, setMode] = useState<'coach' | 'chat'>('coach');
 
   return (
     <div className="coach-window-panel">
@@ -81,7 +90,7 @@ export const CoachWindow: React.FC<Props> = ({
           <div className="coach-window-info">
             <div className="coach-window-title-row">
               <h2 className="coach-window-title">
-                {isChinese ? 'AI 特级大师教练' : 'Grandmaster AI Coach'}
+                {isChinese ? 'Luna · 国际象棋教练' : 'Luna · Chess Coach'}
               </h2>
               <span className="coach-live-badge">
                 {coachThinking
@@ -138,8 +147,22 @@ export const CoachWindow: React.FC<Props> = ({
         </div>
       </div>
 
+      <div className="coach-mode-tabs" role="group" aria-label={isChinese ? '教练窗口模式' : 'Coach window mode'}>
+        <button type="button" aria-pressed={mode === 'coach'} onClick={() => setMode('coach')}>{isChinese ? '教练点评' : 'Coach'}{coachThinking && <span aria-label="Analyzing"> ···</span>}</button>
+        <button type="button" aria-pressed={mode === 'chat'} onClick={() => setMode('chat')}>{isChinese ? '与 Luna 聊天' : 'Chat with Luna'} <span aria-hidden="true">☾</span></button>
+      </div>
+      <div className="coach-chat-body" hidden={mode !== 'chat'}>
+        {criticalPrompt && isMyTurn && <div className="coach-callout critical-prompt-card" role="status">
+          <strong>{criticalPrompt.mateThreat ? '⚠️ ' : '💡 '}{criticalPrompt.title}</strong><p>{criticalPrompt.question}</p>
+        </div>}
+        {coachResult?.shouldCoach && <details className="luna-coach-context"><summary>{isChinese ? '最近的教练点评' : 'Latest coaching'} · {coachResult.title}</summary><p>{coachResult.feedback}</p>{coachResult.question && <p>{coachResult.question}</p>}</details>}
+        <LunaChat key={chatSessionId} sessionId={chatSessionId} position={chatPosition}
+          language={coachLanguage} detail={coachDetail} coachQuestion={criticalPrompt?.question || coachResult?.question}
+          onSpeak={onSpeakChat} />
+      </div>
+
       {/* Coach Window Independent Scrollable Body */}
-      <div className="coach-window-body custom-scroll">
+      <div className="coach-window-body custom-scroll" hidden={mode !== 'coach'}>
         {openingLabel && <div className="opening-badge coach-opening-badge" role="status">
           <strong>{openingLabel}</strong>
           {openingStatus && <small>{openingStatus}</small>}

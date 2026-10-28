@@ -8,8 +8,8 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 const require=createRequire(import.meta.url),exports={};
 const compiled=ts.transpileModule(readFileSync(new URL('../src/components/CoachWindow.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
-vm.runInNewContext(compiled,{exports,require});
-const props={openingLabel:'Ruy Lopez · C60',openingStatus:'In book · transposed',historyStatus:'synced',
+vm.runInNewContext(compiled,{exports,require: path=>path==='./LunaChat'?{LunaChat:()=>null}:require(path)});
+const props={chatSessionId:'game:g',chatPosition:{fen:'start',rootFen:'start',moves:[]},openingLabel:'Ruy Lopez · C60',openingStatus:'In book · transposed',historyStatus:'synced',
  coachResult:null,coachThinking:false,coachError:null,criticalPrompt:null,coachNotes:[{gameId:'g',ply:5,playedMove:'Bb5',classification:'good',title:'Develop safely',feedback:'Keep the bishop active.'}],
  isMyTurn:true,voiceEnabled:false,ttsStatus:{state:'idle'},hintsEnabled:true,coachDetail:'balanced',coachLanguage:'en',currentPly:null,themeLabel:theme=>theme};
 test('new coach window retains opening recognition and the unified learning timeline',()=>{

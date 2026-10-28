@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -920,6 +921,87 @@ def analyze_position(payload: dict[str, Any]) -> dict[str, Any]:
         _analyzer_lock.release()
 
 
+def chat_session_id(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"(?:game|analysis|lounge):[A-Za-z0-9_-]{1,100}", value):
+        raise ValueError("A valid chat sessionId is required.")
+    return value
+
+
+def chat_reply(payload: dict[str, Any]) -> dict[str, Any]:
+    session_id = chat_session_id(payload.get("sessionId"))
+    message = payload.get("message")
+    if not isinstance(message, str) or not 1 <= len(message.strip()) <= 2000:
+        raise ValueError("Write a question between 1 and 2000 characters.")
+    message = message.strip()
+    try:
+        request_id = str(uuid.UUID(payload.get("requestId", "")))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("A valid requestId is required.") from exc
+    board_payload = {"rootFen": payload.get("rootFen", payload.get("fen")), "moves": payload.get("moves", [])}
+    board = analysis_board(board_payload)
+    if board.fen() != payload.get("fen"):
+        raise ValueError("The board snapshot does not match its move history.")
+
+    def existing_turn() -> dict[str, Any] | None:
+        turn = next((item for item in history.chat_session(session_id) if item["requestId"] == request_id), None)
+        if turn and (turn["message"], turn["fen"]) != (message, board.fen()):
+            raise ValueError("This request ID belongs to a different question.")
+        return turn
+
+    old = existing_turn()
+    if old:
+        return old
+    if not os.environ.get("OPENAI_API_KEY", "").strip():
+        raise RuntimeError("Luna needs the coach's OPENAI_API_KEY in the backend .env. Add it and restart the backend.")
+    # Share the coaching model lock. Reject a busy request instead of building
+    # an unbounded queue or paying for duplicate simultaneous sends.
+    if not _llm_lock.acquire(timeout=0.25):
+        raise RuntimeError("Luna is answering another coaching question. Try again in a moment.")
+    try:
+        old = existing_turn()
+        if old:
+            return old
+        detail = str(payload.get("detail", "balanced"))
+        if detail not in COACH_ANALYSIS_PROFILES:
+            detail = "balanced"
+        language = normalize_language(payload.get("language"))
+        engine = analyze_position({**board_payload, "detail": detail})
+        lines = []
+        for line in engine.get("lines", []):
+            replay_board = board.copy()
+            facts = []
+            for uci in line["uci"][:6]:
+                move = chess.Move.from_uci(uci)
+                facts.append({"san": replay_board.san(move), "uci": uci,
+                              "capture": replay_board.is_capture(move),
+                              "check": replay_board.gives_check(move)})
+                replay_board.push(move)
+            lines.append({**line, "move_facts": facts})
+        coaching = history.session(session_id[5:]) if session_id.startswith("game:") else []
+        matching = [record for record in coaching if board.fen() in (record.get("fenAfter"), record.get("fenBefore"))]
+        context = {"fen": board.fen(), "turn": "white" if board.turn else "black",
+                   "pieces": {chess.square_name(square): piece.symbol() for square, piece in board.piece_map().items()},
+                   "legal_moves": [board.san(move) for move in board.legal_moves],
+                   "engine": {**engine, "lines": lines}, "score_perspective": "white",
+                   "coaching": [{key: record.get(key) for key in (
+                       "title", "feedback", "question", "lesson", "playedMove", "fenBefore", "fenAfter",
+                       "bestMove", "opponentReply", "bestLine", "refutationLine",
+                       "bestMoveFacts", "opponentReplyFacts", "bestMoveVerifiedThemes", "opponentReplyVerifiedThemes")}
+                                for record in matching[-2:]]}
+        record_id = uuid.uuid4().hex
+        output = get_llm_coach().create_chat_reply(
+            context, message, history.chat_session(session_id)[-8:],
+            language=language, detail=detail,
+            game_id=session_id[5:] if session_id.startswith("game:") else session_id, record_id=record_id,
+        )
+        turn = {"requestId": request_id, "recordId": output["recordId"], "sessionId": session_id,
+                "fen": board.fen(), "message": message, "reply": output["reply"],
+                "savedAt": int(time.time() * 1000), "language": language}
+        return history.save_chat_turn(session_id, turn)
+    finally:
+        _llm_lock.release()
+
+
 def explain_analysis(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1608,6 +1690,14 @@ class Handler(BaseHTTPRequestHandler):
                     for level in BOT_LEVELS.values()
                 ]
             })
+        elif urlsplit(self.path).path == "/api/coach/chat":
+            try:
+                session_id = chat_session_id(parse_qs(urlsplit(self.path).query).get("sessionId", [""])[0])
+                self._send(200, {"turns": history.chat_session(session_id)})
+            except ValueError as exc:
+                self._send(400, {"message": str(exc)})
+            except OSError as exc:
+                self._send(500, {"message": f"Could not load Luna's conversation: {exc}"})
         elif urlsplit(self.path).path == "/api/coach/history":
             game_id = parse_qs(urlsplit(self.path).query).get("gameId", [""])[0]
             if not game_id:
@@ -1630,7 +1720,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/logs/clear":
                 history.clear_attempts()
-                self._send(200, {"ok": True, "message": "Model attempts cleared; learning records preserved"})
+                self._send(200, {"ok": True, "message": "Model attempts cleared; learning records and chats preserved"})
+            elif self.path == "/api/coach/chat":
+                self._send(200, chat_reply(self._json_body()))
             elif self.path == "/api/coach/history":
                 payload = self._json_body()
                 records = payload.get("records")

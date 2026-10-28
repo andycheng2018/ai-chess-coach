@@ -735,6 +735,7 @@
           <div class="cat-pill" onclick="setCategory('blunder', this)">🚨 Blunders</div>
           <div class="cat-pill" onclick="setCategory('feedback', this)">💡 Feedback</div>
           <div class="cat-pill" onclick="setCategory('critical_question', this)">❓ Questions</div>
+          <div class="cat-pill" onclick="setCategory('chat', this)">☾ Luna chats</div>
           <div class="cat-pill" onclick="setCategory('error', this)">⚠️ Errors</div>
         </div>
 
@@ -940,6 +941,7 @@
         if (currentCategory === 'blunder' && !isBlunder) return false;
         if (currentCategory === 'feedback' && log.type !== 'feedback') return false;
         if (currentCategory === 'critical_question' && log.type !== 'critical_question') return false;
+        if (currentCategory === 'chat' && log.type !== 'chat') return false;
         if (currentCategory === 'error' && !isError) return false;
 
         // Theme motif filter
@@ -975,8 +977,8 @@
         const isError = log.status === 'error' || Boolean(log.validation_error);
         const isBlunder = log.classification === 'blunder' || (log.payload && log.payload.classification === 'blunder');
         const typeClass = log.type === 'feedback' ? 'tag-feedback' : 'tag-critical';
-        const typeLabel = log.type === 'feedback' ? 'Feedback' : 'Critical Q';
-        const moveDisplay = log.played_move ? `${log.played_move} (${log.played_move_uci || ''})` : (log.last_opponent_move || 'Move');
+        const typeLabel = log.type === 'chat' ? 'Luna chat' : log.type === 'feedback' ? 'Feedback' : 'Critical Q';
+        const moveDisplay = escapeHtml(log.type === 'chat' ? String(log.payload?.message || 'Chat').slice(0, 90) : log.played_move ? `${log.played_move} (${log.played_move_uci || ''})` : (log.last_opponent_move || 'Move'));
 
         item.innerHTML = `
           <div class="log-item-header">
@@ -1018,7 +1020,7 @@
       const isError = log.status === 'error' || Boolean(log.validation_error);
       const learning = log.learning_record;
       const output = learning || log.final_output || log.parsed || {};
-      const outputLabel = learning ? (learning.shouldCoach ? 'Player Learning Record' : 'Game Evaluation Record') : log.final_output ? 'Accepted Coach Wording' : 'Model Draft';
+      const outputLabel = log.chat_turn ? 'Saved Luna Conversation' : learning ? (learning.shouldCoach ? 'Player Learning Record' : 'Game Evaluation Record') : log.final_output ? 'Accepted Coach Wording' : 'Model Draft';
       const payload = log.payload || {};
       const fen = payload.fen_after || payload.fen || payload.fen_before || '';
 
@@ -1031,7 +1033,7 @@
           <div class="move-hero-left">
             <div class="hero-move-pill">${log.played_move || log.last_opponent_move || 'Move'}</div>
             <div class="hero-title-group">
-              <div class="hero-main-title">${log.type === 'feedback' ? 'Move Coaching Analysis' : 'Socratic Critical Question'}</div>
+              <div class="hero-main-title">${log.type === 'chat' ? 'Conversation with Luna' : log.type === 'feedback' ? 'Move Coaching Analysis' : 'Socratic Critical Question'}</div>
               <div class="hero-sub-text">
                 Game Session: <strong>${log.game_id || (selectedGameId !== 'all' ? selectedGameId : 'Default Game')}</strong> • 
                 Model: <strong>${log.model}</strong> • 
@@ -1054,11 +1056,12 @@
             <div class="card-body">
               ${isError ? `<div style="color:var(--error);margin-bottom:1rem;">Attempt failed: ${escapeHtml(log.validation_error || log.error || 'Empty response')}</div>` : ''}
               <div style="color:var(--text-dim);margin-bottom:1rem;font-size:0.8rem;">
-                ${learning ? `Shared with ${learning.shouldCoach ? 'Learning log and game reports' : 'game reports'} · ${escapeHtml(learning.wordingSource || 'legacy')} wording${learning.explanationPending ? ' · explanation pending' : ''}` : log.outcome === 'rejected' ? 'This draft was superseded or rejected; it was not accepted coaching.' : log.final_output ? 'Validated wording returned by the coach; player review has not been saved yet.' : 'Historical model output; no player learning record was linked.'}
+                ${log.chat_turn ? 'Saved in the same journal as the player conversation and its position snapshot.' : learning ? `Shared with ${learning.shouldCoach ? 'Learning log and game reports' : 'game reports'} · ${escapeHtml(learning.wordingSource || 'legacy')} wording${learning.explanationPending ? ' · explanation pending' : ''}` : log.outcome === 'rejected' ? 'This draft was superseded or rejected; it was not accepted coaching.' : log.final_output ? 'Validated wording returned by the coach; player review has not been saved yet.' : 'Historical model output; no player learning record was linked.'}
               </div>
               <div class="speech-bubble">
                 <div style="font-size:1.1rem;font-weight:800;margin-bottom:0.4rem;color:#fff;">${escapeHtml(output.title || 'Untitled Advice')}</div>
-                <div>${escapeHtml(output.feedback || output.question || 'No coaching text recorded')}</div>
+                ${log.type === 'chat' ? `<div style="margin-bottom:1rem;white-space:pre-wrap"><strong>You:</strong> ${escapeHtml(payload.message || '')}</div>` : ''}
+                <div style="white-space:pre-wrap">${escapeHtml(output.reply || output.feedback || output.question || 'No coaching text recorded')}</div>
               </div>
               ${output.lesson ? `<div class="lesson-box"><span class="lesson-badge">Key Takeaway</span><span>${escapeHtml(output.lesson)}</span></div>` : ''}
               ${Array.isArray(output.themes) && output.themes.length ? `<div class="theme-tags-container">${output.themes.map(theme => `<span class="theme-tag">${escapeHtml(theme)}</span>`).join('')}</div>` : ''}
@@ -1086,6 +1089,7 @@
           </div>
 
           <!-- Raw Output JSON -->
+          ${log.input ? `<div class="card full-col"><div class="card-header"><div class="card-title">Conversation Input Sent to the Model</div></div><div class="card-body"><pre><code>${escapeHtml(JSON.stringify(log.input, null, 2))}</code></pre></div></div>` : ''}
           ${log.final_output ? `<div class="card"><div class="card-header"><div class="card-title">Accepted Wording for This Call</div></div><div class="card-body"><pre><code>${escapeHtml(JSON.stringify(log.final_output, null, 2))}</code></pre></div></div>` : ''}
           <div class="card">
             <div class="card-header">
@@ -1118,7 +1122,7 @@
           </div>
         </div>
       `;
-      view.querySelector('[data-copy="speech"]').onclick = () => copyText(output.feedback || output.question || '');
+      view.querySelector('[data-copy="speech"]').onclick = () => copyText(output.reply || output.feedback || output.question || '');
       view.querySelector('[data-copy="raw"]').onclick = () => copyText(log.raw_output || '');
     }
 
@@ -1184,7 +1188,7 @@
     }
 
     async function clearLogs() {
-      if (!confirm('Clear recorded model attempts? Saved Learning records and game reports will be preserved.')) return;
+      if (!confirm('Clear recorded model attempts? Saved Learning records, game reports, and Luna conversations will be preserved.')) return;
       try {
         const response = await fetch(`${auditApiBase}/api/logs/clear`, { method: 'POST' });
         if (!response.ok) throw new Error('Could not clear model attempts');

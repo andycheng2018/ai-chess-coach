@@ -62,6 +62,23 @@ class CoachHistory:
                     records[record["ply"]] = record
         return sorted(records.values(), key=lambda record: record["ply"])
 
+    def chat_session(self, session_id: str) -> list[dict[str, Any]]:
+        return [entry["turn"] for entry in self.entries()
+                if entry.get("event") == "chat_turn" and entry.get("session_id") == session_id]
+
+    def save_chat_turn(self, session_id: str, turn: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            existing = next((item for item in self.chat_session(session_id)
+                             if item["requestId"] == turn["requestId"]), None)
+            if existing:
+                if (existing["message"], existing["fen"]) != (turn["message"], turn["fen"]):
+                    raise ValueError("This request ID belongs to a different question.")
+                return existing
+            self.append([{"event": "chat_turn", "timestamp": timestamp(),
+                          "session_id": session_id, "game_id": session_id[5:] if session_id.startswith("game:") else session_id,
+                          "record_id": turn["recordId"], "turn": turn}])
+            return turn
+
     def save_records(self, game_id: str, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not game_id:
             raise ValueError("gameId is required")
@@ -113,7 +130,8 @@ class CoachHistory:
         for record in records.values():
             position = (record.get("gameId", ""), record.get("fenBefore", ""), record.get("playedMoveUci", ""))
             positions.setdefault(position, []).append(record)
-        attempts = [entry for entry in entries if entry.get("event") != "learning_record"]
+        chats = {entry["record_id"]: entry for entry in entries if entry.get("event") == "chat_turn"}
+        attempts = [entry for entry in entries if entry.get("event") not in {"learning_record", "chat_turn"}]
         linked = set()
         result = []
         for attempt in attempts:
@@ -129,7 +147,9 @@ class CoachHistory:
                     record = candidates[0]
                     key = (record["gameId"], record["recordId"])
                     attempt = {**attempt, "record_id": record["recordId"], "link_source": "legacy_position"}
-            result.append({**attempt, **({"learning_record": record} if record else {})})
+            chat = chats.pop(attempt.get("record_id"), None)
+            result.append({**attempt, **({"learning_record": record} if record else {}),
+                           **({"chat_turn": chat["turn"]} if chat else {})})
             if record:
                 linked.add(key)
         # Imported notes and engine-only records are reviewable in Audit Studio too.
@@ -151,12 +171,17 @@ class CoachHistory:
                             "best_move": record.get("bestMove"), "best_move_uci": record.get("bestMoveUci"),
                             "classification": record.get("classification"), "best_line": record.get("bestLine", [])},
             })
+        for entry in chats.values():
+            turn = entry["turn"]
+            result.append({**entry, "type": "chat", "status": "success", "chat_turn": turn,
+                           "model": "No recorded model attempt", "final_output": {"reply": turn["reply"]},
+                           "payload": {"fen": turn["fen"], "message": turn["message"]}})
         return sorted(result, key=lambda entry: entry.get("timestamp", ""))
 
     def clear_attempts(self) -> None:
-        """Clearing audit data preserves player review records in the shared journal."""
+        """Clearing model attempts preserves player reviews and conversations."""
         with self.lock:
-            records = [entry for entry in self.entries() if entry.get("event") == "learning_record"]
+            records = [entry for entry in self.entries() if entry.get("event") in {"learning_record", "chat_turn"}]
             self.path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.path.with_suffix(".tmp")
             with temporary.open("w", encoding="utf-8") as stream:
