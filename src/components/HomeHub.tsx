@@ -1,5 +1,6 @@
 import React from 'react';
 import { ChessBoard } from './ChessBoard';
+import type { PlayingGame } from '../lichess';
 
 type LevelItem = {
   id: string;
@@ -34,6 +35,8 @@ type Props = {
   onOpenAnalysis: () => void;
   onOpenSenseSetup: () => void;
   onOpenProfile: () => void;
+  onOpenMenu?: () => void;
+  playingGames?: PlayingGame[];
   onLogin: () => void;
   isLoggedIn: boolean;
 };
@@ -89,6 +92,8 @@ export const HomeHub: React.FC<Props> = ({
   onOpenAnalysis,
   onOpenSenseSetup,
   onOpenProfile,
+  onOpenMenu,
+  playingGames = [],
   onLogin,
   isLoggedIn,
 }) => {
@@ -213,13 +218,32 @@ export const HomeHub: React.FC<Props> = ({
           <div className="live-banner-content">
             <span className="live-pulse" />
             <div>
-              <strong>Training Match In Progress</strong>
-              <span>Your game against {botLabel} is active right now.</span>
+              <strong>
+                {playingGames.length > 1
+                  ? `${playingGames.length} Training Matches in Progress`
+                  : 'Training Match In Progress'}
+              </strong>
+              <span>
+                {playingGames.length > 1
+                  ? `You have ${playingGames.length} active games with ${botLabel}.`
+                  : `Your game against ${botLabel} is active right now.`}
+              </span>
             </div>
           </div>
-          <button type="button" className="primary live-banner-btn" onClick={onEnterArena}>
-            ⚔️ Return to Live Board
-          </button>
+          <div className="live-banner-actions">
+            {playingGames.length > 1 && onOpenMenu && (
+              <button type="button" className="primary live-banner-btn" onClick={onOpenMenu}>
+                🎮 Choose Game ({playingGames.length})
+              </button>
+            )}
+            <button
+              type="button"
+              className={playingGames.length > 1 ? 'ghost live-banner-btn' : 'primary live-banner-btn'}
+              onClick={onEnterArena}
+            >
+              ⚔️ Return to Live Board
+            </button>
+          </div>
         </div>
       )}
 

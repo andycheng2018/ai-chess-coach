@@ -63,6 +63,29 @@ test('corrupt or unavailable browser storage does not crash setup or claim a con
   assert.equal(denied.saveSenseSetup(denied.readSenseSetup()), false);
 });
 
+test('device address storage accepts private IPv4 and normalizes valid MAC addresses', () => {
+  const raw = JSON.stringify({ deviceIp: '192.168.1.24', deviceMac: 'aa-bb-cc-dd-ee-ff' });
+  const { module: setup } = loadModule('senseSetup', { 'ai-chess-coach.senserobot-setup.v1': raw });
+  assert.equal(setup.readSenseSetup().deviceIp, '192.168.1.24');
+  assert.equal(setup.readSenseSetup().deviceMac, 'AA:BB:CC:DD:EE:FF');
+  for (const ip of ['10.0.0.1', '172.16.2.3', '172.31.255.254', '192.168.0.1']) {
+    assert.equal(setup.isPrivateIPv4(ip), true);
+  }
+  for (const ip of ['8.8.8.8', '172.32.0.1', '192.169.0.1', '192.168.1.999', '1.2.3']) {
+    assert.equal(setup.isPrivateIPv4(ip), false);
+  }
+  assert.equal(setup.isNormalizedMacAddress('AA:BB:CC:DD:EE:FF'), true);
+  assert.equal(setup.isNormalizedMacAddress('aa:bb:cc:dd:ee:ff'), false);
+  assert.equal(setup.normalizeMacAddress('aabb.ccdd.eeff'), null);
+});
+
+test('local-storage reads discard invalid device addresses', () => {
+  const raw = JSON.stringify({ deviceIp: '127.0.0.1', deviceMac: 'not-a-mac' });
+  const { module: setup } = loadModule('senseSetup', { 'ai-chess-coach.senserobot-setup.v1': raw });
+  assert.equal(setup.readSenseSetup().deviceIp, '');
+  assert.equal(setup.readSenseSetup().deviceMac, '');
+});
+
 test('scanned and pasted room links preserve the invited bot color', () => {
   const { module: bot } = loadModule('botControl');
   assert.equal(bot.parseSenseRoomUrl(' https://lichess.org/AbCd1234?color=black ').color, 'black');
@@ -72,4 +95,29 @@ test('scanned and pasted room links preserve the invited bot color', () => {
     'https://lichess.org/tooLong123?color=white', 'http://lichess.org/AbCd1234?color=white']) {
     assert.throws(() => bot.parseSenseRoomUrl(url));
   }
+});
+
+test('SenseRobot game-route invitations retain the room ID and requested color', () => {
+  const { module: bot } = loadModule('botControl');
+  const parsed = bot.parseSenseRoomUrl('https://lichess.org/game/AbCd1234?color=black');
+  assert.equal(parsed.challengeId, 'AbCd1234');
+  assert.equal(parsed.color, 'black');
+  assert.equal(bot.parseSenseRoomUrl('https://lichess.org/game/AbCd1234?color=white').color, 'white');
+  for (const url of ['https://lichess.org/game/AbCd1234/extra?color=black',
+    'https://lichess.org/other/AbCd1234?color=black',
+    'https://lichess.org/game/AbCd1234?color=random',
+    'https://lichess.org/game/AbCd1234long?color=black',
+    'https://example.com/game/AbCd1234?color=black']) {
+    assert.throws(() => bot.parseSenseRoomUrl(url));
+  }
+});
+
+test('room URL builder requires a valid challenge ID and explicit bot color', () => {
+  const { module: bot } = loadModule('botControl');
+  assert.equal(bot.buildSenseRoomUrl('AbCd1234', 'black'), 'https://lichess.org/AbCd1234?color=black');
+  const parsed = bot.parseSenseRoomUrl(bot.buildSenseRoomUrl('AbCd1234', 'white'));
+  assert.equal(parsed.challengeId, 'AbCd1234');
+  assert.equal(parsed.color, 'white');
+  assert.throws(() => bot.buildSenseRoomUrl('short', 'white'));
+  assert.throws(() => bot.buildSenseRoomUrl('AbCd1234', undefined));
 });

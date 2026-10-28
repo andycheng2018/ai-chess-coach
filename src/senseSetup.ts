@@ -6,13 +6,36 @@ export type SenseSetupDraft = {
   linkedUsername: string;
   joinedUsername: string;
   joinedGameId: string;
+  deviceIp: string;
+  deviceMac: string;
   level: string;
 };
 
 const emptyDraft: SenseSetupDraft = {
   open: false, networkReady: false, linkedUsername: '',
   joinedUsername: '', joinedGameId: '', level: 'developing',
+  deviceIp: '', deviceMac: '',
 };
+
+export function isPrivateIPv4(value: string): boolean {
+  const parts = value.split('.');
+  if (parts.length !== 4 || parts.some(part => !/^\d{1,3}$/.test(part))) return false;
+  const octets = parts.map(Number);
+  if (octets.some(octet => octet < 0 || octet > 255)) return false;
+  const [a, b] = octets;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+export function normalizeMacAddress(value: string): string | null {
+  if (!/^(?:[0-9a-fA-F]{12}|[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}|[0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})$/.test(value)) return null;
+  const compact = value.replace(/[:-]/g, '');
+  if (!/^[0-9a-fA-F]{12}$/.test(compact)) return null;
+  return compact.toUpperCase().match(/.{2}/g)!.join(':');
+}
+
+export function isNormalizedMacAddress(value: string): boolean {
+  return /^[0-9A-F]{2}(?::[0-9A-F]{2}){5}$/.test(value);
+}
 
 export function readSenseSetup(): SenseSetupDraft {
   try {
@@ -25,6 +48,8 @@ export function readSenseSetup(): SenseSetupDraft {
       joinedUsername: typeof value.joinedUsername === 'string' ? value.joinedUsername : '',
       joinedGameId: typeof value.joinedGameId === 'string' && /^[a-zA-Z0-9]{8}$/.test(value.joinedGameId)
         ? value.joinedGameId : '',
+      deviceIp: typeof value.deviceIp === 'string' && isPrivateIPv4(value.deviceIp) ? value.deviceIp : '',
+      deviceMac: typeof value.deviceMac === 'string' ? normalizeMacAddress(value.deviceMac) || '' : '',
       level: typeof value.level === 'string' ? value.level : emptyDraft.level,
     };
   } catch {

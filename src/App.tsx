@@ -14,6 +14,17 @@ import { HomeHub } from './components/HomeHub';
 import { ProfileModal } from './components/ProfileModal';
 import { MenuModal } from './components/MenuModal';
 import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativeOAuth } from './auth';
+import { notifyVbotMove } from './vbotDemo';
+import { useVbotCompanion } from './useVbotCompanion';
+import { VbotCompanion } from './components/VbotCompanion';
+import { GameQrDialog } from './components/GameQrDialog';
+import { JoinRoomDialog } from './components/JoinRoomDialog';
+import { SenseRobotGameStatus } from './components/SenseRobotGameStatus';
+import { recoverJoinedRoom, requireExactJoinedRoom, requireUnjoinedRoom, readRoomJoinDraft, clearRoomJoinDraft } from './roomJoin';
+import { reconcilePendingMove, resolveMoveFailure, type PendingMoveAttempt } from './pendingMove';
+import { moveLineChanged, shouldApplyBackupSnapshot } from './gameSync';
+import { observeCoachStream, type CoachStreamCursor } from './coachStream';
+import { requireSenseTrainingGame } from './senseRecovery';
 import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import {
   analyzeMove,
@@ -50,6 +61,7 @@ import {
   streamEvents,
   streamGame,
   type Account,
+  type PlayingGame,
   type StreamEvent,
 } from './lichess';
 
@@ -119,7 +131,7 @@ type ClockState = { enabled: boolean; white: number; black: number; increment: n
 type PromotionChoice = 'q' | 'r' | 'b' | 'n';
 type CoachReviewMode = 'better' | 'threat';
 type PendingPromotion = { from: string; to: string; fenBefore: string; basePly: number; choices: PromotionChoice[] };
-type PendingMove = { uci: string; basePly: number };
+type PendingMove = PendingMoveAttempt & { fenBefore: string };
 type Winner = 'white' | 'black' | null;
 type CoachNote =
   CoachResult & {
@@ -1676,13 +1688,27 @@ export default function App() {
   // The backend owns the training bot identity, including after validation.
   const BOT_USERNAME = bot.username || DEFAULT_BOT_USERNAME;
   const [senseSetupOpen, setSenseSetupOpen] = useState(() => readSenseSetup().open);
-  const [gameStreamConnected, setGameStreamConnected] = useState(false);
+  const [gameStreamConnected, setGameStreamConnectedState] = useState(false);
+  const gameStreamConnectedRef = useRef(false);
+  const lastPrimaryMovesRef = useRef<string[] | null>(null);
+  const backupBranchChangedRef = useRef(false);
+  const setGameStreamConnected = useCallback((connected: boolean) => {
+    gameStreamConnectedRef.current = connected;
+    setGameStreamConnectedState(connected);
+  }, []);
   const [senseConnectionError, setSenseConnectionError] = useState('');
   const [startingGame, setStartingGame] = useState(false);
   const [scanningRoom, setScanningRoom] = useState(false);
   const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
+  const [qrGameId, setQrGameId] = useState<string | null>(null);
+  const [roomLinkOpen, setRoomLinkOpen] = useState(() => readRoomJoinDraft() !== null);
+  const [accountCheckError, setAccountCheckError] = useState('');
+  const [accountCheckNonce, setAccountCheckNonce] = useState(0);
+  useEffect(() => { setQrGameId(null); }, [gameId]);
+  const [playingGames, setPlayingGames] = useState<PlayingGame[]>([]);
+  const [refreshingGames, setRefreshingGames] = useState(false);
   // A remembered room is restored only after Lichess confirms that this
   // account and the training bot are the players in that exact joined game.
   const [senseRobotGameId, setSenseRobotGameId] = useState<string | null>(null);
@@ -1702,6 +1728,7 @@ export default function App() {
   const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
   const [moveInFlight, setMoveInFlight] = useState(false);
   const pendingMoveRef = useRef<PendingMove | null>(null);
+  const analyzeConfirmedMoveRef = useRef<(fen: string, uci: string, moves: string[]) => void>(() => {});
   const [endGameConfirm, setEndGameConfirm] = useState(false);
   const [winner, setWinner] = useState<Winner>(null);
   const [gameOverOpen, setGameOverOpen] = useState(false);
@@ -1790,7 +1817,6 @@ export default function App() {
   const coachQueueRef = useRef<CoachJob[]>([]);
   const latestCoachJobIdRef = useRef(0);
   const coachProcessingRef = useRef(false);
-  const observedCoachPlyRef = useRef<number | null>(null);
   const goodMoveRunRef = useRef(0);
   const lastMistakePlyRef = useRef<number | null>(null);
   const lastPraisePlyRef = useRef<number | null>(null);
@@ -1854,12 +1880,23 @@ export default function App() {
   const canMove =
     !isSenseRobotGame &&
     historyPly == null &&
+    gameStreamConnected &&
     isMyTurn &&
     !moveInFlight &&
     !pendingPromotion;
 
   const isCoachGame = players.white.name.toLowerCase() === BOT_USERNAME.toLowerCase()
     || players.black.name.toLowerCase() === BOT_USERNAME.toLowerCase();
+  // The companion backend independently verifies its canonical bot stream before
+  // binding/dispatch. A reconnecting browser board must not require a second desk.
+  const vbotCanArm = Boolean(account && activeGame && isCoachGame);
+  const vbotBlockReason = !account ? 'Sign in to Lichess to connect VBOT to your training game.'
+    : !gameId ? 'Start or resume a training match to enable reactions.'
+    : !activeGame ? 'Reactions are available during an active match.'
+    : !isCoachGame ? 'Choose a game against your training bot to enable reactions.' : '';
+  const vbotEnded = Boolean(gameId && !['idle', 'recovering', 'created', 'started'].includes(gameStatus));
+  const vbotCompanion = useVbotCompanion({ gameId, playerColor: myColor,
+    resolved: recoveryChecked, ended: vbotEnded, canArm: vbotCanArm });
   const coachArrows: Arrow[] = useMemo(() => {
     if (!hintsEnabled || !coachResult) return [];
     // A best-move arrow belongs to the position *before* the student's move,
@@ -1885,6 +1922,37 @@ export default function App() {
     setGameId(nextGameId);
     storeActiveGame(nextGameId, account?.username);
   }, [account?.username]);
+
+  const refreshPlayingGames = useCallback(async () => {
+    if (!token) {
+      setPlayingGames([]);
+      return [];
+    }
+    setRefreshingGames(true);
+    try {
+      const games = await getPlayingGames(token);
+      setPlayingGames(games);
+      return games;
+    } catch (error) {
+      console.warn('Could not refresh active games:', error);
+      return [];
+    } finally {
+      setRefreshingGames(false);
+    }
+  }, [token]);
+
+  const handleSelectGame = useCallback((selectedGameId: string) => {
+    const changedGame = gameIdRef.current !== selectedGameId;
+    if (changedGame) {
+      setActiveGameId(selectedGameId);
+      setGameStatus('recovering');
+    }
+    setCurrentView('arena');
+    setMenuModalOpen(false);
+    setStatus(changedGame ? `Switched to match ${selectedGameId}.` : `Showing match ${selectedGameId}.`);
+    // Selection only changes the chess view. The companion owns explicit arming
+    // and scoped disarming; never race it with a second, implicit /arm request.
+  }, [setActiveGameId]);
 
   useEffect(() => { gameIdRef.current = gameId; }, [gameId]);
   useEffect(() => {
@@ -2108,16 +2176,28 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!token) { setAccount(null); return; }
+    if (!token) { setAccount(null); setAccountCheckError(''); return; }
+    let cancelled = false;
+    setAccountCheckError('');
+    setAccount(null);
     getAccount(token)
-      .then(setAccount)
+      .then(next => { if (!cancelled && getToken() === token) setAccount(next); })
       .catch((error) => {
+        if (cancelled || getToken() !== token) return;
         setStatus(`Lichess account error: ${String(error)}`);
-        setSenseConnectionError(`Could not confirm your Lichess account: ${String(error)}. Please sign in again.`);
-        logout();
-        setToken(null);
+        setSenseConnectionError('Could not confirm your Lichess account. Retry the account check.');
+        // Network failures, 429s and server outages do not invalidate a login.
+        if (error instanceof LichessHttpError && error.status === 401) {
+          logout(); setToken(null);
+        } else {
+          const detail = error instanceof LichessHttpError
+            ? `Lichess account check failed (HTTP ${error.status}).`
+            : 'Could not reach Lichess to check your account.';
+          setAccountCheckError(`${detail} Your sign-in is preserved; retry the account check.`);
+        }
       });
-  }, [token]);
+    return () => { cancelled = true; };
+  }, [token, accountCheckNonce]);
 
   useEffect(() => {
     if (!token || !account) {
@@ -2143,6 +2223,7 @@ export default function App() {
     }
 
     getPlayingGames(token).then((games) => {
+      setPlayingGames(games);
       if (cancelled || gameIdRef.current) return;
       const coachGame = games.find((game) => game.opponent?.username?.toLowerCase() === BOT_USERNAME.toLowerCase());
       if (coachGame?.gameId) {
@@ -2173,45 +2254,57 @@ export default function App() {
       if (alive) setBot({ running: false, connected: false, error: String(error) });
     });
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
+    void refreshPlayingGames();
+    const timer = window.setInterval(() => {
+      void refresh();
+      void refreshPlayingGames();
+    }, 3000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [token, account]);
+  }, [token, account, refreshPlayingGames]);
 
   useEffect(() => {
     if (!token || !account) return;
     const controller = new AbortController();
     void retryingStream(
       (signal) => streamEvents(token, (event: StreamEvent) => {
-        if (event.type === 'gameStart' && event.game) {
-          const opponent = event.game.opponent?.username?.toLowerCase();
-          if (opponent === BOT_USERNAME.toLowerCase()) {
-            // A normal Lichess gameStart must stay a normal online game.
-            // Preserve SenseRobot mode only when this is the exact game
-            // that was activated by a successful room join.
-            const startedGameId = event.game.id;
+        if (event.type === 'gameStart') {
+          void refreshPlayingGames();
+          if (event.game) {
+            const opponent = event.game.opponent?.username?.toLowerCase();
+            if (opponent === BOT_USERNAME.toLowerCase() && !gameIdRef.current) {
+              // Reconnecting can replay starts for other active games. Never
+              // steal an explicitly selected room or reset its already-live stream.
+              // A normal Lichess gameStart must stay a normal online game.
+              // Preserve SenseRobot mode only when this is the exact game
+              // that was activated by a successful room join.
+              const startedGameId = event.game.id;
 
-            setSenseRobotGameId((current) =>
-              current === startedGameId ? current : null
-            );
-            setActiveGameId(event.game.id);
-            setGameStatus('recovering');
-            setStatus(`Game started against ${BOT_USERNAME}.`);
+              setSenseRobotGameId((current) =>
+                current === startedGameId ? current : null
+              );
+              setActiveGameId(event.game.id);
+              setGameStatus('recovering');
+              setStatus(`Game started against ${BOT_USERNAME}.`);
+            }
           }
         }
-        if (event.type === 'gameFinish' && event.game?.id === gameIdRef.current) {
-          forgetStoredGame();
-          pendingMoveRef.current = null;
-          setMoveInFlight(false);
-          // The per-game stream carries the authoritative terminal status and
-          // winner. Do not overwrite it with a generic "finished" value.
-          setStatus('Training game finished. Finalizing your result…');
+        if (event.type === 'gameFinish') {
+          void refreshPlayingGames();
+          if (event.game?.id === gameIdRef.current) {
+            forgetStoredGame();
+            pendingMoveRef.current = null;
+            setMoveInFlight(false);
+            // The per-game stream carries the authoritative terminal status and
+            // winner. Do not overwrite it with a generic "finished" value.
+            setStatus('Training game finished. Finalizing your result…');
+          }
         }
       }, signal),
       controller.signal,
       () => setStatus('Reconnecting to Lichess…'),
     );
     return () => controller.abort();
-  }, [token, account, setActiveGameId, BOT_USERNAME]);
+  }, [token, account, setActiveGameId, BOT_USERNAME, refreshPlayingGames]);
 
   useEffect(() => {
     if (!token || !gameId || !account) return;
@@ -2221,11 +2314,12 @@ export default function App() {
       const pendingMove = pendingMoveRef.current;
       if (!pendingMove) return;
       const moves = nextMovesText.trim() ? nextMovesText.trim().split(/\s+/) : [];
-      if (moves.length <= pendingMove.basePly) return;
+      const result = reconcilePendingMove(pendingMove, moves);
+      if (result.outcome === 'waiting') return;
 
       pendingMoveRef.current = null;
       setMoveInFlight(false);
-      if (moves[pendingMove.basePly] === pendingMove.uci) {
+      if (result.outcome === 'confirmed') {
         setStatus('Move played.');
       } else {
         setRollbackSignal((value) => value + 1);
@@ -2233,7 +2327,30 @@ export default function App() {
       }
     };
 
-    const applyState = (state: any, clockEnabled?: boolean) => {
+    let coachCursor: CoachStreamCursor | null = null;
+    let coachIdentity: { playerColor: 'white' | 'black'; initialFen: string } | null = null;
+    const observeConfirmedMoves = (moves: string[], status: string, resync: boolean) => {
+      if (!coachIdentity) return;
+      const observation = observeCoachStream(coachCursor, {
+        gameId, account: account.username, ...coachIdentity, moves, status, resync,
+      });
+      coachCursor = observation.cursor;
+      if (observation.invalidated) {
+        // Never let analysis from an old branch/reconnect reach speech or VBOT.
+        latestCoachJobIdRef.current += 1;
+        coachAbortRef.current?.abort();
+        coachQueueRef.current = [];
+        setPlayerMoveAnalysisPending(false);
+        setCoachExplanationPending(false);
+        stopCoachSpeech();
+      }
+      if (observation.move) {
+        const { fenBefore, uci, moves: confirmedMoves } = observation.move;
+        analyzeConfirmedMoveRef.current(fenBefore, uci, confirmedMoves);
+      }
+    };
+
+    const applyState = (state: any, clockEnabled?: boolean, resync = false) => {
       const nextMoves = String(state?.moves || '');
       const nextStatus = String(state?.status || 'started');
       const nextWinner: Winner =
@@ -2241,14 +2358,24 @@ export default function App() {
           ? state.winner
           : null;
 
-      // Keep the synchronous ref in lockstep with the
-      // authoritative Lichess stream.
+      const nextMoveList = nextMoves.trim() ? nextMoves.trim().split(/\s+/) : [];
+      if (lastPrimaryMovesRef.current && moveLineChanged(lastPrimaryMovesRef.current, nextMoveList)) {
+        // After a takeback/branch change, only the primary stream may recover
+        // this game's board. An older cached line could extend the rewound prefix.
+        backupBranchChangedRef.current = true;
+      }
+      lastPrimaryMovesRef.current = nextMoveList;
+      // Keep the synchronous ref in lockstep with the authoritative stream.
       movesTextRef.current = nextMoves;
       setMovesText(nextMoves);
       setGameStatus(nextStatus);
       if (nextWinner) setWinner(nextWinner);
       syncPendingMove(nextMoves);
+      // One trigger for Mac, SenseRobot and other-client moves. The backup
+      // cache only paints the board; it cannot dispatch coaching or motion.
+      observeConfirmedMoves(nextMoveList, nextStatus, resync);
       if (nextStatus !== 'started' && nextStatus !== 'created') {
+        setGameStreamConnected(false);
         forgetStoredGame();
         pendingMoveRef.current = null;
         setMoveInFlight(false);
@@ -2272,6 +2399,7 @@ export default function App() {
     };
 
     const onGameEvent = (event: any) => {
+      if (controller.signal.aborted || gameIdRef.current !== gameId) return;
       if (event.type === 'gameFull') {
         const whiteName = String(event.white?.name || event.white?.id || 'White');
         const blackName = String(event.black?.name || event.black?.id || 'Black');
@@ -2298,6 +2426,8 @@ export default function App() {
           setSenseRobotGameId(null);
           if (remembered) setSenseConnectionError('This game has a different opponent. Finish it and create a new room for the training bot.');
         }
+        coachIdentity = opponent.toLowerCase() === BOT_USERNAME.toLowerCase()
+          ? { playerColor: color, initialFen: event.initialFen || 'startpos' } : null;
         setGameStreamConnected(true);
         setPlayers({
           white: { name: whiteName, rating: event.white?.rating, title: event.white?.title },
@@ -2308,7 +2438,7 @@ export default function App() {
         setInitialFen(event.initialFen || 'startpos');
         setCurrentTimeControlLabel(formatTimeControl(event.clock));
         storeActiveGame(gameId, account.username);
-        applyState(event.state || {}, Boolean(event.clock));
+        applyState(event.state || {}, Boolean(event.clock), true);
         setRecoveryChecked(true);
         if ((event.state?.status || 'started') === 'started' || (event.state?.status || 'started') === 'created') {
           setStatus('Training game connected.');
@@ -2358,7 +2488,7 @@ export default function App() {
     let requestInFlight = false;
 
     const syncFromBotBackend = async () => {
-      if (requestInFlight || cancelled) return;
+      if (requestInFlight || cancelled || gameStreamConnectedRef.current) return;
 
       requestInFlight = true;
 
@@ -2384,14 +2514,14 @@ export default function App() {
           ? currentMoves.split(/\s+/)
           : [];
 
-        // The normal Lichess stream remains the primary source.
-        //
-        // Only use Render when its cached game has MORE moves
-        // than the iPhone currently knows about.
-        if (
-          cachedMoveList.length >
-          currentMoveList.length
-        ) {
+        // Fill a disconnected stream only with a fresh extension of this exact
+        // line. A backup must never overwrite a live stream or a takeback branch.
+        if (shouldApplyBackupSnapshot({
+          primaryConnected: gameStreamConnectedRef.current,
+          branchChanged: backupBranchChangedRef.current,
+          gameId, cachedGameId: cached.gameId, updatedAt: cached.updatedAt, now: Date.now(),
+          currentMoves: currentMoveList, cachedMoves: cachedMoveList,
+        })) {
           movesTextRef.current = cachedMoves;
           setMovesText(cachedMoves);
 
@@ -2431,23 +2561,9 @@ export default function App() {
             updatedAt: Date.now(),
           }));
 
-          // If our own move was waiting for confirmation,
-          // the cached state can also confirm it.
-          const pendingMove =
-            pendingMoveRef.current;
-
-          if (
-            pendingMove &&
-            cachedMoveList.length >
-            pendingMove.basePly
-          ) {
-            pendingMoveRef.current = null;
-            setMoveInFlight(false);
-          }
-
-          setStatus(
-            'Game resynced automatically.',
-          );
+          // The secondary cache cannot confirm or reject a pending submission.
+          // The authoritative game stream reconciles it when it reconnects.
+          setStatus('Board updated from the coach server · reconnecting to Lichess…');
         }
       } catch (error) {
         // Do not interrupt the game just because the backup
@@ -2465,7 +2581,7 @@ export default function App() {
     // Check once immediately.
     void syncFromBotBackend();
 
-    // Then use Render as a lightweight safety net.
+    // The backend cache is a safety net while the primary stream reconnects.
     const timer = window.setInterval(
       () => void syncFromBotBackend(),
       1500,
@@ -2478,11 +2594,12 @@ export default function App() {
   }, [gameId]);
 
   useEffect(() => {
+    lastPrimaryMovesRef.current = null;
+    backupBranchChangedRef.current = false;
     coachAbortRef.current?.abort();
     coachQueueRef.current = [];
     latestCoachJobIdRef.current += 1;
     coachProcessingRef.current = false;
-    observedCoachPlyRef.current = null;
     goodMoveRunRef.current = 0;
     lastMistakePlyRef.current = null;
     lastPraisePlyRef.current = null;
@@ -2752,6 +2869,10 @@ export default function App() {
           }
 
           const analysisGameId = gameId;
+
+          // This is the accepted live player's result, after the stale-game/job guard.
+          // The backend independently checks its engine record against the Lichess stream.
+          if (gameId) void notifyVbotMove(result, gameId, myColor);
 
           setMoveEvaluations((current) => {
             const next = [
@@ -3301,98 +3422,8 @@ export default function App() {
     ],
   );
   useEffect(() => {
-    // Normal phone games use the exact local pre-move FEN captured when the
-    // player makes the move. Only SenseRobot games need stream-observed
-    // coaching because the move is made on the physical board.
-    if (!gameId || !isCoachGame || !isSenseRobotGame) {
-      observedCoachPlyRef.current = null;
-      return;
-    }
-
-    const moves = movesText.trim()
-      ? movesText.trim().split(/\s+/)
-      : [];
-
-    const currentPly = moves.length;
-
-    // First observation after connecting/reconnecting.
-    //
-    // Don't suddenly analyze every historical move from
-    // a game that was already in progress.
-    if (observedCoachPlyRef.current == null) {
-      observedCoachPlyRef.current = currentPly;
-      return;
-    }
-
-    const previousPly = observedCoachPlyRef.current;
-
-    if (currentPly <= previousPly) {
-      observedCoachPlyRef.current = currentPly;
-      return;
-    }
-
-    // Mark these moves as observed before starting analysis
-    // so React updates/re-renders cannot analyze them twice.
-    observedCoachPlyRef.current = currentPly;
-
-    let latestStudentMoveIndex = -1;
-
-    // Look only at NEW moves.
-    //
-    // Array index 0 = ply 1 = White
-    // Array index 1 = ply 2 = Black
-    // etc.
-    for (
-      let moveIndex = previousPly;
-      moveIndex < currentPly;
-      moveIndex += 1
-    ) {
-      const moverColor: 'white' | 'black' =
-        moveIndex % 2 === 0
-          ? 'white'
-          : 'black';
-
-      if (moverColor === myColor) {
-        latestStudentMoveIndex = moveIndex;
-      }
-    }
-
-    // The only new move(s) were made by the bot.
-    if (latestStudentMoveIndex < 0) {
-      return;
-    }
-
-    const uci = moves[latestStudentMoveIndex];
-
-    if (!uci) {
-      return;
-    }
-
-    // Rebuild the exact board immediately BEFORE
-    // the student's move.
-    const movesBeforeStudentMove = moves
-      .slice(0, latestStudentMoveIndex)
-      .join(' ');
-
-    const beforePosition = replay(
-      initialFen,
-      movesBeforeStudentMove,
-    );
-
-    analyzeStudentMove(
-      beforePosition.chess.fen(),
-      uci,
-      moves.slice(0, latestStudentMoveIndex + 1),
-    );
-  }, [
-    gameId,
-    movesText,
-    initialFen,
-    myColor,
-    isCoachGame,
-    isSenseRobotGame,
-    analyzeStudentMove,
-  ]);
+    analyzeConfirmedMoveRef.current = analyzeStudentMove;
+  }, [analyzeStudentMove]);
 
   const submitMove = useCallback(async (
     fenBefore: string,
@@ -3414,7 +3445,16 @@ export default function App() {
     criticalQuestionAbortRef.current?.abort();
 
     setPendingPromotion(null);
-    pendingMoveRef.current = { uci, basePly };
+    const movesBefore = movesTextRef.current.trim() ? movesTextRef.current.trim().split(/\s+/) : [];
+    const displayedMoves = moveListIncluding(movesText);
+    if (movesBefore.length !== basePly || movesBefore.some((move, index) => move !== displayedMoves[index])) {
+      setPlayerMoveAnalysisPending(false);
+      setRollbackSignal((value) => value + 1);
+      setStatus('The board changed. Wait for it to sync, then try your move again.');
+      return;
+    }
+    const attempt = { uci, basePly, movesBefore, fenBefore };
+    pendingMoveRef.current = attempt;
     setMoveInFlight(true);
     setStatus('Sending move…');
     try {
@@ -3422,27 +3462,27 @@ export default function App() {
       // The game stream is authoritative. Keep the board locked until that
       // stream confirms this exact move, so a fast bot reply cannot leave the
       // frontend one ply behind or allow a second move from a stale position.
-      if (pendingMoveRef.current?.uci === uci) {
+      if (pendingMoveRef.current === attempt) {
         setStatus('Move accepted — syncing board…');
       }
-
-      // Restore the earlier, more reliable coaching path for normal games:
-      // analyze the exact board position that existed when the move was made.
-      analyzeStudentMove(
-        fenBefore,
-        uci,
-        moveListIncluding(movesText, uci),
-      );
+      // The primary stream starts coaching once, regardless of the input device.
     } catch (error) {
-      if (pendingMoveRef.current?.uci === uci) {
-        pendingMoveRef.current = null;
-        setMoveInFlight(false);
-      }
+      // A stream confirmation, rewind, or game change may have already resolved
+      // this exact attempt. Its late HTTP reply must not alter the new position.
+      const resolution = resolveMoveFailure(pendingMoveRef.current, attempt,
+        error instanceof LichessHttpError ? error.status : undefined);
+      if (resolution === 'ignore') return;
       setPlayerMoveAnalysisPending(false);
+      if (resolution === 'wait') {
+        setStatus('Move response interrupted — waiting for Lichess confirmation. Do not resend the move.');
+        return;
+      }
+      pendingMoveRef.current = null;
+      setMoveInFlight(false);
       setRollbackSignal((value) => value + 1);
-      setStatus(`Move failed: ${String(error)}`);
+      setStatus(`Move rejected: ${String(error)}`);
     }
-  }, [token, gameId, activeGame, analyzeStudentMove, movesText]);
+  }, [token, gameId, activeGame, movesText]);
 
   useEffect(() => {
     if (!gameId || !isCoachGame) {
@@ -3658,39 +3698,95 @@ export default function App() {
     }
   }
 
-  async function connectSenseRobotRoom(roomUrl?: string): Promise<string> {
+  async function connectSenseRobotRoom(roomUrl?: string, allowGameSwitch = false): Promise<string> {
     if (!account || !token) throw new Error('Sign in with your robot’s Lichess account first.');
-    if (scanningRoom || startingGame || activeGame || gameId || !recoveryChecked) {
+    if (scanningRoom || startingGame || (!allowGameSwitch && (activeGame || gameId)) || !recoveryChecked) {
       throw new Error('Wait for the current game check, or finish your open game first.');
     }
+    const originGame = gameIdRef.current;
     setScanningRoom(true);
     setSenseConnectionError('');
     try {
       setStatus(roomUrl ? 'Checking room link…' : 'Scan the SenseRobot game-room QR…');
       const room = parseSenseRoomUrl(roomUrl ?? await scanSenseRoomUrl());
-      setStatus('Preparing coach bot…');
-      let state = await setBotLevel(level);
-      setBot(state);
-      if (!state.running) { state = await startBot(); setBot(state); }
-      if (!state.connected) { state = await waitForBotReady(); setBot(state); }
-      setStatus('Joining your SenseRobot room…');
-      const joined = await joinSenseRoom(room.challengeId, room.color, account.username);
-      setBot(joined);
-      if (!joined.gameId) throw new Error('Lichess has not reported a game for this room yet.');
+      // Recover this exact accepted room before attempting another acceptance.
+      const games = await getPlayingGames(token);
+      const existing = recoverJoinedRoom(room, BOT_USERNAME, games);
+      let joinedGameId: string;
+      if (existing) {
+        joinedGameId = existing;
+      } else {
+        // A different browser account may be trying to accept an invitation
+        // that has already become a game. Recover the player's seat, never POST again.
+        requireUnjoinedRoom(room, await getCachedGameState(room.challengeId), account.username);
+        setStatus('Preparing coach bot…');
+        let state = await setBotLevel(level);
+        setBot(state);
+        if (!state.running) { state = await startBot(); setBot(state); }
+        if (!state.connected) { state = await waitForBotReady(); setBot(state); }
+        if (getToken() !== token) throw new Error('The Lichess account changed. Check the linked account before joining.');
+        setStatus('Joining your SenseRobot room…');
+        const joined = await joinSenseRoom(room.challengeId, room.color, account.username);
+        setBot(joined);
+        joinedGameId = requireExactJoinedRoom(room.challengeId, joined.gameId);
+      }
+      if (getToken() !== token || (gameIdRef.current !== originGame && gameIdRef.current !== joinedGameId)) {
+        throw new Error('The account or selected game changed during the join. Reopen this exact room to recover it; no acceptance is retried automatically.');
+      }
       // Save the successful join before attaching the game stream. A redirect
       // or refresh may resume this exact room, but never an unrelated game.
-      saveSenseSetup({ ...readSenseSetup(), open: true, joinedGameId: joined.gameId,
+      saveSenseSetup({ ...readSenseSetup(), open: true, joinedGameId,
         joinedUsername: account.username, level });
-      setGameStreamConnected(false);
-      setSenseRobotGameId(joined.gameId);
-      setActiveGameId(joined.gameId);
-      setGameStatus('recovering');
-      setStatus(`Room joined. Waiting for ${account.username} and ${joined.username || BOT_USERNAME} to sync…`);
-      return joined.gameId;
+      setSenseRobotGameId(joinedGameId);
+      if (gameIdRef.current !== joinedGameId) {
+        setGameStreamConnected(false);
+        setActiveGameId(joinedGameId);
+        setGameStatus('recovering');
+        setStatus(`Room joined. Waiting for ${account.username} and ${BOT_USERNAME} to sync…`);
+      } else {
+        // Rebinding the same ID would not restart its effect; preserve its live stream.
+        setStatus('This exact room is already connected. Confirm SenseRobot shows the same game.');
+      }
+      return joinedGameId;
     } catch (error) {
       setStatus(`Could not join SenseRobot room: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     } finally { setScanningRoom(false); }
+  }
+
+  async function useExistingSenseRobotGame(): Promise<string> {
+    const selectedGame = gameId;
+    const selectedLine = movesTextRef.current;
+    const setup = readSenseSetup();
+    if (!token || !account || !selectedGame || !activeGame || !isCoachGame || !gameStreamConnected ||
+        !setup.networkReady || setup.linkedUsername.toLowerCase() !== account.username.toLowerCase()) {
+      throw new Error('Confirm the board’s Wi-Fi and matching Lichess account, then reconnect the training game.');
+    }
+    const games = await getPlayingGames(token);
+    requireSenseTrainingGame(selectedGame, BOT_USERNAME, games);
+    if (gameIdRef.current !== selectedGame || getToken() !== token ||
+        !gameStreamConnectedRef.current || movesTextRef.current !== selectedLine) {
+      throw new Error('The game, position, or account changed. Check the physical pieces and confirm again.');
+    }
+    saveSenseSetup({ ...readSenseSetup(), joinedGameId: selectedGame,
+      joinedUsername: account.username, level, open: true });
+    setSenseRobotGameId(selectedGame);
+    setSenseConnectionError('');
+    setStatus('Using the verified training game with SenseRobot. Confirm physical moves match the board.');
+    return selectedGame;
+  }
+
+  function useScreenForCurrentGame() {
+    if (!gameId || !account || !activeGame || !isCoachGame || !gameStreamConnected) return;
+    const setup = readSenseSetup();
+    const saved = saveSenseSetup({ ...setup, open: false,
+      ...(setup.joinedGameId === gameId ? { joinedGameId: '', joinedUsername: '' } : {}) });
+    setSenseRobotGameId(null);
+    setSenseConnectionError('');
+    setSenseSetupOpen(false);
+    setCurrentView('arena');
+    setStatus(saved ? 'Continue this game on-screen. Match the physical pieces before switching back to SenseRobot.'
+      : 'On-screen input is active for this tab. Browser storage is unavailable, so this choice was not saved.');
   }
 
   function requestTakeback() {
@@ -3791,9 +3887,11 @@ export default function App() {
     onLevel={next => { if (LEVELS.some(item => item.id === next)) void changeLevel(next as typeof level); }}
     onLogin={async () => { setSenseConnectionError(''); await loginWithLichess(); }} onJoin={connectSenseRobotRoom}
     onRetryBot={async () => { setBot(await startBot()); }}
-    gameId={gameId} verified={isSenseRobotGame && isCoachGame && gameStreamConnected && Boolean(account)}
+    canUseExistingGame={Boolean(gameId && account && activeGame && isCoachGame && gameStreamConnected && recoveryChecked)}
+    onUseExistingGame={useExistingSenseRobotGame} onUseScreen={useScreenForCurrentGame}
+    gameId={gameId} verified={activeGame && isSenseRobotGame && isCoachGame && gameStreamConnected && Boolean(account)}
     busy={scanningRoom || startingGame} recoveryChecked={recoveryChecked}
-    moves={position.plyCount} connectionMessage={status}
+    moves={position.plyCount} positionKey={movesText} connectionMessage={status}
     connectionError={senseConnectionError}
     signingIn={Boolean(token && !account)}
   />;
@@ -4241,21 +4339,29 @@ export default function App() {
       username={account?.username}
       botConnected={Boolean(bot.connected)}
       botLabel={botLabel}
-      hasActiveGame={Boolean(activeGame || gameId)}
+      hasActiveGame={Boolean(activeGame || gameId || playingGames.length > 0)}
       onLogout={() => { logout(); setToken(null); }}
+      playingGames={playingGames}
+      activeGameId={gameId}
+      onSelectGame={handleSelectGame}
+      onRefreshGames={refreshPlayingGames}
+      refreshingGames={refreshingGames}
     />
 
     <NavBar
       currentView={currentView}
       onSelectView={(view) => {
         if (view === 'profile') setProfileModalOpen(true);
-        else if (view === 'menu') setMenuModalOpen(true);
+        else if (view === 'menu') {
+          void refreshPlayingGames();
+          setMenuModalOpen(true);
+        }
         else setCurrentView(view);
       }}
       username={account?.username}
       botConnected={Boolean(bot.connected)}
       botLabel={botLabel}
-      hasActiveGame={Boolean(activeGame || gameId)}
+      hasActiveGame={Boolean(activeGame || gameId || playingGames.length > 0)}
       onOpenAnalysis={openAnalysis}
       onOpenSenseSetup={() => setSenseSetupOpen(true)}
       onLogout={() => { logout(); setToken(null); }}
@@ -4266,17 +4372,23 @@ export default function App() {
       currentView={currentView}
       onSelectView={(view) => {
         if (view === 'profile') setProfileModalOpen(true);
-        else if (view === 'menu') setMenuModalOpen(true);
+        else if (view === 'menu') {
+          void refreshPlayingGames();
+          setMenuModalOpen(true);
+        }
         else setCurrentView(view);
       }}
       username={account?.username}
       botConnected={Boolean(bot.connected)}
       botLabel={botLabel}
-      hasActiveGame={Boolean(activeGame || gameId)}
+      hasActiveGame={Boolean(activeGame || gameId || playingGames.length > 0)}
       onOpenAnalysis={openAnalysis}
       onOpenSenseSetup={() => setSenseSetupOpen(true)}
       onOpenProfile={() => setProfileModalOpen(true)}
-      onOpenMenu={() => setMenuModalOpen(true)}
+      onOpenMenu={() => {
+        void refreshPlayingGames();
+        setMenuModalOpen(true);
+      }}
       navHidden={navHidden}
     />
 
@@ -4296,17 +4408,70 @@ export default function App() {
         onStartGame={() => void startCoachGame()}
         startingGame={startingGame}
         recoveryChecked={recoveryChecked}
-        hasActiveGame={Boolean(activeGame || gameId)}
+        hasActiveGame={Boolean(activeGame || gameId || playingGames.length > 0)}
         onEnterArena={() => setCurrentView('arena')}
         onOpenAnalysis={openAnalysis}
         onOpenSenseSetup={() => setSenseSetupOpen(true)}
         onOpenProfile={() => setProfileModalOpen(true)}
+        onOpenMenu={() => {
+          void refreshPlayingGames();
+          setMenuModalOpen(true);
+        }}
+        playingGames={playingGames}
         onLogin={() => void loginWithLichess().catch((error) => setStatus(String(error)))}
         isLoggedIn={Boolean(token)}
       />
     ) : (
       <main className="arena-layout">
       <section className="match-arena-window">
+        <button type="button" className="vbot-shortcut" onClick={() => document.getElementById('vbot-companion')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+          <span>🐾 VBOT companion</span><strong>{vbotCompanion.offline ? 'Unavailable' : vbotCompanion.status?.armed && vbotCompanion.status.gameId === gameId ? vbotCompanion.status.mode === 'live' ? 'Live reactions' : 'Preview only' : 'Off · connect robot'} →</strong>
+        </button>
+        {/* Arena top navigation bar with back button */}
+        <div className="arena-header-bar">
+          <button
+            type="button"
+            className="arena-back-btn"
+            onClick={() => {
+              void refreshPlayingGames();
+              setMenuModalOpen(true);
+            }}
+            title="Go to menu to see all live games"
+          >
+            <span className="back-icon">←</span>
+            <span>All Live Games & Menu</span>
+            {playingGames.length > 0 && (
+              <span className="arena-live-count-badge">
+                {playingGames.length}
+              </span>
+            )}
+          </button>
+
+          <div className="arena-header-meta">
+            <button type="button" className="ghost" disabled={scanningRoom || startingGame} onClick={() => setRoomLinkOpen(true)}>Join room link</button>
+            {gameId && <button type="button" className="ghost" disabled={gameStatus === 'recovering' || !account || players[myColor].name.toLowerCase() !== account.username.toLowerCase()} onClick={() => setQrGameId(gameId)}>Show game QR</button>}
+            {gameId && (
+              <span className="arena-game-id-badge">
+                Match: <strong>{gameId}</strong>
+              </span>
+            )}
+            {playingGames.length > 1 && (
+              <button
+                type="button"
+                className="arena-switch-game-btn"
+                onClick={() => {
+                  void refreshPlayingGames();
+                  setMenuModalOpen(true);
+                }}
+              >
+                Switch Game ({playingGames.length}) ▾
+              </button>
+            )}
+          </div>
+        </div>
+
+        {gameId && account && isSenseRobotGame && <SenseRobotGameStatus key={`${gameId}-${account.username}`} gameId={gameId} username={account.username} playerColor={myColor} moves={movesText} san={position.san} connected={gameStreamConnected} />}
+
         <PlayerBar player={players[topSide]} clock={displayedClock[topSide]} active={activeGame && turnColor === topSide} side={topSide} />
         <section className="board-panel">
           <ChessBoard
@@ -4406,6 +4571,8 @@ export default function App() {
           </button>
         </section>}
 
+        <VbotCompanion control={vbotCompanion} gameId={gameId} canArm={vbotCanArm} ended={vbotEnded} blockedReason={vbotBlockReason} />
+
         {gameId && <section className="card game-card">
           <div className="active-game-banner">
             <div>
@@ -4415,7 +4582,7 @@ export default function App() {
             </div>
             <div className="active-game-chips">
               <span>{currentTimeControlLabel}</span>
-              <span>{isSenseRobotGame ? 'SenseRobot' : 'Phone'}</span>
+              <span>{isSenseRobotGame ? 'SenseRobot' : 'On-screen'}</span>
             </div>
           </div>
           <div className="game-toolbar">
@@ -5209,6 +5376,13 @@ export default function App() {
         </div>
       </div>
     )}
+
+    {roomLinkOpen && <JoinRoomDialog username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)}
+      onLogin={loginWithLichess} authChecking={Boolean(token && !account && !accountCheckError)} authError={accountCheckError}
+      onRetryAccount={() => setAccountCheckNonce(value => value + 1)}
+      onClose={() => { clearRoomJoinDraft(); setRoomLinkOpen(false); }} />}
+
+    {qrGameId && qrGameId === gameId && <GameQrDialog key={`${gameId}-${myColor}`} gameId={gameId} playerColor={myColor} username={account?.username} ended={vbotEnded} onJoinRoom={() => { setQrGameId(null); setRoomLinkOpen(true); }} onClose={() => setQrGameId(null)} />}
 
     {endGameConfirm && gameId && activeGame && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm end game" onMouseDown={(event) => { if (event.target === event.currentTarget) setEndGameConfirm(false); }}>
       <div className="confirm-modal">

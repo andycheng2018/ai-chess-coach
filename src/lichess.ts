@@ -5,16 +5,23 @@ export type Challenge = {
   destUser?: { name?: string; id?: string; title?: string };
   status?: string;
 };
+type LichessOpponent = { id?: string; username?: string; rating?: number; title?: string };
+
 export type StreamEvent = {
   type: string;
   challenge?: Challenge;
-  game?: { id: string; fullId?: string; color?: 'white' | 'black'; opponent?: { username?: string } };
+  game?: { id: string; fullId?: string; color?: 'white' | 'black'; opponent?: LichessOpponent };
 };
 export type PlayingGame = {
   gameId: string;
+  fullId?: string;
   color?: 'white' | 'black';
-  opponent?: { username?: string };
+  opponent?: LichessOpponent;
   isMyTurn?: boolean;
+  lastMove?: string;
+  variant?: { key?: string; name?: string };
+  speed?: string;
+  perf?: string;
 };
 
 export class LichessHttpError extends Error {
@@ -46,12 +53,23 @@ async function checkedFetch(url: string, init: RequestInit = {}): Promise<Respon
 }
 
 export async function getAccount(token: string): Promise<Account> {
-  return (await checkedFetch(`${BASE_URL}/api/account`, { headers: authHeaders(token) })).json();
+  return (await checkedFetch(`${BASE_URL}/api/account`, {
+    headers: authHeaders(token), signal: AbortSignal.timeout(10000),
+  })).json();
+}
+
+// Lichess may prefix display usernames with titles ("BOT MonkeyKingZach").
+// Recovery compares account identities, so prefer the stable ID when provided.
+function normalizeOpponent(opponent: LichessOpponent | undefined): LichessOpponent | undefined {
+  if (!opponent) return opponent;
+  const id = typeof opponent.id === 'string' ? opponent.id.trim() : '';
+  return { ...opponent, username: id || opponent.username };
 }
 
 export async function getPlayingGames(token: string): Promise<PlayingGame[]> {
   const payload = await (await checkedFetch(`${BASE_URL}/api/account/playing`, { headers: authHeaders(token) })).json();
-  return Array.isArray(payload?.nowPlaying) ? payload.nowPlaying : [];
+  const games: PlayingGame[] = Array.isArray(payload?.nowPlaying) ? payload.nowPlaying : [];
+  return games.map(game => ({ ...game, opponent: normalizeOpponent(game.opponent) }));
 }
 
 export type ChallengeTimeControl =
@@ -132,7 +150,12 @@ export async function streamEvents(token: string, onEvent: (event: StreamEvent) 
     headers: { ...authHeaders(token), Accept: 'application/x-ndjson' },
     signal,
   });
-  await readNdjson(response, onEvent, signal);
+  await readNdjson(response, (event: StreamEvent) => {
+    onEvent(event.game ? {
+      ...event,
+      game: { ...event.game, opponent: normalizeOpponent(event.game.opponent) },
+    } : event);
+  }, signal);
 }
 
 export async function streamGame(token: string, gameId: string, onEvent: (event: any) => void, signal: AbortSignal): Promise<void> {

@@ -517,6 +517,9 @@ class LichessBotRuntime:
 
             return {
                 "gameId": cached["gameId"],
+                "botColor": cached.get("botColor"),
+                "timeControlKnown": cached.get("timeControlKnown", False),
+                "clock": dict(cached["clock"]) if isinstance(cached.get("clock"), dict) else None,
                 "initialFen": cached["initialFen"],
                 "state": dict(cached["state"]),
                 "updatedAt": cached["updatedAt"],
@@ -793,6 +796,7 @@ class LichessBotRuntime:
             while not self._stop.is_set() and not finished:
                 initial_fen = "startpos"
                 bot_color: chess.Color | None = None
+                game_clock = None
                 try:
                     token, _ = self._credentials()
                     self._wait_for_api_cooldown()
@@ -829,6 +833,7 @@ class LichessBotRuntime:
                             event_type = event.get("type")
                             if event_type == "gameFull":
                                 initial_fen = str(event.get("initialFen") or "startpos")
+                                game_clock = event.get("clock")
                                 white = event.get("white") or {}
                                 black = event.get("black") or {}
                                 white_id = str(white.get("id") or white.get("name") or "").lower()
@@ -851,7 +856,10 @@ class LichessBotRuntime:
                             with self._lock:
                                 self._game_states[game_id] = {
                                     "gameId": game_id,
+                                    "botColor": "white" if bot_color == chess.WHITE else "black",
                                     "initialFen": initial_fen,
+                                    "timeControlKnown": True,
+                                    "clock": dict(game_clock) if isinstance(game_clock, dict) else None if game_clock is None else {"invalid":True},
                                     "state": dict(state),
                                     "updatedAt": int(time.time() * 1000),
                                 }

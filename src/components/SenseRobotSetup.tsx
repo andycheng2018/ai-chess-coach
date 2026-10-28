@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Browser } from '@capacitor/browser';
 import { Capacitor } from '@capacitor/core';
 import { App as NativeApp } from '@capacitor/app';
-import { getSetupHealth, type BotRuntimeStatus, type SetupHealth } from '../botControl';
-import { isRememberedSenseGame, readSenseSetup, saveSenseSetup, senseSetupStep, type SenseSetupDraft, type SenseSetupStep } from '../senseSetup';
+import { buildSenseRoomUrl, getSetupHealth, type BotRuntimeStatus, type SetupHealth } from '../botControl';
+import { isPrivateIPv4, normalizeMacAddress, isRememberedSenseGame, readSenseSetup, saveSenseSetup, senseSetupStep, type SenseSetupDraft, type SenseSetupStep } from '../senseSetup';
 
 const SENSE_APP = 'https://www.senserobotchess.com/pages/app-download';
 const SENSE_HELP = 'https://www.senserobotchess.com/pages/help-center-page';
@@ -21,11 +21,15 @@ type Props = {
   onLogin: () => Promise<void>;
   onJoin: (roomUrl?: string) => Promise<string>;
   onRetryBot: () => Promise<void>;
+  canUseExistingGame: boolean;
+  onUseExistingGame: () => Promise<string>;
+  onUseScreen: () => void;
   gameId: string | null;
   verified: boolean;
   busy: boolean;
   recoveryChecked: boolean;
   moves: number;
+  positionKey: string;
   connectionMessage: string;
   connectionError: string;
   signingIn: boolean;
@@ -38,6 +42,12 @@ export function SenseRobotSetup(props: Props) {
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
   const [roomUrl, setRoomUrl] = useState('');
+  const [roomCode, setRoomCode] = useState('');
+  const [botColor, setBotColor] = useState<'' | 'white' | 'black'>('');
+  const [boardMatchesGame, setBoardMatchesGame] = useState(false);
+  const [deviceIp, setDeviceIp] = useState(draft.deviceIp);
+  const [deviceMac, setDeviceMac] = useState(draft.deviceMac);
+  const [deviceSaved, setDeviceSaved] = useState(false);
   const [showWifiHelp, setShowWifiHelp] = useState(false);
   const [editing, setEditing] = useState<SenseSetupStep | null>(null);
   const [returned, setReturned] = useState(false);
@@ -53,8 +63,14 @@ export function SenseRobotSetup(props: Props) {
   const blockedByGame = Boolean(props.gameId && !waitingForGame && !props.verified);
   const busy = props.busy || working;
   const serviceReady = health?.ok && health.stockfish && health.coach?.configured;
-  const canJoin = Boolean(props.username && props.bot.connected && serviceReady
+  const accountConfirmed = Boolean(props.username && draft.networkReady &&
+    draft.linkedUsername.toLowerCase() === props.username.toLowerCase());
+  const canJoin = Boolean(accountConfirmed && props.bot.connected && serviceReady
     && props.recoveryChecked && !props.gameId && !busy);
+  const canAttach = Boolean(props.canUseExistingGame && accountConfirmed &&
+    props.bot.connected && serviceReady && !busy);
+
+  useEffect(() => { setBoardMatchesGame(false); }, [props.gameId, props.username, props.open, props.positionKey]);
 
   function update(changes: Partial<SenseSetupDraft>) {
     const next = { ...draft, ...changes, open: props.open, level: props.level };
@@ -126,8 +142,8 @@ export function SenseRobotSetup(props: Props) {
       if (event.key === 'Escape' && !props.busy) { closeRef.current(); return; }
       if (event.key !== 'Tab') return;
       const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), [tabindex="0"]',
-      ) || []);
+        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]',
+      ) || []).filter(element => element.getClientRects().length > 0);
       const first = controls[0];
       const last = controls[controls.length - 1];
       if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) {
@@ -168,6 +184,22 @@ export function SenseRobotSetup(props: Props) {
       update({ joinedGameId: gameId, joinedUsername: username });
       setRoomUrl(''); setEditing(null);
     });
+  }
+
+  async function joinManualRoom() {
+    try {
+      if (botColor !== 'white' && botColor !== 'black') throw new Error('Choose the training bot’s color from the room invitation.');
+      await join(buildSenseRoomUrl(roomCode.trim(), botColor));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  }
+
+  function saveDeviceDetails() {
+    const ip = deviceIp.trim();
+    const mac = deviceMac.trim() ? normalizeMacAddress(deviceMac.trim()) : '';
+    if (ip && !isPrivateIPv4(ip)) { setError('Enter a private LAN IPv4 address, such as 192.168.1.20.'); return; }
+    if (mac === null) { setError('Enter a MAC address using six pairs of hexadecimal digits.'); return; }
+    update({ deviceIp: ip, deviceMac: mac });
+    setDeviceIp(ip); setDeviceMac(mac); setDeviceSaved(true);
   }
 
   if (!props.open) return null;
@@ -237,7 +269,7 @@ export function SenseRobotSetup(props: Props) {
                 value={roomUrl} disabled={busy || Boolean(props.gameId)} onChange={event => setRoomUrl(event.target.value)} />
               <button type="submit" className="ghost wide" disabled={!canJoin || !roomUrl.trim()}>Connect this room</button>
             </form>
-            {blockedByGame && <p className="inline-error">You already have a game open. Close setup and finish that game before connecting a new room.</p>}
+            {blockedByGame && <p className="inline-error">A game is already open. Use the existing-game option below if it is on SenseRobot, or finish it before joining a new room.</p>}
             {!props.recoveryChecked && props.username && <p className="fine-print">Checking for an existing training game…</p>}
             <details className="sense-help"><summary>Can’t find the room QR?</summary>
               <p>Room menu names vary by model and firmware. Look for a friend invitation / create-room option in the robot’s Lichess mode. The app-download and Wi-Fi QR codes won’t join a game.</p>
@@ -248,11 +280,59 @@ export function SenseRobotSetup(props: Props) {
         </>}
         {step === 'connected' && <>
           <div className="sense-success">✓</div>
-          <h3>Your game is connected.</h3>
-          <p>Move on SenseRobot. Your board in Chess Coach follows the same Lichess game, and the coach watches your play.</p>
+          <h3>Lichess game connected.</h3>
+          <p>Chess Buddy follows this Lichess game. Confirm a physical move and the robot’s reply match its move list before treating the board as synchronized.</p>
+          <p className="fine-print">A QR invitation can remain visible while gameplay works. Check actual moves and the game ID before attempting another join.</p>
           <p className="sense-notice">{props.moves > 0 ? `${props.moves} move${props.moves === 1 ? '' : 's'} synced from Lichess.` : 'Waiting for the first move. The board will update automatically.'}</p>
           <button className="primary wide" onClick={props.onClose}>Go to my board</button>
         </>}
+        <details className="sense-help sense-fallback">
+          <summary>Other ways to connect or continue</summary>
+          <h4>Enter a room code manually</h4>
+          <p>If scanning is unavailable, use the eight-character room code and the bot color shown in the invitation. The room must still exist on Lichess.</p>
+          <form onSubmit={event => { event.preventDefault(); if (canJoin) void joinManualRoom(); }}>
+            <label className="sense-label" htmlFor="sense-room-code">Room code</label>
+            <input id="sense-room-code" autoComplete="off" maxLength={8} pattern="[A-Za-z0-9]{8}"
+              placeholder="AbCd1234" value={roomCode} disabled={!canJoin}
+              onChange={event => setRoomCode(event.target.value)} />
+            <label className="sense-label" htmlFor="sense-bot-color">Training bot’s color</label>
+            <select id="sense-bot-color" value={botColor} disabled={!canJoin}
+              onChange={event => setBotColor(event.target.value as typeof botColor)}>
+              <option value="">Choose from the room invitation…</option>
+              <option value="white">Bot plays White</option><option value="black">Bot plays Black</option>
+            </select>
+            <button type="submit" className="ghost wide" disabled={!canJoin || roomCode.trim().length !== 8 || !botColor}>Connect using room code</button>
+          </form>
+          {!accountConfirmed && <p className="fine-print">Complete the Wi-Fi and matching-account confirmations above before joining or attaching a physical-board game.</p>}
+          <h4>Use a game that is already running</h4>
+          {props.gameId ? <>
+            <a className="sense-link" href={`https://lichess.org/${props.gameId}`} target="_blank" rel="noreferrer">Check game {props.gameId} on Lichess ↗</a>
+            <label className="sense-confirm"><input type="checkbox" checked={boardMatchesGame} disabled={!canAttach}
+              onChange={event => setBoardMatchesGame(event.target.checked)} />
+              My SenseRobot board shows this same game and uses {props.username || 'my signed-in account'}.</label>
+            <button className="ghost wide" disabled={!canAttach || !boardMatchesGame} onClick={() => void run(async () => {
+              const gameId = await props.onUseExistingGame();
+              update({ joinedGameId: gameId, joinedUsername: props.username || '' }); setEditing(null);
+            })}>Use this game with SenseRobot</button>
+            <button className="ghost wide" disabled={!props.canUseExistingGame || busy} onClick={props.onUseScreen}>Continue this game on-screen</button>
+            <p className="fine-print">Switching input keeps the same game. Match the physical pieces before switching back to SenseRobot. It does not configure or disconnect the robot.</p>
+          </> : <p>No active training game is connected yet. Join a room first, or close setup and start an on-screen training game.</p>}
+        </details>
+        <details className="sense-help sense-device-details">
+          <summary>Device IP and MAC for network troubleshooting</summary>
+          <p>Keep the board’s router details here as a reference. These details stay in this browser and do not establish a game connection or change Wi-Fi settings.</p>
+          <form onSubmit={event => { event.preventDefault(); saveDeviceDetails(); }}>
+            <label className="sense-label" htmlFor="sense-device-ip">SenseRobot LAN IPv4 address</label>
+            <input id="sense-device-ip" autoComplete="off" inputMode="decimal" placeholder="192.168.1.20"
+              value={deviceIp} onChange={event => { setDeviceIp(event.target.value); setDeviceSaved(false); }} />
+            <label className="sense-label" htmlFor="sense-device-mac">SenseRobot MAC address</label>
+            <input id="sense-device-mac" autoComplete="off" placeholder="AA:BB:CC:DD:EE:FF"
+              value={deviceMac} onChange={event => { setDeviceMac(event.target.value); setDeviceSaved(false); }} />
+            <button type="submit" className="ghost wide">Save device details on this browser</button>
+          </form>
+          {deviceSaved && !storageFailed && <p className="sense-notice" role="status">Device details saved locally. Compare the MAC address with the router’s device list if the IP changes.</p>}
+          <p className="fine-print">Game moves still synchronize through Lichess. Direct LAN game control has not been verified for this board.</p>
+        </details>
         {busy && <p className="sense-notice" role="status">{props.busy ? props.connectionMessage : 'Working…'}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {!error && (step === 'room' || step === 'account') && props.connectionError && <p className="inline-error" role="alert">{props.connectionError}</p>}
