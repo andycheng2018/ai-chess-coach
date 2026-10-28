@@ -34,6 +34,7 @@ type Props = {
   onEnterArena: () => void;
   onOpenAnalysis: () => void;
   onOpenSenseSetup: () => void;
+  onOpenRooms?: () => void;
   onOpenProfile: () => void;
   onOpenMenu?: () => void;
   playingGames?: PlayingGame[];
@@ -91,6 +92,7 @@ export const HomeHub: React.FC<Props> = ({
   onEnterArena,
   onOpenAnalysis,
   onOpenSenseSetup,
+  onOpenRooms,
   onOpenProfile,
   onOpenMenu,
   playingGames = [],
@@ -394,6 +396,8 @@ export const HomeHub: React.FC<Props> = ({
               Choose your bot difficulty and time control. The AI coach is active for the whole game.
             </p>
           </div>
+
+          {onOpenRooms && <button type="button" className="ghost wide" onClick={onOpenRooms}>Lichess rooms & existing games</button>}
 
           {/* Level Grid */}
           <div className="setup-group">

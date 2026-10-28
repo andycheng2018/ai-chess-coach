@@ -3937,3 +3937,16 @@ header {
 .vbot-network-summary { padding: 10px 12px; border: 1px solid #57654a; border-radius: 8px; margin: 12px 0; font-size: .9rem; }
 .vbot-network-summary p { margin: 5px 0 0; }
 .vbot-settings select { width: 100%; padding: 8px; margin: 6px 0 12px; }
+
+/* Touch-friendly companion controls for tablet rehearsals. */
+.vbot-profile { display:grid; gap:8px; margin:12px 0; }
+.vbot-companion select, .vbot-companion input:not([type=checkbox]) { max-width:100%; min-height:44px; box-sizing:border-box; }
+.vbot-companion button { min-height:44px; touch-action:manipulation; }
+.vbot-preflight:empty::after { content:"No outstanding setup blockers."; }
+@media(max-width:1024px) { .vbot-companion { margin-left:0; } .vbot-live-setup label { padding:8px 0; } }
+
+.vbot-event-detail { display:block; opacity:.8; margin-top:4px; overflow-wrap:anywhere; }
+
+.room-discovery { padding:16px; border:1px solid #6e9348; border-radius:12px; margin:16px 0; }
+.room-discovery ul { padding-left:20px; } .room-discovery li { margin:14px 0; overflow-wrap:anywhere; }
+.room-discovery button { min-height:44px; margin:6px; } .room-discovery label { display:flex; gap:10px; align-items:center; margin-top:14px; }

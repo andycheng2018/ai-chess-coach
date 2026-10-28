@@ -15,7 +15,7 @@ vm.runInNewContext(compile('../src/senseRecovery.ts'), { exports: recovery });
 function client(response) {
   const exports = {};
   vm.runInNewContext(clientCode, {
-    exports, fetch: async () => response, TextDecoder,
+    exports, fetch: async () => response, TextDecoder, AbortSignal,
   });
   return exports;
 }
@@ -59,4 +59,14 @@ test('gameStart events also identify a titled opponent by stable ID', async () =
   assert.equal(events[0].game.opponent.username, 'monkeykingzach');
   assert.equal(events[0].game.id, 'bWbJuQWD');
   assert.equal(events[0].game.color, 'white');
+});
+
+test('outgoing discovery uses the full returned list, including preexisting invitations', async () => {
+  const api=client({ok:true,json:async()=>({in:[{id:'Incoming'}],out:[{id:'Existing'},{id:'NewRoom1'}]})});
+  const rooms=await api.getOutgoingRoomChallenges('test-token');
+  assert.equal(rooms.length,2);assert.equal(rooms[0].id,'Existing');
+});
+test('invalid invitation snapshots fail instead of reporting a successful empty list', async () => {
+  const api=client({ok:true,json:async()=>({in:[]})});
+  await assert.rejects(api.getOutgoingRoomChallenges('test-token'),/invalid room list/);
 });

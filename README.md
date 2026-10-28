@@ -155,6 +155,25 @@ confirm the account, opponent, and board before showing the connected state.
 The backend supplies the bot identity and the selected strength is applied
 automatically; the SenseRobot room supplies the clock and color.
 
+Use **Find my Lichess rooms** in SenseRobot setup, or **Lichess rooms & existing games**
+in the Training Arena or on the live board, to list outgoing invitations for the signed-in account using
+Lichess `GET /api/challenge` (`challenge:read`). The outgoing list includes invitations created before refresh. A separate already-joined
+list uses `GET /api/account/playing` to recover exact games against the configured
+coach bot without accepting them again. Select an invitation to preview the human
+and bot colors before joining. Discovery refreshes every ten seconds while the
+panel is open. Only fixed-color, explicitly unrated standard invitations created
+by this account and open to the configured bot are eligible.
+
+**Automatically join the next new eligible room** is optional and one-shot:
+turn it on before creating the room on SenseRobot. Existing invitations are
+ignored; multiple new eligible rooms require manual selection. It is unavailable
+during a live game, stops after any join attempt or discovery failure, and does
+not retry acceptance. Closing the panel or changing accounts disables it. A 429
+response pauses discovery for at least a minute. Lichess does not identify the
+creating device, and anonymous/unassociated open rooms may not appear; keep the
+invitation-link/QR fallback. Physical board synchronization still requires an
+onsite check. No robot motion is enabled by room discovery.
+
 Wi-Fi and SenseRobot account linking are guided handoffs to the companion app.
 Network selection and passwords remain there: this browser cannot scan nearby
 networks or provision the robot. These steps are labeled as player confirmations,

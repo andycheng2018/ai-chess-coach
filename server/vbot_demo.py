@@ -168,6 +168,7 @@ class VbotDemo:
         self.readiness_at = float("-inf")
         self.probe_generation = 0
         self.policy = CelebrationPolicy()
+        self.reaction_profile = "balanced"
         self.stream_line = ()
         self.last_small_preset = None
         self.last_dance_finished = float("-inf")
@@ -247,6 +248,7 @@ class VbotDemo:
         self._sync_network()
         with self.lock:
             return {"sessionKind": self.session_kind, "companionApiVersion": 1, "generation": self.generation,
+                    "reactionProfile": self.reaction_profile,
                     "network": self.network_book.snapshot() if self.network_book is not None else None,
                     "readiness": self.readiness,
                     "readinessFresh": self.readiness is not None and self.clock() - self.readiness_at <= 30,
@@ -397,6 +399,9 @@ class VbotDemo:
     def arm(self, payload: dict) -> dict:
         self._sync_network(force=True)
         mode = payload.get("mode", "rehearsal")
+        reaction_profile = payload.get("reactionProfile", "balanced")
+        if reaction_profile not in {"quiet", "balanced", "showmanship"}:
+            raise ValueError("Choose Quiet, Balanced, or Showmanship reactions.")
         game_id = str(payload.get("gameId", "")).strip()
         preset = payload.get("preset", PRESETS[0])
         target = str(payload.get("target", self.target)).strip()
@@ -424,6 +429,7 @@ class VbotDemo:
         with self.lock:
             if self.busy:
                 raise ValueError("Wait for the current action to finish before changing the demo.")
+            self.reaction_profile = reaction_profile
             self.mode, self.game_id, self.target, self.preset = mode, game_id, target, preset
             self.session_kind = "capture-practice" if payload.get("practice") is True and game_id == PRACTICE_ID else "game"
             self.compatibility = compatibility
@@ -710,6 +716,12 @@ class VbotDemo:
                 not decision.get("demoCapture") and self.clock()-self.last_dance_finished < RULES["danceIntervalSeconds"])):
             tier = "small"
             pace_reason = pace_reason or "Full dance is within its three-minute interval; using a brief acknowledgment."
+        if self.reaction_profile == "quiet":
+            if tier == "sad":
+                return self._event("skipped", reason="Quiet mode: sad body performances are off.", **fields)
+            tier = "small"
+            decision = {**decision, "briefOnly": True}
+            pace_reason = "Quiet mode uses head gestures only."
         preset = self.preset
         if tier == "sad":
             # GRIEVANCE includes body movement; never treat it as a brief gesture.
@@ -727,7 +739,7 @@ class VbotDemo:
             if not pool:
                 return self._event("skipped", reason="No rehearsed brief preset is available for this pace/target.", tier=tier, **fields)
             preset = self._choose_small(pool)
-        self.cooldown = RULES["danceRestSeconds"] if tier in {"major", "sad"} else RULES["smallRestSeconds"]
+        self.cooldown = RULES["danceRestSeconds"] if tier in {"major", "sad"} else (3 if self.reaction_profile == "showmanship" else RULES["smallRestSeconds"])
         self.last_started = self.clock()
         context = {"tier":tier, "reason":decision["reason"], "paceReason":pace_reason,
                    "metrics":decision.get("metrics"), "preset":preset, **fields}

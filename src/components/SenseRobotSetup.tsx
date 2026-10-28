@@ -19,6 +19,7 @@ type Props = {
   levels: readonly { id: string; label: string; elo: number }[];
   onLevel: (level: string) => void;
   onLogin: () => Promise<void>;
+  onFindRooms?: () => void;
   onJoin: (roomUrl?: string) => Promise<string>;
   onRetryBot: () => Promise<void>;
   canUseExistingGame: boolean;
@@ -256,7 +257,9 @@ export function SenseRobotSetup(props: Props) {
             <p className="sense-notice">{props.connectionMessage}</p>
             <a className="ghost sense-link" href={`https://lichess.org/${props.gameId}`} target="_blank" rel="noreferrer">Check this game on Lichess ↗</a>
           </> : <>
-            <p>On SenseRobot, open its Lichess friend / room option and display the <strong>game-room QR</strong>. You can scan it here or paste its link.</p>
+            <p>Create a Lichess room on SenseRobot, then find its invitation directly from your account.</p>
+            {props.onFindRooms && <button className="primary wide" disabled={busy} onClick={props.onFindRooms}>Find my Lichess rooms</button>}
+            <p className="fine-print">If Lichess does not list the room, scanning its QR or pasting the link remains available below.</p>
             <label className="sense-label" htmlFor="sense-level">Opponent strength</label>
             <select id="sense-level" value={props.level} disabled={busy || Boolean(props.gameId)} onChange={event => props.onLevel(event.target.value)}>
               {props.levels.map(level => <option key={level.id} value={level.id}>{level.label} · ~{level.elo}</option>)}

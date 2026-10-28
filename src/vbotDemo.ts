@@ -22,6 +22,7 @@ export async function notifyVbotMove(
 export type VbotEvent = {
   time: number; status: string; gameId?: string; playedMove?: string;
   reason?: string; message?: string; preset?: string; requestId?: string;
+  paceReason?: string; classification?: string; tier?: string;
   readyForNext?: boolean; postflightReason?: string; durationMs?: number;
 };
 export type VbotNetwork = {
@@ -30,14 +31,16 @@ export type VbotNetwork = {
   addresses: { target: string; lastVerifiedAt?: number | null }[];
   profiles: { id: string; label: string; targets: string[] }[];
 };
+export type ReactionProfile = 'quiet' | 'balanced' | 'showmanship';
 export type VbotStatus = {
+  reactionProfile?: ReactionProfile;
   network?: VbotNetwork | null;
   companionApiVersion?: number; generation: number; armed: boolean;
   mode: 'live' | 'rehearsal'; gameId: string; target: string; busy: boolean;
   cooldownRemaining: number; danceCooldownRemaining: number; events: VbotEvent[];
   readinessFresh?: boolean; sadPresetVerified?: boolean; finishPending?: boolean; victoryPending?: boolean;
   smallPresets?: string[]; smallPresetCandidates?: string[]; operatorApprovedPresets?: string[];
-  readiness?: { ready: boolean; target: string; reason?: string; checkedAt: number } | null;
+  readiness?: { ready: boolean; target: string; reason?: string; code?: string; checkedAt: number } | null;
   verification?: { applicationVersion?: string | null } | null;
 };
 
@@ -57,6 +60,7 @@ export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm
 export type VbotConnectPayload = {
   gameId: string; playerColor: 'white' | 'black'; mode: 'live' | 'rehearsal';
   target: string; preset: string; applicationVersion: string; practice?: boolean;
+  reactionProfile?: ReactionProfile;
   confirmSafeWorkspace: boolean; confirmHandsetStop: boolean;
 };
 
