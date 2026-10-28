@@ -1,0 +1,34 @@
+[
+  {
+    "id": "pawn-queen",
+    "title": "A pawn can take a queen",
+    "fen": "7k/8/8/3q4/4P3/8/8/K7 w - - 0 1",
+    "move": "e4d5",
+    "hint": "Pawns capture one square diagonally. Move e4 to d5.",
+    "piece": "queen"
+  },
+  {
+    "id": "rook-queen",
+    "title": "Take the queen with your rook",
+    "fen": "7k/8/8/3q4/8/8/3R4/K7 w - - 0 1",
+    "move": "d2d5",
+    "hint": "Rooks move straight. Move d2 to d5 and take the queen.",
+    "piece": "queen"
+  },
+  {
+    "id": "bishop-rook",
+    "title": "Take the rook on the diagonal",
+    "fen": "7k/8/8/8/5r2/8/3B4/K7 w - - 0 1",
+    "move": "d2f4",
+    "hint": "Bishops move diagonally. Move d2 to f4 and take the rook.",
+    "piece": "rook"
+  },
+  {
+    "id": "knight-queen",
+    "title": "A knight fork? Just take the queen!",
+    "fen": "7k/8/8/4q3/8/5N2/8/7K w - - 0 1",
+    "move": "f3e5",
+    "hint": "Knights move in an L: two squares, then one. Move f3 to e5.",
+    "piece": "queen"
+  }
+]

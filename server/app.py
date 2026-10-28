@@ -27,6 +27,9 @@ from coach.history import history
 from coach.analysis_search import analysis_searches
 from vbot_demo import demo as vbot_demo
 
+# Reuse the bot's one canonical game stream for result celebrations.
+runtime.game_observer = lambda game: vbot_demo.observe_game_end(game, runtime.game_state)
+
 HOST = os.environ.get("HOST", "0.0.0.0")
 
 EXTRA_CORS_ORIGINS = {
@@ -1746,12 +1749,19 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self._json_body()
                 if self.path == "/api/vbot/arm":
                     response = vbot_demo.arm(payload)
+                elif self.path == "/api/vbot/finish":
+                    response = vbot_demo.finish_game(payload, runtime.game_state)
                 elif self.path == "/api/vbot/disarm":
                     response = vbot_demo.disarm(payload)
                 elif self.path == "/api/vbot/check":
                     response = vbot_demo.check_device(payload)
                 elif self.path == "/api/vbot/connect":
-                    response = vbot_demo.connect_game(payload, runtime.game_state)
+                    response = (vbot_demo.connect_practice(payload) if payload.get("practice") is True
+                                else vbot_demo.connect_game(payload, runtime.game_state))
+                elif self.path == "/api/vbot/practice/start":
+                    response = vbot_demo.start_capture(payload)
+                elif self.path == "/api/vbot/practice/capture":
+                    response = vbot_demo.capture_reward(payload)
                 elif self.path == "/api/vbot/celebrate":
                     response = vbot_demo.reconcile(payload, runtime.game_state)
                 elif self.path == "/api/vbot/rehearse":
@@ -1777,6 +1787,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, runtime.start())
             elif self.path == "/api/bot/stop":
                 self._send(200, runtime.stop())
+            elif self.path.startswith("/api/bot/game/") and self.path.endswith("/demo-mode"):
+                if not self._vbot_local_request() or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                    self._send(403, {"message":"Demo opponent controls require local JSON requests."})
+                    return
+                game_id = self.path[len("/api/bot/game/"):-len("/demo-mode")]
+                if not re.fullmatch(r"[A-Za-z0-9]{8}", game_id):
+                    raise ValueError("Invalid game ID.")
+                self._send(200, runtime.set_demo_mode(game_id, self._json_body().get("enabled")))
             elif self.path == "/api/bot/level":
                 level = str(self._json_body().get("level", "")).strip()
                 self._send(200, runtime.set_level(level))

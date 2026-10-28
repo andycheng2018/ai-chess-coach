@@ -10,14 +10,15 @@ from statistics import median
 GOOD_LABELS = {"good", "excellent", "best", "book"}
 HEAD_PRESETS = ("atom/look_left.json", "atom/look_right.json", "atom/look_forward.json",
                 "atom/look_up.json", "atom/look_down.json")
+JUMP_PRESETS = ('actions/HAPPY_LITTLE_JUMP.json', 'actions/HAPPY_JUMP.json', 'actions/JUMP_IN_PLACE.json')
 SMALL_PRESETS = ("actions/WAVE.json", *HEAD_PRESETS, "actions/SHAKEHAND.json",
                  "actions/SHAKEHAND_L.json", "actions/HIGH_FIVE_R.json",
-                 "actions/HIGH_FIVE_L.json", "actions/SAYYES.json")
+                 "actions/HIGH_FIVE_L.json", "actions/SAYYES.json", *JUMP_PRESETS)
 MAX_SMALL_DURATION_MS = 10000
 SAD_PRESET = "actions/GRIEVANCE.json"
 RULES = {"materialGainCp": 200, "singleSwingCp": 200, "trendGainCp": 150,
          "baselineMoves": 5, "recentMoves": 3, "minimumDepth": 12,
-         "smallRestSeconds": 10, "danceRestSeconds": 20, "danceIntervalSeconds": 180,
+         "smallRestSeconds": 5, "danceRestSeconds": 20, "danceIntervalSeconds": 180,
          "minimumDanceClockMs": 120000, "minimumEstimatedGameMs": 600000}
 
 
@@ -92,6 +93,10 @@ class CelebrationPolicy:
         except (ValueError, KeyError, TypeError):
             self.points.clear()
             return {**decision, "signalStatus":"Material continuation unavailable; no full dance."}
+        captured = before.piece_at(chess.Move.from_uci(record["playedMoveUci"]).to_square)
+        demo_capture = (game.get("demoMode") is True and game.get("rated") is False
+                        and captured is not None and captured.piece_type in {chess.QUEEN, chess.ROOK}
+                        and net_gain is not None and net_gain >= RULES["materialGainCp"])
         prior = list(self.points)
         self.points.append({"cp":score, "ply":ply})
         if decision["tier"] == "none":
@@ -121,6 +126,9 @@ class CelebrationPolicy:
                 major = "Three human-turn evaluations sustain an improvement over the previous five."
                 metrics.update(baselineCp=baseline, recentMedianCp=median(recent), gainCp=improvement,
                                baselineNoiseCp=round(noise,1))
+        if demo_capture:
+            major = "Demo opponent: a queen/rook capture gains at least two points after Stockfish's expected reply."
+            decision["demoCapture"] = True
         if major:
             # Consume this moment even if busy/fast/cooling down; never replay a plateau later.
             self.points.clear(); self.points.append({"cp":score,"ply":ply})

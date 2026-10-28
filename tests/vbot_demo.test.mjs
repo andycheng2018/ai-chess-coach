@@ -111,3 +111,34 @@ test('preview connection skips the robot probe and missing onsite confirmation s
   await assert.rejects(()=>connectVbotWithReadiness({gameId:'AbCd1234',mode:'live',confirmSafeWorkspace:false,confirmHandsetStop:false},()=>true));
   assert.deepEqual(calls,['connect']);
 });
+
+// Execute the production end-of-game effect: a premature disarm would swallow
+// the win before the canonical bot stream has reported its winner.
+const hookSource=readFileSync(new URL('../src/useVbotCompanion.ts',import.meta.url),'utf8');
+const hookFile=ts.createSourceFile('useVbotCompanion.ts',hookSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+let lifecycle;
+function findLifecycle(node){
+  if(ts.isCallExpression(node)&&node.expression.getText(hookFile)==='useEffect'&&node.arguments[0].getText(hookFile).includes('vbotManagedSession')) lifecycle=node.arguments[0].getText(hookFile);
+  ts.forEachChild(node,findLifecycle);
+}
+findLifecycle(hookFile);assert.ok(lifecycle);
+async function runLifecycle(context,extra={}){
+ const calls=[];const helpers=load(async()=>({ok:true}));
+ const owned={gameId:'AbCd1234',generation:7};
+ const scope={...helpers,status:{armed:true,...owned,...extra},context,managed:{current:owned},
+   inFlight:{current:false},detaching:{current:false},perform:async(path,payload)=>{calls.push([path,JSON.parse(JSON.stringify(payload))]);}};
+ vm.runInNewContext(ts.transpileModule('var lifecycle='+lifecycle,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,scope);
+ scope.lifecycle();await Promise.resolve();return calls;
+}
+test('terminal UI hands the exact session to server result verification before disarming',async()=>{
+ const calls=await runLifecycle({gameId:'AbCd1234',resolved:true,ended:true});
+ assert.deepEqual(calls,[['finish',{gameId:'AbCd1234',generation:7,reason:'match_finished'}]]);
+});
+test('switching matches cancels even when a victory wait is pending',async()=>{
+ const calls=await runLifecycle({gameId:'Other123',resolved:true,ended:true},{finishPending:true});
+ assert.equal(calls[0][0],'disarm');assert.equal(calls[0][1].reason,'match_changed');
+});
+test('a pending finish or unresolved recovery does not repeatedly notify or disarm',async()=>{
+ assert.deepEqual(await runLifecycle({gameId:'AbCd1234',resolved:true,ended:true},{finishPending:true}),[]);
+ assert.deepEqual(await runLifecycle({gameId:null,resolved:false,ended:false}),[]);
+});

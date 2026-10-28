@@ -18,6 +18,7 @@ import { notifyVbotMove } from './vbotDemo';
 import { useVbotCompanion } from './useVbotCompanion';
 import { VbotCompanion } from './components/VbotCompanion';
 import { GameQrDialog } from './components/GameQrDialog';
+import { CapturePractice } from './components/CapturePractice';
 import { JoinRoomDialog } from './components/JoinRoomDialog';
 import { SenseRobotGameStatus } from './components/SenseRobotGameStatus';
 import { recoverJoinedRoom, requireExactJoinedRoom, requireUnjoinedRoom, readRoomJoinDraft, clearRoomJoinDraft } from './roomJoin';
@@ -25,7 +26,7 @@ import { reconcilePendingMove, resolveMoveFailure, type PendingMoveAttempt } fro
 import { moveLineChanged, shouldApplyBackupSnapshot } from './gameSync';
 import { observeCoachStream, type CoachStreamCursor } from './coachStream';
 import { requireSenseTrainingGame } from './senseRecovery';
-import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
+import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, setBotDemoMode, startBot, type BotRuntimeStatus } from './botControl';
 import {
   analyzeMove,
   checkCriticalPosition,
@@ -1685,6 +1686,8 @@ export default function App() {
   const [currentTimeControlLabel, setCurrentTimeControlLabel] = useState('10 min');
   const [preferredColor, setPreferredColor] = useState<'random' | 'white' | 'black'>('random');
   const [bot, setBot] = useState<BotRuntimeStatus>({ running: false, connected: false });
+  const [demoModePending, setDemoModePending] = useState(false);
+  const [demoModeError, setDemoModeError] = useState('');
   // The backend owns the training bot identity, including after validation.
   const BOT_USERNAME = bot.username || DEFAULT_BOT_USERNAME;
   const [senseSetupOpen, setSenseSetupOpen] = useState(() => readSenseSetup().open);
@@ -1703,6 +1706,7 @@ export default function App() {
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
   const [qrGameId, setQrGameId] = useState<string | null>(null);
+  const [capturePracticeOpen, setCapturePracticeOpen] = useState(false);
   const [roomLinkOpen, setRoomLinkOpen] = useState(() => readRoomJoinDraft() !== null);
   const [accountCheckError, setAccountCheckError] = useState('');
   const [accountCheckNonce, setAccountCheckNonce] = useState(0);
@@ -3558,6 +3562,19 @@ export default function App() {
     throw new Error(last.error || 'Bot could not connect to Lichess.');
   }
 
+  async function changeDemoOpponent(enabled: boolean) {
+    const selectedGame = gameId;
+    if (!selectedGame || demoModePending) return;
+    setDemoModePending(true); setDemoModeError('');
+    try {
+      const state = await setBotDemoMode(selectedGame, enabled);
+      setBot(state);
+      setStatus(enabled ? 'Demo opponent enabled: look for hanging queens and rooks.' : 'Normal opponent restored.');
+    } catch (error) {
+      if (gameIdRef.current === selectedGame) setDemoModeError(String(error));
+    } finally { setDemoModePending(false); }
+  }
+
   async function changeLevel(nextLevel: (typeof LEVELS)[number]['id']) {
     setLevel(nextLevel);
     try {
@@ -4392,6 +4409,8 @@ export default function App() {
       navHidden={navHidden}
     />
 
+    <div className="capture-practice-entry"><button className="primary" onClick={() => setCapturePracticeOpen(true)}>🎯 Capture Practice</button><span>Easy queen and rook captures + Rock You rewards</span></div>
+
     {currentView === 'home' ? (
       <HomeHub
         username={account?.username}
@@ -4470,6 +4489,23 @@ export default function App() {
           </div>
         </div>
 
+        {gameId && <section className="demo-opponent-control" aria-label="Opponent mode">
+          <label>Opponent mode
+            <select aria-label="Opponent mode" value={bot.demoGames?.includes(gameId) ? 'demo' : 'normal'}
+              disabled={!activeGame || demoModePending || !bot.connected || !bot.unratedGames?.includes(gameId)}
+              onChange={event => void changeDemoOpponent(event.target.value === 'demo')}>
+              <option value="normal">Normal practice</option>
+              <option value="demo">Demo: intentional blunders</option>
+            </select>
+          </label>
+          <p>{!activeGame ? 'This game has ended. Start an unrated game to choose Demo: intentional blunders.' : bot.demoGames?.includes(gameId)
+            ? 'DEMO ON · The bot offers queens and rooks. Capture one for a Rock You reward when the coach confirms the gain and VBOT is enabled and ready. Busy/resting rewards are skipped.'
+            : bot.unratedGames?.includes(gameId)
+              ? 'Want an easy capture? Demo mode offers big pieces. Unrated only; applies to this game from the next bot decision.'
+              : 'Waiting for the bot to confirm this is an active, unrated game.'}</p>
+          {demoModeError && <p role="alert">{demoModeError}</p>}
+        </section>}
+
         {gameId && account && isSenseRobotGame && <SenseRobotGameStatus key={`${gameId}-${account.username}`} gameId={gameId} username={account.username} playerColor={myColor} moves={movesText} san={position.san} connected={gameStreamConnected} />}
 
         <PlayerBar player={players[topSide]} clock={displayedClock[topSide]} active={activeGame && turnColor === topSide} side={topSide} />
@@ -4493,8 +4529,8 @@ export default function App() {
               <span className="under-board-meta">
                 <span>Training game</span>
                 <span className="bot-level-pill">
-                  {selectedLevel.label}
-                  <small>~{selectedLevel.elo}</small>
+                  {bot.demoGames?.includes(gameId) ? 'Demo: intentional blunders' : selectedLevel.label}
+                  {!bot.demoGames?.includes(gameId) && <small>~{selectedLevel.elo}</small>}
                 </span>
                 <span>{currentTimeControlLabel}</span>
                 {openingState?.name ? (
@@ -4571,14 +4607,14 @@ export default function App() {
           </button>
         </section>}
 
-        <VbotCompanion control={vbotCompanion} gameId={gameId} canArm={vbotCanArm} ended={vbotEnded} blockedReason={vbotBlockReason} />
+        <VbotCompanion control={vbotCompanion} gameId={gameId} canArm={vbotCanArm} ended={vbotEnded} blockedReason={vbotBlockReason} demoOpponent={Boolean(gameId && bot.demoGames?.includes(gameId))} />
 
         {gameId && <section className="card game-card">
           <div className="active-game-banner">
             <div>
               <span className="active-game-kicker">CURRENT OPPONENT</span>
-              <strong>{selectedLevel.label}</strong>
-              <small>Estimated strength ~{selectedLevel.elo}</small>
+              <strong>{bot.demoGames?.includes(gameId) ? 'Demo: intentional blunders' : selectedLevel.label}</strong>
+              <small>{bot.demoGames?.includes(gameId) ? 'Generous teaching opponent · unrated' : `Estimated strength ~${selectedLevel.elo}`}</small>
             </div>
             <div className="active-game-chips">
               <span>{currentTimeControlLabel}</span>
@@ -5377,6 +5413,7 @@ export default function App() {
       </div>
     )}
 
+    {capturePracticeOpen && <CapturePractice onClose={() => setCapturePracticeOpen(false)} />}
     {roomLinkOpen && <JoinRoomDialog username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)}
       onLogin={loginWithLichess} authChecking={Boolean(token && !account && !accountCheckError)} authError={accountCheckError}
       onRetryAccount={() => setAccountCheckNonce(value => value + 1)}

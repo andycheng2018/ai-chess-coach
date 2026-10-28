@@ -7,6 +7,8 @@ export type BotRuntimeStatus = {
   lastMoveMs?: number | null;
   activeGames?: number;
   lastGameId?: string | null;
+  demoGames?: string[];
+  unratedGames?: string[];
   gameId?: string | null;
   error?: string | null;
   message?: string;
@@ -50,6 +52,13 @@ export function acceptBotChallenge(challengeId: string, opponent: string): Promi
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ opponent }),
+  });
+}
+
+export function setBotDemoMode(gameId: string, enabled: boolean): Promise<BotRuntimeStatus> {
+  return jsonRequest(`/api/bot/game/${encodeURIComponent(gameId)}/demo-mode`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
   });
 }
 

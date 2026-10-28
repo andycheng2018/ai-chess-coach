@@ -28,14 +28,14 @@ export type VbotStatus = {
   companionApiVersion?: number; generation: number; armed: boolean;
   mode: 'live' | 'rehearsal'; gameId: string; target: string; busy: boolean;
   cooldownRemaining: number; danceCooldownRemaining: number; events: VbotEvent[];
-  readinessFresh?: boolean; sadPresetVerified?: boolean;
-  smallPresets?: string[]; smallPresetCandidates?: string[];
+  readinessFresh?: boolean; sadPresetVerified?: boolean; finishPending?: boolean; victoryPending?: boolean;
+  smallPresets?: string[]; smallPresetCandidates?: string[]; operatorApprovedPresets?: string[];
   readiness?: { ready: boolean; target: string; reason?: string; checkedAt: number } | null;
   verification?: { applicationVersion?: string | null } | null;
 };
 
 /** Mutations are deliberate single requests. Never retry a physical operation. */
-export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm', body?: object): Promise<VbotStatus> {
+export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm' | 'finish', body?: object): Promise<VbotStatus> {
   const response = await fetch(`${CONTROL_URL}/api/vbot/${path}`, {
     ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(path === 'check' ? 30000 : 10000),
@@ -49,7 +49,7 @@ export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm
 
 export type VbotConnectPayload = {
   gameId: string; playerColor: 'white' | 'black'; mode: 'live' | 'rehearsal';
-  target: string; preset: string; applicationVersion: string;
+  target: string; preset: string; applicationVersion: string; practice?: boolean;
   confirmSafeWorkspace: boolean; confirmHandsetStop: boolean;
 };
 
@@ -76,7 +76,8 @@ export function vbotNeedsDetach(status: VbotStatus, context: { gameId: string | 
 
 export function vbotReactionLabel(preset: string): string {
   const labels: Record<string, string> = {
-    'actions/WAVE.json': 'Wave', 'atom/look_left.json': 'Look left',
+    'actions/HAPPY_LITTLE_JUMP.json': 'Small happy jump', 'actions/HAPPY_JUMP.json': 'Happy jump',
+    'actions/JUMP_IN_PLACE.json': 'Jump in place', 'actions/WAVE.json': 'Wave', 'atom/look_left.json': 'Look left',
     'atom/look_right.json': 'Look right', 'atom/look_forward.json': 'Look forward',
     'atom/look_up.json': 'Look up', 'atom/look_down.json': 'Look down',
     'actions/SHAKEHAND.json': 'Handshake', 'actions/SHAKEHAND_L.json': 'Left handshake',
