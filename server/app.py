@@ -1753,6 +1753,8 @@ class Handler(BaseHTTPRequestHandler):
                     response = vbot_demo.finish_game(payload, runtime.game_state)
                 elif self.path == "/api/vbot/disarm":
                     response = vbot_demo.disarm(payload)
+                elif self.path == "/api/vbot/networks/remember":
+                    response = vbot_demo.remember_network(payload)
                 elif self.path == "/api/vbot/check":
                     response = vbot_demo.check_device(payload)
                 elif self.path == "/api/vbot/connect":

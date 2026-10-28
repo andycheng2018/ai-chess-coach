@@ -24,7 +24,14 @@ export type VbotEvent = {
   reason?: string; message?: string; preset?: string; requestId?: string;
   readyForNext?: boolean; postflightReason?: string; durationMs?: number;
 };
+export type VbotNetwork = {
+  current: { id: string | null; ssid?: string | null; localIp?: string; subnet?: string; gateway?: string; message?: string | null };
+  label?: string | null; suggestedTarget?: string | null; error?: string | null;
+  addresses: { target: string; lastVerifiedAt?: number | null }[];
+  profiles: { id: string; label: string; targets: string[] }[];
+};
 export type VbotStatus = {
+  network?: VbotNetwork | null;
   companionApiVersion?: number; generation: number; armed: boolean;
   mode: 'live' | 'rehearsal'; gameId: string; target: string; busy: boolean;
   cooldownRemaining: number; danceCooldownRemaining: number; events: VbotEvent[];
@@ -35,7 +42,7 @@ export type VbotStatus = {
 };
 
 /** Mutations are deliberate single requests. Never retry a physical operation. */
-export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm' | 'finish', body?: object): Promise<VbotStatus> {
+export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm' | 'finish' | 'networks/remember', body?: object): Promise<VbotStatus> {
   const response = await fetch(`${CONTROL_URL}/api/vbot/${path}`, {
     ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(path === 'check' ? 30000 : 10000),

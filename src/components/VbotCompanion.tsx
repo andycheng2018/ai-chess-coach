@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { vbotEventText, vbotReactionLabel } from '../vbotDemo';
 import type { VbotCompanionControl } from '../useVbotCompanion';
 
@@ -7,9 +7,20 @@ type Props = { control: VbotCompanionControl; gameId: string | null; canArm: boo
 export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, practice = false, demoOpponent = false }: Props) {
   const { status, pending, offline, error } = control;
   const [target, setTarget] = useState(status?.target || '');
+  const [networkLabel, setNetworkLabel] = useState('');
+  const networkSeen = useRef<string | null>(null);
   const [space, setSpace] = useState(false);
   const [stop, setStop] = useState(false);
-  useEffect(() => { if (!target && status?.target) setTarget(status.target); }, [status?.target, target]);
+  useEffect(() => {
+    if (!status) return;
+    const key = status.network ? status.network.current.id || [status.network.current.subnet || '', status.network.current.gateway || ''].join('|') : 'manual';
+    if (networkSeen.current !== key) {
+      networkSeen.current = key;
+      setTarget(status.target || '');
+      setNetworkLabel(status.network?.label || status.network?.current.ssid || '');
+      setSpace(false); setStop(false);
+    }
+  }, [status]);
   useEffect(() => { setSpace(false); setStop(false); }, [gameId, target]);
   const nativeAvailable = status?.companionApiVersion === 1;
   const linked = Boolean(status?.armed && status.gameId === gameId);
@@ -44,15 +55,36 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
       : (status?.cooldownRemaining || 0) > 0 ? `Resting for ${Math.ceil(status?.cooldownRemaining || 0)}s before another reaction.`
       : 'Listening for the next eligible coach verdict. Earlier moves are not replayed.'}</p>}
     {!linked && attention && <p className="vbot-notice" role="status">Paused: {attention.reason || attention.message} Inspect VBOT, then check again before enabling reactions.</p>}
+    {status?.network && <div className="vbot-network-summary" role="status">
+      <strong>Mac network: {status.network.label || status.network.current.ssid || status.network.current.subnet || 'unavailable'}</strong>
+      {status.network.current.localIp && <span> · Mac {status.network.current.localIp}</span>}
+      <p>{status.network.error || status.network.current.message || 'Network recognized from local settings.'}</p>
+      <p>{status.network.suggestedTarget ? `Remembered robot: ${status.network.suggestedTarget}. Check before enabling.` : 'No robot address remembered here yet. Enter it under Robot connection, then save or check it.'}</p>
+    </div>}
     {!canArm && !ended && blockedReason && <p className="vbot-notice">{blockedReason}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
     {status && !nativeAvailable && <p className="vbot-notice">Restart the local coach server to enable integrated VBOT controls.</p>}
     {status?.armed || status?.busy ? <div className="vbot-actions"><button className="vbot-off" disabled={pending} onClick={() => void control.off()}>{status?.victoryPending ? 'Cancel victory dance & turn off' : 'Turn reactions off'}</button></div>
       : <>
-        <details className="vbot-settings"><summary>Robot connection</summary>
+        <details className="vbot-settings"><summary>Robot connection · remembered networks</summary>
+          {!!status?.network?.addresses.length && <label>Saved addresses on this network
+            <select aria-label="Saved VBOT address" value={status.network.addresses.some(a => a.target === target) ? target : ''}
+              disabled={locked} onChange={e => { if (e.target.value) setTarget(e.target.value); }}>
+              <option value="">Enter an address manually</option>
+              {status.network.addresses.map(a => <option key={a.target} value={a.target}>{a.target} · {a.lastVerifiedAt ? 'SSH verified' : 'needs check'}</option>)}
+            </select>
+          </label>}
           <label htmlFor="vbot-target">Robot SSH address</label>
           <input id="vbot-target" value={target} onChange={e => setTarget(e.target.value)} disabled={locked} placeholder="vbot@192.168.0.170" autoComplete="off" />
           <small>Uses this Mac’s existing SSH key. No passwords are stored here.</small>
+          {status?.network && <>
+            <label htmlFor="vbot-network-label">Network label</label>
+            <input id="vbot-network-label" placeholder="Home / Rich’s hotspot" value={networkLabel} onChange={e => setNetworkLabel(e.target.value)} disabled={locked} maxLength={80} />
+            <button className="ghost" disabled={locked || !target.trim() || !status.network.current.id || Boolean(status.network.error)}
+              onClick={() => { if (status.network?.current.id) void control.remember(target.trim(), networkLabel, status.network.current.id); }}>Remember for this network</button>
+            <p className="vbot-footnote">A successful Check robot also remembers the address. Changing networks turns live reactions off; saved addresses never enable movement automatically.</p>
+            {!!status.network.profiles.length && <ul>{status.network.profiles.map(p => <li key={p.id}>{p.label}: {p.targets.join(', ')}</li>)}</ul>}
+          </>}
         </details>
         <div className="vbot-actions"><button className="ghost" disabled={locked || !target.trim()} onClick={() => void control.check(target.trim())}>{pending ? 'Checking…' : 'Check robot'}</button>
           <button className="ghost" disabled={locked || !canArm} onClick={() => void control.connect('rehearsal', target.trim(), false)}>Preview without motion</button></div>
