@@ -24,4 +24,6 @@ if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
   exit 1
 fi
 
+echo "⚡ Coaching history and Audit Studio: http://localhost:${PORT:-${CHESS_SERVER_PORT:-8765}}/audit"
+
 npm run dev

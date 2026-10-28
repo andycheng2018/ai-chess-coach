@@ -4,16 +4,15 @@ import {
   CapacitorBarcodeScannerScanOrientation,
   type CapacitorBarcodeScannerTypeHint,
 } from '@capacitor/barcode-scanner';
-
-import {
-  joinSenseRoom,
-  parseSenseRoomUrl,
-  type BotRuntimeStatus,
-} from './botControl';
+import { Capacitor } from '@capacitor/core';
 
 const QR_CODE = 0 as CapacitorBarcodeScannerTypeHint;
 
-export async function scanSenseRoom(): Promise<BotRuntimeStatus> {
+export async function scanSenseRoomUrl(): Promise<string> {
+  if (!Capacitor.isNativePlatform()) {
+    const { scanWebSenseRoom } = await import('./webSenseScanner');
+    return scanWebSenseRoom();
+  }
   const result = await CapacitorBarcodeScanner.scanBarcode({
     hint: QR_CODE,
     cameraDirection: CapacitorBarcodeScannerCameraDirection.BACK,
@@ -27,10 +26,5 @@ export async function scanSenseRoom(): Promise<BotRuntimeStatus> {
     throw new Error('No QR code was scanned.');
   }
 
-  const room = parseSenseRoomUrl(rawValue);
-
-  return joinSenseRoom(
-    room.challengeId,
-    room.color,
-  );
+  return rawValue;
 }

@@ -37,6 +37,27 @@ Stockfish is responsible for evaluations, best moves, tactics, and move classifi
 * **Adjustable opponent strength**: Stockfish-based opponent with multiple practice levels.
 * **iOS + web**: built as a React web app and packaged for iPhone using Capacitor.
 
+Learning notes, game evaluations, and model audits share one coaching history in
+`logs/coach_logs.jsonl`. The Learning log and game reports read the latest move
+records; Audit Studio links those records to each raw model attempt, including
+correction drafts, failures, and the validated wording returned by the coach.
+Open **Inspect coaching record** in a position review, or visit
+`http://localhost:8765/audit` with the backend running. No separate dashboard
+server is needed.
+
+On macOS, double-click **Open Chess Coach.command** in Finder to start the app
+and open it in your browser. Keep its Terminal window open while playing;
+Control-C stops the servers it started. Running app servers are reused.
+
+The browser keeps one offline history cache and migrates the older Learning log
+and game evaluation storage automatically. Pending uploads remain cached until
+the backend acknowledges them. Historical notes without a captured model call
+remain reviewable, but cannot supply missing raw prompts or responses. Clearing
+model attempts in Audit Studio preserves Learning records and reports. The
+journal is ignored by Git; preserve the `logs/` directory when moving or
+redeploying the backend. OpenAI calls use `store=False` because the application
+keeps its audit records in this journal.
+
 ## How it works
 
 A typical game looks like this:
@@ -51,11 +72,75 @@ A typical game looks like this:
 
 This separation was important to me because LLMs can explain ideas well, but they are not reliable chess engines (As of 2026, AI is in general pretty bad at chess. They are great at hallucinating where pieces are, thus making many illegal moves). I use **Stockfish as the source of truth** and AI only for communication.
 
+## Analysis library and saved games
+
+Choose **Open analysis library** before sign-in or **Analysis library** in the
+app header. This navigation page has Cards, List, and Compact layouts, search,
+**New analysis**, and an archive with Restore. Each save has its own URL
+(`#analysis/<save-id>`), board, variations, engine settings, and layout. Browser
+Back/Forward and refreshing the page preserve your selected save.
+
+Use **Save game** or **Analyze this position** in a training game to store its
+played moves. Returning to the same game's save refreshes the played main line
+and retains analysis branches. **Save a copy** creates an independent version.
+Game PGN exports include known players, result, and Lichess link. Analysis moves
+never call the Lichess move API or control SenseRobot; a live clock continues.
+
+Editing a board autosaves. Names save on blur or Enter; **Save** also confirms a
+manual save. Storage is local to this browser, with up to 100 pages; it is not an
+account/cloud backup. **Download PGN** exports the game and all variation
+branches. Import accepts a FEN or a PGN main line into the currently open save.
+The unified library uses `ai-chess-coach.analysis-library.v2` and recovers the
+previous single draft without deleting its original backup. Storage failures
+and conflicting writes from another tab are shown visibly; the current local
+draft remains open for a PGN download.
+
+Play either side, choose promotions, revisit moves to create alternatives, and
+click a Stockfish continuation to add it to your tree. Scores favor White when
+positive and Black when negative; M means forced mate. Search controls offer:
+
+- **Time presets:** Quick, Balanced, and Deep use finite search budgets.
+- **Exact depth:** Enter a whole number from 1 to 128 and click **Apply depth**.
+- **Unlimited:** Continuously deepen without a depth/time cap; **Stop search**
+  retains the last evaluation. Leaving the page or changing position stops it.
+
+Depth and unlimited searches publish intermediate results using the same
+Stockfish adapter and scoring as presets. One stoppable long-search worker is
+allowed alongside the live coaching engine. Another browser session receives a
+busy message; an abandoned worker stops after its renewable 12-second lease
+expires. This analysis mode does not call the language model.
+
+Choose **Board left**, **Board right**, or **Stacked** for each saved page.
+Drag the arrow dividers to resize the board/tools split, engine panel, or
+variation panel; focused dividers also support arrow keys and Home/End. In the
+stacked layout the board divider controls board size. Narrow screens stack the
+sections automatically.
+
 ## SenseRobot Integration
 
 Chess Buddy can also work with a physical **SenseRobot** chess board.
 
-The iPhone app scans the room QR code created by SenseRobot and connects the Chess Buddy bot to the corresponding Lichess game. Moves made on the physical board are synchronized through Lichess, allowing the same coaching system to analyze a real over-the-board game.
+Choose **Connect my SenseRobot** on the sign-in screen or training screen to open
+the guided setup. It remembers your progress across Lichess sign-in, checks the
+coach server, Stockfish, AI configuration, and training bot, and accepts either a
+camera scan or a pasted Lichess room link. Returning from another app refreshes
+the checks. After the bot joins, setup waits for the Lichess game stream to
+confirm the account, opponent, and board before showing the connected state.
+The backend supplies the bot identity and the selected strength is applied
+automatically; the SenseRobot room supplies the clock and color.
+
+Wi-Fi and SenseRobot account linking are guided handoffs to the companion app.
+Network selection and passwords remain there: this browser cannot scan nearby
+networks or provision the robot. These steps are labeled as player confirmations,
+distinct from live service/game checks. The documented network and account menu
+paths come from the [SenseRobot FAQ](https://www.senserobotchess.com/pages/chess-faq);
+room menus vary by model/firmware, so setup links the manufacturer's model guides.
+
+Moves made on the physical board are synchronized through Lichess, allowing the
+same coaching system to analyze a real over-the-board game. A successfully joined
+room is remembered locally and physical-board mode is restored on refresh only
+after Lichess confirms the same game, player, and training bot. Setup never saves
+Wi-Fi passwords or room URLs. Existing games must finish before joining a new room.
 
 This was one of the more interesting parts of the project because it connects:
 

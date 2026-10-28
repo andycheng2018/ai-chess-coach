@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import chess
 import requests
@@ -21,6 +22,8 @@ load_dotenv(ROOT / ".env")
 from bot_runtime import BOT_LEVELS, runtime
 from coach.opening_recognizer import recognize_opening
 from coach.stockfish_analyzer import StockfishAnalyzer, capture_context, find_stockfish
+from coach.history import history
+from coach.analysis_search import analysis_searches
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 
@@ -334,6 +337,8 @@ def generate_llm_coaching(
     detail: str = "balanced",
     language: str = "en",
     recent_feedback: list[str] | None = None,
+    game_id: str = "",
+    record_id: str = "",
 ) -> dict[str, Any]:
     """
     Generate real LLM wording.
@@ -358,6 +363,8 @@ def generate_llm_coaching(
                 detail=detail,
                 language=language,
                 recent_feedback=recent_feedback or [],
+                game_id=game_id,
+                record_id=record_id,
             )
 
         print(
@@ -854,7 +861,63 @@ def analyze_move(
                 "explanationPending": False,
             })
 
+    game_id = str(payload.get("gameId") or "").strip()
+    result.update({
+        "recordId": result.get("analysisId") or uuid.uuid4().hex,
+        "gameId": game_id,
+        "savedAt": int(time.time() * 1000),
+        "playerColor": "white" if board.turn == chess.WHITE else "black",
+        "language": language,
+        "wordingSource": "pending" if should_coach else "engine",
+    })
+    # The cached analysis and persisted review refer to the same moment.
+    if should_coach:
+        analysis["_history_record"] = dict(result)
+    if game_id:
+        history.save_records(game_id, [result])
     return result
+
+
+def analysis_board(payload: dict[str, Any]) -> chess.Board:
+    fen = payload.get("rootFen")
+    moves = payload.get("moves", [])
+    if not isinstance(fen, str) or len(fen) > 200:
+        raise ValueError("A valid rootFen is required.")
+    if not isinstance(moves, list) or len(moves) > 512:
+        raise ValueError("moves must contain at most 512 legal UCI moves.")
+    try:
+        board = chess.Board(fen)
+    except ValueError as exc:
+        raise ValueError("Invalid FEN.") from exc
+    if not board.is_valid():
+        raise ValueError("The position is not a legal standard-chess position.")
+    for uci in moves:
+        if not isinstance(uci, str) or len(uci) not in {4, 5}:
+            raise ValueError("Invalid analysis move.")
+        try:
+            move = chess.Move.from_uci(uci)
+        except ValueError as exc:
+            raise ValueError("Invalid analysis move.") from exc
+        if move not in board.legal_moves:
+            raise ValueError(f"Illegal analysis move: {uci}")
+        board.push(move)
+    return board
+
+
+def analyze_position(payload: dict[str, Any]) -> dict[str, Any]:
+    board = analysis_board(payload)
+    profile = COACH_ANALYSIS_PROFILES.get(str(payload.get("detail", "balanced")), COACH_ANALYSIS_PROFILES["balanced"])
+    # A rapidly edited board must not create an unbounded engine queue behind
+    # live coaching. The client retries a busy engine with a cancellable delay.
+    if not _analyzer_lock.acquire(timeout=0.25):
+        raise RuntimeError("The chess engine is busy. Try again in a moment.")
+    try:
+        return get_analyzer().analyze_position(board, time_ms=profile["time_ms"])
+    except (chess.engine.EngineError, chess.engine.EngineTerminatedError):
+        reset_analyzer()
+        raise
+    finally:
+        _analyzer_lock.release()
 
 
 def explain_analysis(
@@ -924,12 +987,31 @@ def explain_analysis(
                     value[:600]
                 )
 
-    return generate_llm_coaching(
+    game_id = str(
+        payload.get("gameId") or payload.get("game_id") or ""
+    ).strip()
+
+    record = analysis.get("_history_record", {})
+    bound_game_id = record.get("gameId")
+    if bound_game_id and game_id and bound_game_id != game_id:
+        raise ValueError("gameId does not match the cached analysis")
+    game_id = bound_game_id or game_id
+
+    wording = generate_llm_coaching(
         analysis,
         detail=detail,
         language=language,
         recent_feedback=recent_feedback,
+        game_id=game_id,
+        record_id=analysis_id,
     )
+    if game_id and record:
+        history.save_records(game_id, [{
+            **record, **wording, "gameId": game_id, "language": language,
+            "explanationPending": False, "wordingSource": "llm",
+            "savedAt": int(time.time() * 1000),
+        }])
+    return wording
 
 
 
@@ -1269,6 +1351,10 @@ def critical_position_question(
         "attacked_target_details"
     ] = attacked_target_details[:4]
 
+    game_id = str(
+        payload.get("gameId") or payload.get("game_id") or ""
+    ).strip()
+
     try:
         with _llm_lock:
             wording = (
@@ -1277,6 +1363,7 @@ def critical_position_question(
                     position,
                     language=language,
                     recent_questions=recent_questions,
+                    game_id=game_id,
                 )
             )
     except Exception as exc:
@@ -1326,6 +1413,8 @@ class Handler(BaseHTTPRequestHandler):
             "capacitor://localhost",
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "http://localhost:3333",
+            "http://127.0.0.1:3333",
         }
 
         allowed_origins.update(EXTRA_CORS_ORIGINS)
@@ -1443,7 +1532,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/api/health":
+        if urlsplit(self.path).path in {"/audit", "/audit/"}:
+            try:
+                self._send_bytes(200, (ROOT / "audit-dashboard" / "index.html").read_bytes(), "text/html; charset=utf-8")
+            except OSError:
+                self._send(404, {"message": "Audit Studio is unavailable"})
+        elif self.path == "/api/health":
             warning = None
             stockfish = None
             try:
@@ -1452,6 +1546,7 @@ class Handler(BaseHTTPRequestHandler):
                 warning = str(exc)
             self._send(200, {
                 "ok": True,
+                "coach": {"configured": bool(os.environ.get("OPENAI_API_KEY", "").strip())},
                 "stockfish": stockfish,
                 "bot": runtime.status(),
                 "coachTimeMs": COACH_TIME_MS,
@@ -1513,12 +1608,38 @@ class Handler(BaseHTTPRequestHandler):
                     for level in BOT_LEVELS.values()
                 ]
             })
+        elif urlsplit(self.path).path == "/api/coach/history":
+            game_id = parse_qs(urlsplit(self.path).query).get("gameId", [""])[0]
+            if not game_id:
+                self._send(400, {"message": "gameId is required"})
+                return
+            try:
+                self._send(200, {"gameId": game_id, "records": history.session(game_id)})
+            except OSError as exc:
+                self._send(500, {"message": f"Failed to read coach history: {exc}"})
+        elif self.path == "/api/logs":
+            try:
+                logs_list = history.audit_entries()
+                self._send(200, {"logs": logs_list, "total": len(logs_list), "file": str(history.path)})
+            except OSError as exc:
+                self._send(500, {"message": f"Failed to read logs: {exc}"})
         else:
             self._send(404, {"message": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         try:
-            if self.path == "/api/bot/start":
+            if self.path == "/api/logs/clear":
+                history.clear_attempts()
+                self._send(200, {"ok": True, "message": "Model attempts cleared; learning records preserved"})
+            elif self.path == "/api/coach/history":
+                payload = self._json_body()
+                records = payload.get("records")
+                if not isinstance(records, list):
+                    raise ValueError("records must be an array")
+                game_id = str(payload.get("gameId") or "").strip()
+                saved = history.save_records(game_id, records)
+                self._send(200, {"gameId": game_id, "records": saved})
+            elif self.path == "/api/bot/start":
                 self._send(200, runtime.start())
             elif self.path == "/api/bot/stop":
                 self._send(200, runtime.stop())
@@ -1576,6 +1697,15 @@ class Handler(BaseHTTPRequestHandler):
                         self._json_body()
                     ),
                 )
+            elif self.path == "/api/analysis/position":
+                self._send(200, analyze_position(self._json_body()))
+            elif self.path == "/api/analysis/search":
+                payload = self._json_body()
+                self._send(200, analysis_searches.start(payload, analysis_board(payload)))
+            elif self.path == "/api/analysis/search/status":
+                self._send(200, analysis_searches.status(self._json_body()))
+            elif self.path == "/api/analysis/search/stop":
+                self._send(200, analysis_searches.stop(self._json_body()))
             elif self.path == "/api/coach/explain":
                 self._send(
                     200,
@@ -1632,6 +1762,7 @@ if __name__ == "__main__":
         pass
     finally:
         server.server_close()
+        analysis_searches.close()
         runtime.stop()
         with _analyzer_lock:
             reset_analyzer()

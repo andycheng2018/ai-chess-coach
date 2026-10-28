@@ -5,4 +5,4 @@ if [[ ! -d node_modules ]]; then
   echo "Run ./setup_mac.sh first."
   exit 1
 fi
-exec npm run dev
+exec npm run dev -- "$@"

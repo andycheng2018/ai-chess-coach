@@ -5,6 +5,12 @@ export type CoachArrow = {
 };
 
 export type CoachResult = {
+  recordId?: string;
+  gameId?: string;
+  savedAt?: number;
+  playerColor?: 'white' | 'black';
+  language?: CoachLanguage;
+  wordingSource?: 'pending' | 'engine' | 'llm' | 'fallback' | 'legacy';
   shouldCoach: boolean;
   moveNumber: number;
   ply: number;
@@ -172,6 +178,7 @@ export type CoachLanguage =
   | 'zh-CN';
 
 export type CoachWording = {
+  recordId?: string;
   title: string;
   feedback: string;
   lesson: string;
@@ -179,7 +186,7 @@ export type CoachWording = {
   themes: ChessTheme[];
 };
 
-const CONTROL_URL =
+export const CONTROL_URL =
   import.meta.env.VITE_BOT_CONTROL_URL ||
   'http://127.0.0.1:8765';
 
@@ -190,6 +197,7 @@ export async function analyzeMove(
   detailOrSignal: CoachDetail | AbortSignal = 'balanced',
   maybeSignal?: AbortSignal,
   language: CoachLanguage = 'en',
+  gameId?: string,
   moves: string[] = [],
 ): Promise<CoachResult> {
   const detail: CoachDetail =
@@ -214,6 +222,7 @@ export async function analyzeMove(
         move,
         detail,
         language,
+        gameId,
         moves,
       }),
       signal,
@@ -245,6 +254,7 @@ export async function explainMove(
   language: CoachLanguage = 'en',
   recentFeedback: string[] = [],
   signal?: AbortSignal,
+  gameId?: string,
 ): Promise<CoachWording> {
   const response = await fetch(
     `${CONTROL_URL}/api/coach/explain`,
@@ -258,6 +268,7 @@ export async function explainMove(
         detail,
         language,
         recentFeedback,
+        gameId,
       }),
       signal,
     },
@@ -326,6 +337,7 @@ export async function checkCriticalPosition(
   detail: CoachDetail = 'balanced',
   recentQuestions: string[] = [],
   signal?: AbortSignal,
+  gameId?: string,
 ): Promise<CriticalPositionPrompt> {
   const response = await fetch(
     `${CONTROL_URL}/api/coach/critical-question`,
@@ -342,6 +354,7 @@ export async function checkCriticalPosition(
         language,
         detail,
         recentQuestions,
+        gameId,
       }),
       signal,
     },

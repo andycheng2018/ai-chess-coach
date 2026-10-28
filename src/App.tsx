@@ -1,19 +1,32 @@
-import { scanSenseRoom } from './senseScanner';
+import { scanSenseRoomUrl } from './senseScanner';
+import { AnalysisStudio } from './components/AnalysisStudio';
+import { analysisRoute, goToAnalysis } from './analysisLibrary';
+import type { AnalysisSeed } from './analysis';
+import { SenseRobotSetup } from './components/SenseRobotSetup';
+import { isRememberedSenseGame, readSenseSetup, saveSenseSetup } from './senseSetup';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Move, type Square } from 'chess.js';
 import { ChessBoard, type Arrow } from './components/ChessBoard';
+import { NavBar, type AppView } from './components/NavBar';
+import { SideBar } from './components/SideBar';
+import { CoachWindow } from './components/CoachWindow';
+import { HomeHub } from './components/HomeHub';
+import { ProfileModal } from './components/ProfileModal';
+import { MenuModal } from './components/MenuModal';
 import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativeOAuth } from './auth';
-import { acceptBotChallenge, getBotStatus, getCachedGameState, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
+import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, startBot, type BotRuntimeStatus } from './botControl';
 import {
   analyzeMove,
   checkCriticalPosition,
   explainMove,
+  CONTROL_URL,
   fetchOpeningStatus,
   type ChessTheme,
   type CoachLanguage,
   type CoachResult,
   type OpeningState,
 } from './coach';
+import { cacheHistoryRecords, mergeHistoryRecords, readHistoryRecords, syncCachedHistory, syncHistory } from './coachHistory';
 import {
   checkTtsStatus,
   markCoachVoiceIdle,
@@ -96,9 +109,8 @@ function formatOpeningStatus(
   return '';
 }
 
-const BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'bot_2435';
+const DEFAULT_BOT_USERNAME = import.meta.env.VITE_COACH_BOT_USERNAME || 'MonkeyKingZach';
 const ACTIVE_GAME_STORAGE_KEY = 'ai-chess-coach.active-game.v1';
-const LEARNING_LOG_STORAGE_KEY = 'ai-chess-coach.learning-log.v2';
 const TIME_CONTROL_STORAGE_KEY = 'ai-chess-coach.time-control.v1';
 
 type StoredGame = { gameId: string; username?: string; savedAt: number };
@@ -114,20 +126,11 @@ type CoachNote =
     gameId: string;
     savedAt: number;
     playerColor:
-      | 'white'
-      | 'black';
+    | 'white'
+    | 'black';
     language?: CoachLanguage;
   };
 type ReviewTarget = CoachResult & { playerColor?: 'white' | 'black' };
-type StoredLearningSession = { gameId: string; username?: string; updatedAt: number; notes: CoachNote[] };
-
-type StoredEvaluationSession = {
-  gameId: string;
-  username?: string;
-  updatedAt: number;
-  evaluations: CoachResult[];
-};
-
 type GameReport = {
   strengths: string[];
   improvements: string[];
@@ -142,81 +145,14 @@ type PuzzleState =
 type CriticalPrompt = {
   mateThreat?: boolean;
   kind:
-    | 'threat'
-    | 'opportunity'
-    | 'decision'
-    | 'check';
+  | 'threat'
+  | 'opportunity'
+  | 'decision'
+  | 'check';
   title: string;
   question: string;
   ply: number;
 };
-
-const GAME_EVALUATION_STORAGE_KEY =
-  'ai-chess-coach.game-evaluations.v1';
-
-function readEvaluationSessions(): StoredEvaluationSession[] {
-  try {
-    const raw = window.localStorage.getItem(
-      GAME_EVALUATION_STORAGE_KEY,
-    );
-
-    if (!raw) return [];
-
-    const parsed = JSON.parse(raw);
-
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed.filter(
-      (session): session is StoredEvaluationSession =>
-        Boolean(
-          session &&
-          typeof session.gameId === 'string' &&
-          Array.isArray(session.evaluations),
-        ),
-    );
-  } catch {
-    return [];
-  }
-}
-
-function readGameEvaluations(
-  gameId: string,
-): CoachResult[] {
-  return (
-    readEvaluationSessions().find(
-      (session) => session.gameId === gameId,
-    )?.evaluations || []
-  );
-}
-
-function storeGameEvaluations(
-  gameId: string,
-  username: string | undefined,
-  evaluations: CoachResult[],
-) {
-  try {
-    const existing = readEvaluationSessions().filter(
-      (session) => session.gameId !== gameId,
-    );
-
-    const next: StoredEvaluationSession[] = [
-      {
-        gameId,
-        username,
-        updatedAt: Date.now(),
-        evaluations,
-      },
-      ...existing,
-    ].slice(0, 8);
-
-    window.localStorage.setItem(
-      GAME_EVALUATION_STORAGE_KEY,
-      JSON.stringify(next),
-    );
-  } catch {
-    // localStorage may be unavailable.
-  }
-}
 
 function classificationWeight(
   classification: CoachResult['classification'],
@@ -432,15 +368,15 @@ function buildPracticePuzzle(
   const replyThemePriority =
     replyPuzzleTheme
       ? PRACTICE_THEME_PRIORITY.indexOf(
-          replyPuzzleTheme,
-        )
+        replyPuzzleTheme,
+      )
       : Number.POSITIVE_INFINITY;
 
   const bestThemePriority =
     bestPuzzleTheme
       ? PRACTICE_THEME_PRIORITY.indexOf(
-          bestPuzzleTheme,
-        )
+        bestPuzzleTheme,
+      )
       : Number.POSITIVE_INFINITY;
 
   const preferReplyPuzzle =
@@ -842,72 +778,72 @@ function namedThemeReport(
     en: string;
     zh: string;
   }> = [
-    {
-      themes: ['Fork / Double Attack', 'Double Check'],
-      en: 'Watch for one move attacking two targets at once, especially with checks.',
-      zh: '留意一步同时攻击两个目标的机会，尤其是带将军的双攻。',
-    },
-    {
-      themes: ['Pin', 'Skewer', 'X-Ray Attack'],
-      en: 'Scan every rank, file, and diagonal for pieces lined up behind one another.',
-      zh: '沿横线、直线和斜线检查棋子是否前后排成一线。',
-    },
-    {
-      themes: ['Discovered Attack', 'Discovered Check', 'Windmill'],
-      en: 'Before moving a piece, check whether it uncovers an attack from behind it.',
-      zh: '移动棋子前，检查它是否会为后方棋子打开攻击线路。',
-    },
-    {
-      themes: ['Hanging Piece', 'Trapped Piece'],
-      en: 'Check loose pieces and escape squares before committing to your move.',
-      zh: '落子前检查没有保护的棋子，以及受攻棋子是否还有退路。',
-    },
-    {
-      themes: ['Deflection', 'Decoy', 'Removal of the Defender', 'Overloading', 'Interference'],
-      en: 'Identify the key defender, then look for a forcing way to distract or remove it.',
-      zh: '先找出关键防守子，再寻找强制手段将它引开或消除。',
-    },
-    {
-      themes: ['Back-Rank Weakness', 'Back-Rank Mate', 'Mating Net', 'Smothered Mate', 'Support Mate', 'Checkmate Pattern', 'Mate in One', 'Mate in Two', 'Mate in Three or More', 'Forced Mate'],
-      en: 'When the king has limited escape squares, calculate every check before choosing another move.',
-      zh: '当王缺少逃跑格时，先算清所有将军，再考虑其他走法。',
-    },
-    {
-      themes: ['Sacrifice', 'Exchange Sacrifice', 'Queen Sacrifice', 'Clearance Sacrifice', 'Clearance', 'Desperado'],
-      en: 'Do not judge the material immediately; calculate the forcing payoff and resulting position.',
-      zh: '不要只看眼前子力，要算清强制收益和弃子后的局面。',
-    },
-    {
-      themes: ['Zwischenzug', 'Perpetual Check'],
-      en: 'Before an automatic recapture, look for an in-between check, capture, or forcing threat.',
-      zh: '自动回吃前，先找中间将军、吃子或其他强制威胁。',
-    },
-    {
-      themes: ['Attack on f7 / f2', 'Attacking the Castled King', 'Vulnerable King', 'King Safety'],
-      en: 'Count attackers, defenders, and escape squares before opening lines around either king.',
-      zh: '打开王周围线路前，数清进攻子、防守子和逃跑格。',
-    },
-    {
-      themes: ['Defense', 'Simplification'],
-      en: 'When under pressure, neutralize the concrete threat and consider favorable exchanges.',
-      zh: '受到压力时，先化解具体威胁，再考虑有利的交换和简化。',
-    },
-    {
-      themes: ['Open File', 'Weak Square'],
-      en: 'Notice which files and squares cannot be protected by a pawn, then improve the piece that can use them.',
-      zh: '留意兵无法保护的开放线和弱格，再改善能够利用它们的棋子。',
-    },
-    {
-      themes: ['En Passant'],
-      en: 'After a two-square pawn move, check the en passant option before the one-move window closes.',
-      zh: '对方兵走两格后，立刻检查是否能吃过路兵，因为机会只有一回合。',
-    },
-    {
-      themes: ['Promotion', 'Underpromotion', 'Passed Pawn', 'Opposition', 'Zugzwang', 'Stalemate', 'Endgame Tactic'],
-      en: 'In the endgame, calculate pawn races, king access, and every forcing move precisely.',
-      zh: '残局中要精确计算兵的竞速、王的路线和所有强制着。',
-    },
-  ];
+      {
+        themes: ['Fork / Double Attack', 'Double Check'],
+        en: 'Watch for one move attacking two targets at once, especially with checks.',
+        zh: '留意一步同时攻击两个目标的机会，尤其是带将军的双攻。',
+      },
+      {
+        themes: ['Pin', 'Skewer', 'X-Ray Attack'],
+        en: 'Scan every rank, file, and diagonal for pieces lined up behind one another.',
+        zh: '沿横线、直线和斜线检查棋子是否前后排成一线。',
+      },
+      {
+        themes: ['Discovered Attack', 'Discovered Check', 'Windmill'],
+        en: 'Before moving a piece, check whether it uncovers an attack from behind it.',
+        zh: '移动棋子前，检查它是否会为后方棋子打开攻击线路。',
+      },
+      {
+        themes: ['Hanging Piece', 'Trapped Piece'],
+        en: 'Check loose pieces and escape squares before committing to your move.',
+        zh: '落子前检查没有保护的棋子，以及受攻棋子是否还有退路。',
+      },
+      {
+        themes: ['Deflection', 'Decoy', 'Removal of the Defender', 'Overloading', 'Interference'],
+        en: 'Identify the key defender, then look for a forcing way to distract or remove it.',
+        zh: '先找出关键防守子，再寻找强制手段将它引开或消除。',
+      },
+      {
+        themes: ['Back-Rank Weakness', 'Back-Rank Mate', 'Mating Net', 'Smothered Mate', 'Support Mate', 'Checkmate Pattern', 'Mate in One', 'Mate in Two', 'Mate in Three or More', 'Forced Mate'],
+        en: 'When the king has limited escape squares, calculate every check before choosing another move.',
+        zh: '当王缺少逃跑格时，先算清所有将军，再考虑其他走法。',
+      },
+      {
+        themes: ['Sacrifice', 'Exchange Sacrifice', 'Queen Sacrifice', 'Clearance Sacrifice', 'Clearance', 'Desperado'],
+        en: 'Do not judge the material immediately; calculate the forcing payoff and resulting position.',
+        zh: '不要只看眼前子力，要算清强制收益和弃子后的局面。',
+      },
+      {
+        themes: ['Zwischenzug', 'Perpetual Check'],
+        en: 'Before an automatic recapture, look for an in-between check, capture, or forcing threat.',
+        zh: '自动回吃前，先找中间将军、吃子或其他强制威胁。',
+      },
+      {
+        themes: ['Attack on f7 / f2', 'Attacking the Castled King', 'Vulnerable King', 'King Safety'],
+        en: 'Count attackers, defenders, and escape squares before opening lines around either king.',
+        zh: '打开王周围线路前，数清进攻子、防守子和逃跑格。',
+      },
+      {
+        themes: ['Defense', 'Simplification'],
+        en: 'When under pressure, neutralize the concrete threat and consider favorable exchanges.',
+        zh: '受到压力时，先化解具体威胁，再考虑有利的交换和简化。',
+      },
+      {
+        themes: ['Open File', 'Weak Square'],
+        en: 'Notice which files and squares cannot be protected by a pawn, then improve the piece that can use them.',
+        zh: '留意兵无法保护的开放线和弱格，再改善能够利用它们的棋子。',
+      },
+      {
+        themes: ['En Passant'],
+        en: 'After a two-square pawn move, check the en passant option before the one-move window closes.',
+        zh: '对方兵走两格后，立刻检查是否能吃过路兵，因为机会只有一回合。',
+      },
+      {
+        themes: ['Promotion', 'Underpromotion', 'Passed Pawn', 'Opposition', 'Zugzwang', 'Stalemate', 'Endgame Tactic'],
+        en: 'In the endgame, calculate pawn races, king access, and every forcing move precisely.',
+        zh: '残局中要精确计算兵的竞速、王的路线和所有强制着。',
+      },
+    ];
 
   const group = adviceGroups.find(
     (entry) => entry.themes.includes(theme),
@@ -1215,8 +1151,8 @@ function buildGameReport(
     middlegame.count >= 4 &&
     middlegame.majorMisses <= 1 &&
     middlegame.strong /
-      middlegame.count >=
-      0.5
+    middlegame.count >=
+    0.5
   ) {
     strengths.push(
       isChinese
@@ -1229,8 +1165,8 @@ function buildGameReport(
     lateGame.count >= 3 &&
     lateGame.majorMisses <= 1 &&
     lateGame.strong /
-      lateGame.count >=
-      0.5
+    lateGame.count >=
+    0.5
   ) {
     strengths.push(
       isChinese
@@ -1254,12 +1190,12 @@ function buildGameReport(
   if (
     strengths.length < 2 &&
     goodMoves >=
-      Math.max(
-        3,
-        Math.ceil(
-          ordered.length * 0.55,
-        ),
-      )
+    Math.max(
+      3,
+      Math.ceil(
+        ordered.length * 0.55,
+      ),
+    )
   ) {
     strengths.push(
       isChinese
@@ -1303,11 +1239,11 @@ function buildGameReport(
 
     const noteThemes = note.themes?.length
       ? note.themes.map((theme) =>
-          namedThemeReport(
-            theme,
-            language,
-          ),
-        )
+        namedThemeReport(
+          theme,
+          language,
+        ),
+      )
       : [reportThemeFor(note, language)];
 
     for (const theme of noteThemes) {
@@ -1461,35 +1397,6 @@ function storeActiveGame(gameId: string, username?: string) {
 
 function forgetStoredGame() {
   try { window.localStorage.removeItem(ACTIVE_GAME_STORAGE_KEY); } catch { /* no-op */ }
-}
-
-function readLearningSessions(): StoredLearningSession[] {
-  try {
-    const raw = window.localStorage.getItem(LEARNING_LOG_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((session): session is StoredLearningSession => Boolean(
-      session && typeof session.gameId === 'string' && Array.isArray(session.notes),
-    ));
-  } catch {
-    return [];
-  }
-}
-
-function readLearningNotes(gameId: string): CoachNote[] {
-  return readLearningSessions().find((session) => session.gameId === gameId)?.notes || [];
-}
-
-function storeLearningNotes(gameId: string, username: string | undefined, notes: CoachNote[]) {
-  try {
-    const existing = readLearningSessions().filter((session) => session.gameId !== gameId);
-    const next: StoredLearningSession[] = [
-      { gameId, username, updatedAt: Date.now(), notes: notes.slice(0, 16) },
-      ...existing,
-    ].slice(0, 8);
-    window.localStorage.setItem(LEARNING_LOG_STORAGE_KEY, JSON.stringify(next));
-  } catch { /* no-op */ }
 }
 
 function readPreferredTimeControl(): TimeControlId {
@@ -1760,19 +1667,24 @@ export default function App() {
   const [token, setToken] = useState<string | null>(getToken());
   const [account, setAccount] = useState<Account | null>(null);
   const [status, setStatus] = useState('Ready');
-  const [level, setLevel] = useState<(typeof LEVELS)[number]['id']>('developing');
+  const [level, setLevel] = useState<(typeof LEVELS)[number]['id']>(() =>
+    LEVELS.find(item => item.id === readSenseSetup().level)?.id || 'developing');
   const [timeControlId, setTimeControlId] = useState<TimeControlId>(readPreferredTimeControl);
   const [currentTimeControlLabel, setCurrentTimeControlLabel] = useState('10 min');
   const [preferredColor, setPreferredColor] = useState<'random' | 'white' | 'black'>('random');
   const [bot, setBot] = useState<BotRuntimeStatus>({ running: false, connected: false });
+  // The backend owns the training bot identity, including after validation.
+  const BOT_USERNAME = bot.username || DEFAULT_BOT_USERNAME;
+  const [senseSetupOpen, setSenseSetupOpen] = useState(() => readSenseSetup().open);
+  const [gameStreamConnected, setGameStreamConnected] = useState(false);
+  const [senseConnectionError, setSenseConnectionError] = useState('');
   const [startingGame, setStartingGame] = useState(false);
   const [scanningRoom, setScanningRoom] = useState(false);
   const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const [gameId, setGameId] = useState<string | null>(storedGameAtLoad.current?.gameId ?? null);
-  // SenseRobot mode is intentionally NOT restored from localStorage.
-  // A game becomes a SenseRobot game only after this app successfully
-  // scans and joins a SenseRobot QR room in the current session.
+  // A remembered room is restored only after Lichess confirms that this
+  // account and the training bot are the players in that exact joined game.
   const [senseRobotGameId, setSenseRobotGameId] = useState<string | null>(null);
   const gameIdRef = useRef<string | null>(null);
   const [initialFen, setInitialFen] = useState('startpos');
@@ -1793,6 +1705,7 @@ export default function App() {
   const [endGameConfirm, setEndGameConfirm] = useState(false);
   const [winner, setWinner] = useState<Winner>(null);
   const [gameOverOpen, setGameOverOpen] = useState(false);
+  const autoReportedGameRef = useRef<string | null>(null);
 
   const [coachResult, setCoachResult] = useState<CoachResult | null>(null);
   const [criticalPrompt, setCriticalPrompt] = useState<CriticalPrompt | null>(null);
@@ -1800,8 +1713,21 @@ export default function App() {
   const [coachExplanationPending, setCoachExplanationPending] = useState(false);
   const [playerMoveAnalysisPending, setPlayerMoveAnalysisPending] = useState(false);
   const [coachError, setCoachError] = useState('');
-  const [coachNotes, setCoachNotes] = useState<CoachNote[]>([]);
   const [moveEvaluations, setMoveEvaluations] = useState<CoachResult[]>([]);
+  const [historyStatus, setHistoryStatus] = useState<'syncing' | 'synced' | 'offline' | 'unavailable'>('syncing');
+  const historyRevisionRef = useRef(0);
+  // Learning log and game reports are projections of the same move records.
+  const coachNotes: CoachNote[] = moveEvaluations
+    .filter(record => record.shouldCoach)
+    .sort((a, b) => b.ply - a.ply)
+    .slice(0, 16)
+    .map(record => ({ ...record, gameId: record.gameId || gameId || '',
+      savedAt: record.savedAt || 0, playerColor: record.playerColor || myColor }));
+
+  useEffect(() => {
+    void syncCachedHistory().catch(error => console.warn('Coach history sync postponed:', error));
+  }, []);
+
   const [puzzleOpen, setPuzzleOpen] = useState(false);
   const [puzzleIndex, setPuzzleIndex] = useState(0);
   const [puzzleFen, setPuzzleFen] = useState('');
@@ -1816,8 +1742,40 @@ export default function App() {
   const [coachDetail, setCoachDetail] = useState<CoachDetail>(readCoachDetail);
   const [coachLanguage, setCoachLanguage] = useState<CoachLanguage>(readCoachLanguage);
   const [openingState, setOpeningState] = useState<OpeningState | null>(null);
+  const [currentView, setCurrentView] = useState<AppView>('home');
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [menuModalOpen, setMenuModalOpen] = useState(false);
+  const [navHidden, setNavHidden] = useState(false);
+
+  // Auto-hide top navbar when scrolling down, restore when scrolling up or near top
+  useEffect(() => {
+    let lastScrollY = window.scrollY;
+
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      if (currentScrollY <= 45) {
+        setNavHidden(false);
+      } else if (currentScrollY > lastScrollY + 6 && currentScrollY > 70) {
+        setNavHidden(true);
+      } else if (currentScrollY < lastScrollY - 6) {
+        setNavHidden(false);
+      }
+      lastScrollY = currentScrollY;
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   const [reviewMode, setReviewMode] = useState<CoachReviewMode | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
+  const [analysisOpen, setAnalysisOpen] = useState(() => analysisRoute() !== null);
+  const [analysisSeed, setAnalysisSeed] = useState<AnalysisSeed | null>(null);
+  useEffect(() => {
+    const route = () => { const open = analysisRoute() !== null; setAnalysisOpen(open); if (!open) setAnalysisSeed(null); };
+    window.addEventListener('hashchange', route);
+    return () => window.removeEventListener('hashchange', route);
+  }, []);
   const [historyPly, setHistoryPly] = useState<number | null>(null);
   type CoachJob = {
     id: number;
@@ -1861,9 +1819,9 @@ export default function App() {
   const reviewAnimatingRef = useRef(false);
 
   const position = useMemo(
-  () => replay(initialFen, movesText),
-  [initialFen, movesText],
-);
+    () => replay(initialFen, movesText),
+    [initialFen, movesText],
+  );
 
   const displayPosition = useMemo(() => {
     // null means we are looking at the live/current position.
@@ -1899,7 +1857,7 @@ export default function App() {
     isMyTurn &&
     !moveInFlight &&
     !pendingPromotion;
-    
+
   const isCoachGame = players.white.name.toLowerCase() === BOT_USERNAME.toLowerCase()
     || players.black.name.toLowerCase() === BOT_USERNAME.toLowerCase();
   const coachArrows: Arrow[] = useMemo(() => {
@@ -2121,7 +2079,7 @@ export default function App() {
         if (!disposed && done) setToken(getToken());
       })
       .catch((error) => {
-        if (!disposed) setStatus(String(error));
+        if (!disposed) { setStatus(String(error)); setSenseConnectionError(String(error)); }
       });
 
     // Native iOS callback delivered through chessbuddy://oauth/callback.
@@ -2133,6 +2091,7 @@ export default function App() {
       },
       (error) => {
         if (!disposed) setStatus(error);
+        if (!disposed) setSenseConnectionError(error);
       },
     ).then((removeListener) => {
       if (disposed) {
@@ -2154,6 +2113,7 @@ export default function App() {
       .then(setAccount)
       .catch((error) => {
         setStatus(`Lichess account error: ${String(error)}`);
+        setSenseConnectionError(`Could not confirm your Lichess account: ${String(error)}. Please sign in again.`);
         logout();
         setToken(null);
       });
@@ -2196,7 +2156,7 @@ export default function App() {
       if (!cancelled) setRecoveryChecked(true);
     });
     return () => { cancelled = true; };
-  }, [token, account, setActiveGameId]);
+  }, [token, account, setActiveGameId, BOT_USERNAME]);
 
   useEffect(() => {
     if (!token || !account) return;
@@ -2227,7 +2187,7 @@ export default function App() {
           if (opponent === BOT_USERNAME.toLowerCase()) {
             // A normal Lichess gameStart must stay a normal online game.
             // Preserve SenseRobot mode only when this is the exact game
-            // that was activated by a successful QR scan.
+            // that was activated by a successful room join.
             const startedGameId = event.game.id;
 
             setSenseRobotGameId((current) =>
@@ -2251,7 +2211,7 @@ export default function App() {
       () => setStatus('Reconnecting to Lichess…'),
     );
     return () => controller.abort();
-  }, [token, account, setActiveGameId]);
+  }, [token, account, setActiveGameId, BOT_USERNAME]);
 
   useEffect(() => {
     if (!token || !gameId || !account) return;
@@ -2274,17 +2234,17 @@ export default function App() {
     };
 
     const applyState = (state: any, clockEnabled?: boolean) => {
-    const nextMoves = String(state?.moves || '');
-    const nextStatus = String(state?.status || 'started');
-    const nextWinner: Winner =
-      state?.winner === 'white' || state?.winner === 'black'
-        ? state.winner
-        : null;
+      const nextMoves = String(state?.moves || '');
+      const nextStatus = String(state?.status || 'started');
+      const nextWinner: Winner =
+        state?.winner === 'white' || state?.winner === 'black'
+          ? state.winner
+          : null;
 
-    // Keep the synchronous ref in lockstep with the
-    // authoritative Lichess stream.
-    movesTextRef.current = nextMoves;
-    setMovesText(nextMoves);
+      // Keep the synchronous ref in lockstep with the
+      // authoritative Lichess stream.
+      movesTextRef.current = nextMoves;
+      setMovesText(nextMoves);
       setGameStatus(nextStatus);
       if (nextWinner) setWinner(nextWinner);
       syncPendingMove(nextMoves);
@@ -2320,13 +2280,25 @@ export default function App() {
           forgetStoredGame();
           gameIdRef.current = null;
           setGameId(null);
+          setSenseRobotGameId(null);
+          setGameStreamConnected(false);
           setGameStatus('idle');
           setRecoveryChecked(true);
           setStatus('The saved Lichess game belongs to a different account, so it was not reopened.');
+          setSenseConnectionError('This room belongs to a different Lichess account. Check the account linked in SenseRobot, then create a new room.');
           controller.abort();
           return;
         }
         const color: 'white' | 'black' = whiteName.toLowerCase() === me ? 'white' : 'black';
+        const opponent = color === 'white' ? blackName : whiteName;
+        const remembered = isRememberedSenseGame(readSenseSetup(), gameId, account.username);
+        if (remembered && opponent.toLowerCase() === BOT_USERNAME.toLowerCase()) {
+          setSenseRobotGameId(gameId);
+        } else if (opponent.toLowerCase() !== BOT_USERNAME.toLowerCase()) {
+          setSenseRobotGameId(null);
+          if (remembered) setSenseConnectionError('This game has a different opponent. Finish it and create a new room for the training bot.');
+        }
+        setGameStreamConnected(true);
         setPlayers({
           white: { name: whiteName, rating: event.white?.rating, title: event.white?.title },
           black: { name: blackName, rating: event.black?.rating, title: event.black?.title },
@@ -2342,14 +2314,17 @@ export default function App() {
           setStatus('Training game connected.');
         }
       } else if (event.type === 'gameState') {
+        setGameStreamConnected(true);
         applyState(event);
       }
     };
     void retryingStream(
       (signal) => streamGame(token, gameId, onGameEvent, signal),
       controller.signal,
-      () => setStatus('Reconnecting to the game…'),
+      () => { setGameStreamConnected(false); setStatus('Reconnecting to the game…'); },
       (error) => {
+        setGameStreamConnected(false);
+        setSenseConnectionError(`The game stream could not connect: ${String(error)}. Check your Lichess connection and account.`);
         setRecoveryChecked(true);
         if (error instanceof LichessHttpError && error.status === 404) {
           void getPlayingGames(token).then((games) => {
@@ -2373,8 +2348,8 @@ export default function App() {
         setStatus(`Game connection stopped: ${String(error)}`);
       },
     );
-    return () => controller.abort();
-  }, [token, gameId, account, setActiveGameId]);
+    return () => { controller.abort(); setGameStreamConnected(false); };
+  }, [token, gameId, account, setActiveGameId, BOT_USERNAME]);
 
   useEffect(() => {
     if (!gameId) return;
@@ -2464,7 +2439,7 @@ export default function App() {
           if (
             pendingMove &&
             cachedMoveList.length >
-              pendingMove.basePly
+            pendingMove.basePly
           ) {
             pendingMoveRef.current = null;
             setMoveInFlight(false);
@@ -2534,15 +2509,16 @@ export default function App() {
     setWinner(null);
     setGameOverOpen(false);
     if (gameId) {
-      setCoachNotes(
-        readLearningNotes(gameId),
-      );
-
-      setMoveEvaluations(
-        readGameEvaluations(gameId),
-      );
+      setMoveEvaluations(readHistoryRecords(gameId));
+      setHistoryStatus('syncing');
+      void syncHistory(gameId).then(records => {
+        if (gameIdRef.current !== gameId) return;
+        setMoveEvaluations(current => mergeHistoryRecords(records, current));
+        setHistoryStatus('synced');
+      }).catch(() => {
+        if (gameIdRef.current === gameId) setHistoryStatus('offline');
+      });
     } else {
-      setCoachNotes([]);
       setMoveEvaluations([]);
     }
     setRollbackSignal((value) => value + 1);
@@ -2571,7 +2547,11 @@ export default function App() {
     const timer =
       window.setTimeout(
         () => {
-          setGameOverOpen(true);
+          // Preference changes must not reopen a dismissed report over another panel.
+          if (autoReportedGameRef.current !== gameId) {
+            autoReportedGameRef.current = gameId;
+            setGameOverOpen(true);
+          }
 
           if (
             !voiceEnabled ||
@@ -2629,28 +2609,21 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!gameId || !coachNotes.length) return;
-    storeLearningNotes(gameId, account?.username, coachNotes);
-  }, [gameId, account?.username, coachNotes]);
-
-  useEffect(() => {
-    if (
-      !gameId ||
-      !moveEvaluations.length
-    ) {
-      return;
-    }
-
-    storeGameEvaluations(
-      gameId,
-      account?.username,
-      moveEvaluations,
-    );
-  }, [
-    gameId,
-    account?.username,
-    moveEvaluations,
-  ]);
+    if (!gameId || !moveEvaluations.length || moveEvaluations.some(record => record.gameId !== gameId)) return;
+    const revision = ++historyRevisionRef.current;
+    const cached = cacheHistoryRecords(gameId, account?.username, moveEvaluations);
+    setHistoryStatus('syncing');
+    void syncHistory(gameId, moveEvaluations).then(records => {
+      if (gameIdRef.current !== gameId || historyRevisionRef.current !== revision) return;
+      setMoveEvaluations(current => {
+        const merged = mergeHistoryRecords(current, records);
+        return JSON.stringify(current) === JSON.stringify(merged) ? current : merged;
+      });
+      setHistoryStatus('synced');
+    }).catch(() => {
+      if (gameIdRef.current === gameId && historyRevisionRef.current === revision) setHistoryStatus(cached ? 'offline' : 'unavailable');
+    });
+  }, [gameId, account?.username, moveEvaluations]);
 
   function speak(
     text: string,
@@ -2687,8 +2660,8 @@ export default function App() {
             ? `注意，将杀威胁。${prompt.question}`
             : `Careful, mate threat. ${prompt.question}`
           : language === 'zh-CN'
-          ? `先想一想。${prompt.question}`
-          : `Think first. ${prompt.question}`;
+            ? `先想一想。${prompt.question}`
+            : `Think first. ${prompt.question}`;
 
       if (afterMistake) {
         void speakCoach(
@@ -2722,25 +2695,27 @@ export default function App() {
   const ttsStatusLabel =
     coachLanguage === 'zh-CN'
       ? {
-          checking: '正在检查语音',
-          ready: 'ElevenLabs 已就绪',
-          online: 'ElevenLabs 在线',
-          idle: '在线 · 此步无需讲解',
-          speaking: '正在播放语音',
-          played: '语音播放完成',
-          blocked: '音频被阻止，点击重试',
-          offline: 'ElevenLabs 离线',
-        }[ttsStatus.state]
+        checking: '正在检查语音',
+        ready: 'ElevenLabs 已就绪',
+        online: 'ElevenLabs 在线',
+        idle: '在线 · 此步无需讲解',
+        speaking: '正在播放语音',
+        played: '语音播放完成',
+        blocked: '音频被阻止，点击重试',
+        offline: 'ElevenLabs 离线',
+      }[ttsStatus.state]
       : {
-          checking: 'Checking voice',
-          ready: 'ElevenLabs ready',
-          online: 'ElevenLabs online',
-          idle: 'Online · no comment this move',
-          speaking: 'Speaking…',
-          played: 'Voice played',
-          blocked: 'Audio blocked — tap to retry',
-          offline: 'ElevenLabs offline',
-        }[ttsStatus.state];
+        checking: 'Checking voice',
+        ready: 'ElevenLabs ready',
+        online: 'ElevenLabs online',
+        idle: 'Online · no comment this move',
+        speaking: 'Speaking…',
+        played: 'Voice played',
+        blocked: 'Audio blocked — tap to retry',
+        offline: 'ElevenLabs offline',
+      }[ttsStatus.state];
+  void testCoachVoice;
+  void ttsStatusLabel;
 
   const processCoachQueue = useCallback(async () => {
     if (coachProcessingRef.current) return;
@@ -2766,12 +2741,13 @@ export default function App() {
             job.detail,
             controller.signal,
             job.language,
+            gameId || undefined,
             job.moves,
           );
 
           // A newer board position arrived while this Stockfish request was
           // running. Do not display or speak analysis for the old position.
-          if (job.id !== latestCoachJobIdRef.current) {
+          if (job.id !== latestCoachJobIdRef.current || gameIdRef.current !== gameId) {
             continue;
           }
 
@@ -2895,22 +2871,9 @@ export default function App() {
           };
 
           const saveNote = (value: CoachResult) => {
-            setCoachNotes((current) => {
-              const note: CoachNote = {
-                ...value,
-                gameId: analysisGameId || '',
-                savedAt: Date.now(),
-                playerColor: myColor,
-                language: job.language,
-              };
-
-              return [
-                note,
-                ...current.filter(
-                  (item) => item.ply !== note.ply,
-                ),
-              ].slice(0, 16);
-            });
+            const record: CoachNote = { ...value, gameId: analysisGameId || '',
+              savedAt: Date.now(), playerColor: myColor, language: job.language };
+            setMoveEvaluations(current => mergeHistoryRecords(current, [record]));
           };
 
           saveNote(fastResult);
@@ -2929,6 +2892,8 @@ export default function App() {
               job.detail,
               job.language,
               recentFeedback,
+              undefined,
+              analysisGameId || undefined,
             )
               .then((wording) => {
                 if (job.id !== latestCoachJobIdRef.current) {
@@ -2946,17 +2911,8 @@ export default function App() {
                   ...result,
                   ...wording,
                   explanationPending: false,
+                  wordingSource: 'llm',
                 };
-
-                setMoveEvaluations((current) =>
-                  current
-                    .map((item) =>
-                      item.ply === enriched.ply
-                        ? enriched
-                        : item,
-                    )
-                    .sort((a, b) => a.ply - b.ply),
-                );
 
                 saveNote(enriched);
 
@@ -2987,7 +2943,7 @@ export default function App() {
                 speak(enriched.feedback, job.language);
               })
               .catch((error) => {
-                if (job.id !== latestCoachJobIdRef.current) {
+                if (job.id !== latestCoachJobIdRef.current || gameIdRef.current !== analysisGameId) {
                   return;
                 }
 
@@ -3011,6 +2967,7 @@ export default function App() {
                   ...fastResult,
                   ...fallback,
                   explanationPending: false,
+                  wordingSource: 'fallback',
                 };
 
                 saveNote(unavailable);
@@ -3040,6 +2997,7 @@ export default function App() {
               ...fastResult,
               ...fallback,
               explanationPending: false,
+              wordingSource: 'fallback',
             };
 
             setCoachExplanationPending(false);
@@ -3149,7 +3107,7 @@ export default function App() {
     // At least six plies between questions.
     if (
       currentPly -
-        lastCriticalQuestionPlyRef.current <
+      lastCriticalQuestionPlyRef.current <
       4
     ) {
       return;
@@ -3190,6 +3148,7 @@ export default function App() {
       coachDetail,
       recentQuestions,
       controller.signal,
+      gameIdRef.current || undefined,
     )
       .then((prompt) => {
         if (
@@ -3203,9 +3162,9 @@ export default function App() {
         // were deciding whether this was worth interrupting.
         if (
           gameIdRef.current !==
-            gameSnapshot ||
+          gameSnapshot ||
           movesTextRef.current.trim() !==
-            movesSnapshot
+          movesSnapshot
         ) {
           return;
         }
@@ -3238,7 +3197,7 @@ export default function App() {
             prompt.title ||
             (
               coachLanguage ===
-              'zh-CN'
+                'zh-CN'
                 ? '先想一想'
                 : 'Think first'
             ),
@@ -3302,45 +3261,45 @@ export default function App() {
   ]);
 
 
-const analyzeStudentMove = useCallback(
-  (fenBefore: string, uci: string, moves: string[]) => {
-    if (!isCoachGame) return;
+  const analyzeStudentMove = useCallback(
+    (fenBefore: string, uci: string, moves: string[]) => {
+      if (!isCoachGame) return;
 
-    setPlayerMoveAnalysisPending(true);
-    setCoachExplanationPending(false);
-    setCoachError('');
-    setCoachResult(null);
+      setPlayerMoveAnalysisPending(true);
+      setCoachExplanationPending(false);
+      setCoachError('');
+      setCoachResult(null);
 
-    criticalQuestionAbortRef.current?.abort();
-    criticalPromptRef.current = null;
-    setCriticalPrompt(null);
+      criticalQuestionAbortRef.current?.abort();
+      criticalPromptRef.current = null;
+      setCriticalPrompt(null);
 
-    // The player has moved on, so old spoken commentary is no longer useful.
-    stopCoachSpeech();
+      // The player has moved on, so old spoken commentary is no longer useful.
+      stopCoachSpeech();
 
-    const jobId = latestCoachJobIdRef.current + 1;
-    latestCoachJobIdRef.current = jobId;
+      const jobId = latestCoachJobIdRef.current + 1;
+      latestCoachJobIdRef.current = jobId;
 
-    // Keep the running analysis, if any, but coalesce every waiting request to
-    // the newest position. This bounds lag to at most one obsolete search.
-    coachQueueRef.current = [{
-      id: jobId,
-      fenBefore,
-      uci,
-      moves,
-      detail: coachDetail,
-      language: coachLanguage,
-    }];
+      // Keep the running analysis, if any, but coalesce every waiting request to
+      // the newest position. This bounds lag to at most one obsolete search.
+      coachQueueRef.current = [{
+        id: jobId,
+        fenBefore,
+        uci,
+        moves,
+        detail: coachDetail,
+        language: coachLanguage,
+      }];
 
-    void processCoachQueue();
-  },
-  [
-    coachDetail,
-    coachLanguage,
-    isCoachGame,
-    processCoachQueue,
-  ],
-);
+      void processCoachQueue();
+    },
+    [
+      coachDetail,
+      coachLanguage,
+      isCoachGame,
+      processCoachQueue,
+    ],
+  );
   useEffect(() => {
     // Normal phone games use the exact local pre-move FEN captured when the
     // player makes the move. Only SenseRobot games need stream-observed
@@ -3435,13 +3394,13 @@ const analyzeStudentMove = useCallback(
     analyzeStudentMove,
   ]);
 
-    const submitMove = useCallback(async (
-      fenBefore: string,
-      basePly: number,
-      from: string,
-      to: string,
-      promotion?: PromotionChoice,
-    ) => {
+  const submitMove = useCallback(async (
+    fenBefore: string,
+    basePly: number,
+    from: string,
+    to: string,
+    promotion?: PromotionChoice,
+  ) => {
     if (!token || !gameId || !activeGame || pendingMoveRef.current) {
       setRollbackSignal((value) => value + 1);
       return;
@@ -3517,17 +3476,17 @@ const analyzeStudentMove = useCallback(
     };
   }, [gameId, isCoachGame, movesText]);
 
-    const handleBoardMove = useCallback((from: string, to: string) => {
-      if (
-        isSenseRobotGame ||
-        !token ||
-        !gameId ||
-        !canMove ||
-        !activeGame
-      ) {
-        setRollbackSignal((value) => value + 1);
-        return;
-      }
+  const handleBoardMove = useCallback((from: string, to: string) => {
+    if (
+      isSenseRobotGame ||
+      !token ||
+      !gameId ||
+      !canMove ||
+      !activeGame
+    ) {
+      setRollbackSignal((value) => value + 1);
+      return;
+    }
 
     const fenBefore = position.chess.fen();
     const basePly = position.plyCount;
@@ -3585,7 +3544,7 @@ const analyzeStudentMove = useCallback(
     setStatus('Checking for an existing training game…');
 
     // Normal Play is always a regular Lichess online game.
-    // Only the QR scanner is allowed to enable SenseRobot mode.
+    // Only a verified SenseRobot room join enables physical-board mode.
     setSenseRobotGameId(null);
 
     try {
@@ -3691,8 +3650,7 @@ const analyzeStudentMove = useCallback(
       setStatus(`Game started against ${BOT_USERNAME}.`);
     } catch (error) {
       setStatus(
-        `Could not start game: ${
-          error instanceof Error ? error.message : String(error)
+        `Could not start game: ${error instanceof Error ? error.message : String(error)
         }`,
       );
     } finally {
@@ -3700,73 +3658,39 @@ const analyzeStudentMove = useCallback(
     }
   }
 
-  async function scanSenseRobotRoom() {
-    if (
-      scanningRoom ||
-      startingGame ||
-      activeGame ||
-      gameId ||
-      !recoveryChecked
-    ) {
-      return;
+  async function connectSenseRobotRoom(roomUrl?: string): Promise<string> {
+    if (!account || !token) throw new Error('Sign in with your robot’s Lichess account first.');
+    if (scanningRoom || startingGame || activeGame || gameId || !recoveryChecked) {
+      throw new Error('Wait for the current game check, or finish your open game first.');
     }
-
     setScanningRoom(true);
-
+    setSenseConnectionError('');
     try {
+      setStatus(roomUrl ? 'Checking room link…' : 'Scan the SenseRobot game-room QR…');
+      const room = parseSenseRoomUrl(roomUrl ?? await scanSenseRoomUrl());
       setStatus('Preparing coach bot…');
-
-      // Always apply the difficulty currently selected
-      // in Chess Buddy before joining the SenseRobot room.
-      const levelState = await setBotLevel(level);
-      setBot(levelState);
-
-      let state = levelState;
-
-      if (!state.running) {
-        state = await startBot();
-        setBot(state);
-      }
-
-      if (!state.connected) {
-        state = await waitForBotReady();
-        setBot(state);
-      }
-
-      setStatus('Scan the SenseRobot room QR code…');
-
-      const joined = await scanSenseRoom();
-
+      let state = await setBotLevel(level);
+      setBot(state);
+      if (!state.running) { state = await startBot(); setBot(state); }
+      if (!state.connected) { state = await waitForBotReady(); setBot(state); }
+      setStatus('Joining your SenseRobot room…');
+      const joined = await joinSenseRoom(room.challengeId, room.color, account.username);
       setBot(joined);
-
-      if (!joined.gameId) {
-        throw new Error(
-          'The room was joined, but Lichess did not report a game.'
-        );
-      }
-
-      setActiveGameId(joined.gameId);
-
-      // This successful QR scan is the one and only activation path
-      // for SenseRobot mode.
+      if (!joined.gameId) throw new Error('Lichess has not reported a game for this room yet.');
+      // Save the successful join before attaching the game stream. A redirect
+      // or refresh may resume this exact room, but never an unrelated game.
+      saveSenseSetup({ ...readSenseSetup(), open: true, joinedGameId: joined.gameId,
+        joinedUsername: account.username, level });
+      setGameStreamConnected(false);
       setSenseRobotGameId(joined.gameId);
-
+      setActiveGameId(joined.gameId);
       setGameStatus('recovering');
-
-      setStatus(
-        `SenseRobot room joined as ${BOT_USERNAME}.`
-      );
+      setStatus(`Room joined. Waiting for ${account.username} and ${joined.username || BOT_USERNAME} to sync…`);
+      return joined.gameId;
     } catch (error) {
-      setStatus(
-        `Could not join SenseRobot room: ${
-          error instanceof Error
-            ? error.message
-            : String(error)
-        }`
-      );
-    } finally {
-      setScanningRoom(false);
-    }
+      setStatus(`Could not join SenseRobot room: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    } finally { setScanningRoom(false); }
   }
 
   function requestTakeback() {
@@ -3826,7 +3750,6 @@ const analyzeStudentMove = useCallback(
     setPlayers({ white: { name: 'White' }, black: { name: 'Black' } });
     setClock({ enabled: true, white: 600000, black: 600000, increment: 0, updatedAt: Date.now() });
     setCoachResult(null);
-    setCoachNotes([]);
     setCoachError('');
     setOpeningState(null);
     setCoachExplanationPending(false);
@@ -3843,17 +3766,37 @@ const analyzeStudentMove = useCallback(
     setStatus('Ready for another training game.');
   }
 
-  if (!token) {
-    return <main className="landing">
-      <div className="hero-card">
-        <span className="eyebrow">AI CHESS COACH</span>
-        <h1>Play a bot.<br />Learn every game.</h1>
-        <p>Challenge the training bot on Lichess and get immediate, position-specific coaching when a move needs attention.</p>
-        <button className="primary" onClick={() => void loginWithLichess()}>Sign in with Lichess</button>
-        <p className="fine-print">AI coaching is enabled only in games against the designated training bot.</p>
-      </div>
-    </main>;
+  function openAnalysis(seed: AnalysisSeed | null = null) {
+    setAnalysisSeed(seed);
+    setReviewMode(null);
+    setAnalysisOpen(true);
+    goToAnalysis();
   }
+
+  function analyzeGamePosition() {
+    if (!gameId) { openAnalysis(); return; }
+    openAnalysis({ rootFen: initialFen === 'startpos' ? new Chess().fen() : initialFen,
+      moves: movesText.trim() ? movesText.trim().split(/\s+/) : [],
+      ply: historyPly ?? position.plyCount, source: `Copy of training game ${gameId}`,
+      sourceId: gameId, orientation, game: { white: players.white.name, black: players.black.name,
+        result: winner === 'white' ? '1-0' : winner === 'black' ? '0-1' : ['stalemate','draw','insufficientMaterialClaim'].includes(gameStatus) ? '1/2-1/2' : '*', site: `https://lichess.org/${gameId}` } });
+  }
+
+  const analysisBoard = analysisOpen ? <AnalysisStudio seed={analysisSeed}
+    onClose={() => { setAnalysisOpen(false); setAnalysisSeed(null); window.location.hash = ''; }} liveGame={activeGame} /> : null;
+
+  const senseSetup = <SenseRobotSetup
+    open={senseSetupOpen} onClose={() => setSenseSetupOpen(false)}
+    username={account?.username || null} bot={bot} level={level} levels={LEVELS}
+    onLevel={next => { if (LEVELS.some(item => item.id === next)) void changeLevel(next as typeof level); }}
+    onLogin={async () => { setSenseConnectionError(''); await loginWithLichess(); }} onJoin={connectSenseRobotRoom}
+    onRetryBot={async () => { setBot(await startBot()); }}
+    gameId={gameId} verified={isSenseRobotGame && isCoachGame && gameStreamConnected && Boolean(account)}
+    busy={scanningRoom || startingGame} recoveryChecked={recoveryChecked}
+    moves={position.plyCount} connectionMessage={status}
+    connectionError={senseConnectionError}
+    signingIn={Boolean(token && !account)}
+  />;
 
   const topSide = orientation === 'white' ? 'black' : 'white';
   const bottomSide = orientation === 'white' ? 'white' : 'black';
@@ -3864,44 +3807,48 @@ const analyzeStudentMove = useCallback(
     (result) =>
       result.classification === 'good',
   ).length;
+  void blunders;
+  void mistakes;
+  void coachingMoments;
+  void goodMoves;
 
-const puzzleSourceNotes: CoachNote[] = [
-  ...coachNotes,
-  ...moveEvaluations
-    .filter(
-      (evaluation) =>
-        !coachNotes.some(
-          (note) =>
-            note.ply === evaluation.ply,
-        ),
-    )
-    .map(
-      (evaluation) => ({
-        ...evaluation,
-        gameId: gameId || '',
-        savedAt: 0,
-        playerColor: myColor,
-        language: coachLanguage,
-      }),
-    ),
-];
+  const puzzleSourceNotes: CoachNote[] = [
+    ...coachNotes,
+    ...moveEvaluations
+      .filter(
+        (evaluation) =>
+          !coachNotes.some(
+            (note) =>
+              note.ply === evaluation.ply,
+          ),
+      )
+      .map(
+        (evaluation) => ({
+          ...evaluation,
+          gameId: gameId || '',
+          savedAt: 0,
+          playerColor: myColor,
+          language: coachLanguage,
+        }),
+      ),
+  ];
 
-const practicePuzzles =
-  selectPracticePuzzles(
-    puzzleSourceNotes,
-  );
+  const practicePuzzles =
+    selectPracticePuzzles(
+      puzzleSourceNotes,
+    );
 
-const gameReport =
-  buildGameReport(
-    moveEvaluations,
-    coachNotes,
-    coachLanguage,
-  );
+  const gameReport =
+    buildGameReport(
+      moveEvaluations,
+      coachNotes,
+      coachLanguage,
+    );
 
-const isChinese = coachLanguage === 'zh-CN';
+  const isChinese = coachLanguage === 'zh-CN';
 
-const reportText = isChinese
-  ? {
+  const reportText = isChinese
+    ? {
       report: '对局总结',
       closeAria: '关闭对局总结',
       reviewed: '已分析走法',
@@ -3942,7 +3889,7 @@ const reportText = isChinese
       nextPuzzle: '下一题',
       backToReport: '返回对局总结',
     }
-  : {
+    : {
       report: 'GAME REPORT',
       closeAria: 'Close game report',
       reviewed: 'moves reviewed',
@@ -3985,51 +3932,52 @@ const reportText = isChinese
       backToReport: 'Back to game report',
     };
 
-const activePuzzle =
-  practicePuzzles[puzzleIndex] || null;
+  const activePuzzle =
+    practicePuzzles[puzzleIndex] || null;
 
-const puzzleChess =
-  activePuzzle
-    ? new Chess(
+  const puzzleChess =
+    activePuzzle
+      ? new Chess(
         puzzleFen ||
         activePuzzle.fenBefore,
       )
-    : null;
+      : null;
 
-const puzzleDestinations =
-  puzzleChess
-    ? destinations(puzzleChess)
-    : new Map<string, string[]>();
+  const puzzleDestinations =
+    puzzleChess
+      ? destinations(puzzleChess)
+      : new Map<string, string[]>();
 
-const puzzleMovableColor:
-  | 'white'
-  | 'black'
-  | undefined =
-  puzzleChess
-    ? puzzleChess.turn() === 'w'
-      ? 'white'
-      : 'black'
-    : undefined;
+  const puzzleMovableColor:
+    | 'white'
+    | 'black'
+    | undefined =
+    puzzleChess
+      ? puzzleChess.turn() === 'w'
+        ? 'white'
+        : 'black'
+      : undefined;
 
-// Keep the camera fixed to the side that was to move when the puzzle opened.
-// puzzleFen advances after a correct move, so deriving orientation from it
-// caused opponent-turn puzzles to flip back after every ply.
-const puzzleStartingColor:
-  | 'white'
-  | 'black'
-  | undefined = (() => {
-  if (!activePuzzle) return undefined;
+  // Keep the camera fixed to the side that was to move when the puzzle opened.
+  // puzzleFen advances after a correct move, so deriving orientation from it
+  // caused opponent-turn puzzles to flip back after every ply.
+  const puzzleStartingColor:
+    | 'white'
+    | 'black'
+    | undefined = (() => {
+      if (!activePuzzle) return undefined;
 
-  try {
-    return new Chess(activePuzzle.fenBefore).turn() === 'w'
-      ? 'white'
-      : 'black';
-  } catch {
-    return activePuzzle.playerColor;
-  }
-})();
+      try {
+        return new Chess(activePuzzle.fenBefore).turn() === 'w'
+          ? 'white'
+          : 'black';
+      } catch {
+        return activePuzzle.playerColor;
+      }
+    })();
 
   const focusLessons = Array.from(new Set(coachNotes.map((note) => note.lesson).filter(Boolean))).slice(0, 3);
+  void focusLessons;
   const botLabel = bot.connected ? 'Coach bot ready' : bot.running ? 'Coach bot connecting' : 'Coach bot offline';
   const selectedLevel = LEVELS.find((item) => item.id === level) || LEVELS[2];
   const selectedTimeControl = TIME_CONTROLS.find((item) => item.id === timeControlId) || TIME_CONTROLS[4];
@@ -4082,55 +4030,55 @@ const puzzleStartingColor:
 
   const reviewIndex = reviewTarget
     ? orderedCoachNotes.findIndex(
-        (note) => note.ply === reviewTarget.ply
-      )
+      (note) => note.ply === reviewTarget.ply
+    )
     : -1;
 
   function openPuzzle(index: number) {
-  const puzzle =
-    practicePuzzles[index];
+    const puzzle =
+      practicePuzzles[index];
 
-  if (!puzzle) return;
+    if (!puzzle) return;
 
-  setPuzzleIndex(index);
-  setPuzzleFen(puzzle.fenBefore);
-  setPuzzleState('solving');
+    setPuzzleIndex(index);
+    setPuzzleFen(puzzle.fenBefore);
+    setPuzzleState('solving');
 
-  setPuzzleRollbackSignal(
-    (value) => value + 1,
-  );
+    setPuzzleRollbackSignal(
+      (value) => value + 1,
+    );
 
-  setGameOverOpen(false);
-  setPuzzleOpen(true);
-}
-
-function handlePuzzleMove(
-  from: string,
-  to: string,
-) {
-  if (!activePuzzle) return;
-
-  if (
-    puzzleState === 'correct' ||
-    puzzleState === 'revealed'
-  ) {
-    return;
+    setGameOverOpen(false);
+    setPuzzleOpen(true);
   }
 
-  const playedUci =
-    `${from}${to}`.toLowerCase();
-
-  const answerUci =
-    activePuzzle.bestMoveUci.toLowerCase();
-
-  // startsWith also handles promotion moves such as e7e8q.
-  if (
-    answerUci.startsWith(playedUci)
+  function handlePuzzleMove(
+    from: string,
+    to: string,
   ) {
-    const chess =
-      new Chess(activePuzzle.fenBefore);
+    if (!activePuzzle) return;
 
-    chess.move({
+    if (
+      puzzleState === 'correct' ||
+      puzzleState === 'revealed'
+    ) {
+      return;
+    }
+
+    const playedUci =
+      `${from}${to}`.toLowerCase();
+
+    const answerUci =
+      activePuzzle.bestMoveUci.toLowerCase();
+
+    // startsWith also handles promotion moves such as e7e8q.
+    if (
+      answerUci.startsWith(playedUci)
+    ) {
+      const chess =
+        new Chess(activePuzzle.fenBefore);
+
+      chess.move({
         from,
         to,
         promotion:
@@ -4250,18 +4198,115 @@ function handlePuzzleMove(
   }
 
   return <div className="app-shell">
-    <header>
-      <div className="brand-row"><span className="eyebrow">AI CHESS COACH</span><strong>{account?.username || 'Connecting…'}</strong></div>
-      <div className="header-actions">
-        <span className={`status-dot ${bot.connected ? 'online' : 'offline'}`} />
-        <span className="header-status">{status}</span>
-        {bot.lastMoveMs != null ? <span className="speed-pill">bot {bot.lastMoveMs} ms</span> : null}
-        <button className="ghost" onClick={() => { logout(); setToken(null); }}>Log out</button>
-      </div>
-    </header>
+    {senseSetup}
+    {analysisBoard}
+    <ProfileModal
+      open={profileModalOpen}
+      onClose={() => setProfileModalOpen(false)}
+      username={account?.username}
+      coachDetail={coachDetail}
+      onChangeCoachDetail={setCoachDetail}
+      coachLanguage={coachLanguage}
+      onChangeCoachLanguage={(lang) => {
+        stopCoachSpeech();
+        setCoachLanguage(lang);
+      }}
+      voiceEnabled={voiceEnabled}
+      onToggleVoice={(enabled) => {
+        setVoiceEnabled(enabled);
+        if (enabled) {
+          void unlockCoachAudio().then(() =>
+            speakCoach(
+              coachLanguage === 'zh-CN'
+                ? '语音教练已开启。关键时刻我会提醒你。'
+                : "Voice coach is on. I'll speak up at the right moments.",
+              coachLanguage,
+            ),
+          );
+        } else {
+          stopCoachSpeech();
+        }
+      }}
+      hintsEnabled={hintsEnabled}
+      onToggleHints={setHintsEnabled}
+      onLogout={() => { logout(); setToken(null); }}
+    />
 
-    <main className="game-layout">
-      <section className="play-column">
+    <MenuModal
+      open={menuModalOpen}
+      onClose={() => setMenuModalOpen(false)}
+      onSelectView={setCurrentView}
+      onOpenAnalysis={openAnalysis}
+      onOpenSenseSetup={() => setSenseSetupOpen(true)}
+      username={account?.username}
+      botConnected={Boolean(bot.connected)}
+      botLabel={botLabel}
+      hasActiveGame={Boolean(activeGame || gameId)}
+      onLogout={() => { logout(); setToken(null); }}
+    />
+
+    <NavBar
+      currentView={currentView}
+      onSelectView={(view) => {
+        if (view === 'profile') setProfileModalOpen(true);
+        else if (view === 'menu') setMenuModalOpen(true);
+        else setCurrentView(view);
+      }}
+      username={account?.username}
+      botConnected={Boolean(bot.connected)}
+      botLabel={botLabel}
+      hasActiveGame={Boolean(activeGame || gameId)}
+      onOpenAnalysis={openAnalysis}
+      onOpenSenseSetup={() => setSenseSetupOpen(true)}
+      onLogout={() => { logout(); setToken(null); }}
+      hidden={navHidden}
+    />
+
+    <SideBar
+      currentView={currentView}
+      onSelectView={(view) => {
+        if (view === 'profile') setProfileModalOpen(true);
+        else if (view === 'menu') setMenuModalOpen(true);
+        else setCurrentView(view);
+      }}
+      username={account?.username}
+      botConnected={Boolean(bot.connected)}
+      botLabel={botLabel}
+      hasActiveGame={Boolean(activeGame || gameId)}
+      onOpenAnalysis={openAnalysis}
+      onOpenSenseSetup={() => setSenseSetupOpen(true)}
+      onOpenProfile={() => setProfileModalOpen(true)}
+      onOpenMenu={() => setMenuModalOpen(true)}
+      navHidden={navHidden}
+    />
+
+    {currentView === 'home' ? (
+      <HomeHub
+        username={account?.username}
+        botConnected={Boolean(bot.connected)}
+        botLabel={botLabel}
+        levels={LEVELS}
+        level={level}
+        onChangeLevel={(next) => { if (LEVELS.some(item => item.id === next)) void changeLevel(next as typeof level); }}
+        timeControls={TIME_CONTROLS}
+        timeControlId={timeControlId}
+        onChangeTimeControl={changeTimeControl as any}
+        preferredColor={preferredColor}
+        onChangeColor={setPreferredColor}
+        onStartGame={() => void startCoachGame()}
+        startingGame={startingGame}
+        recoveryChecked={recoveryChecked}
+        hasActiveGame={Boolean(activeGame || gameId)}
+        onEnterArena={() => setCurrentView('arena')}
+        onOpenAnalysis={openAnalysis}
+        onOpenSenseSetup={() => setSenseSetupOpen(true)}
+        onOpenProfile={() => setProfileModalOpen(true)}
+        onLogin={() => void loginWithLichess().catch((error) => setStatus(String(error)))}
+        isLoggedIn={Boolean(token)}
+      />
+    ) : (
+      <main className="arena-layout">
+      <section className="match-arena-window">
         <PlayerBar player={players[topSide]} clock={displayedClock[topSide]} active={activeGame && turnColor === topSide} side={topSide} />
         <section className="board-panel">
           <ChessBoard
@@ -4314,9 +4359,7 @@ function handlePuzzleMove(
                 : 'Checking for an active game…'}
           </span>
         </div>
-      </section>
 
-      <aside className="side-panel">
         {!gameId && <section className="card setup-card">
           <div className="section-title"><span>1</span> Training opponent</div>
           <p className="section-copy">Estimated practice strength — start low and move up when games feel comfortable.</p>
@@ -4358,18 +4401,8 @@ function handlePuzzleMove(
             {!recoveryChecked ? 'Checking active game…' : startingGame ? 'Starting…' : `Play ${BOT_USERNAME}`}
           </button>
 
-          <button
-            className="ghost wide"
-            disabled={
-              scanningRoom ||
-              startingGame ||
-              !recoveryChecked
-            }
-            onClick={() => void scanSenseRobotRoom()}
-          >
-            {scanningRoom
-              ? 'Scanning…'
-              : '▣ Scan SenseRobot Room'}
+          <button className="ghost wide" disabled={startingGame} onClick={() => setSenseSetupOpen(true)}>
+            Connect my SenseRobot
           </button>
         </section>}
 
@@ -4394,92 +4427,90 @@ function handlePuzzleMove(
             <div><span>{gameOutcomeTitle}</span><strong>{gameReason}</strong></div>
             <b>{gameScore}</b>
           </div> : null}
-          <div className="move-list">
-              {position.san.length === 0 ? (
-                <span className="muted">Moves will appear here.</span>
-              ) : (
-                Array.from(
-                  { length: Math.ceil(position.san.length / 2) },
-                  (_, index) => {
-                    const whiteMoveIndex = index * 2;
-                    const blackMoveIndex = index * 2 + 1;
+          <div className="move-list-scroll custom-scroll">
+            {position.san.length === 0 ? (
+              <span className="muted">Moves will appear here.</span>
+            ) : (
+              Array.from(
+                { length: Math.ceil(position.san.length / 2) },
+                (_, index) => {
+                  const whiteMoveIndex = index * 2;
+                  const blackMoveIndex = index * 2 + 1;
 
-                    const whitePly = whiteMoveIndex + 1;
-                    const blackPly = blackMoveIndex + 1;
+                  const whitePly = whiteMoveIndex + 1;
+                  const blackPly = blackMoveIndex + 1;
 
-                    const whiteCoachNote = coachNotes.find(
-                      (note) => note.ply === whitePly
-                    );
+                  const whiteCoachNote = coachNotes.find(
+                    (note) => note.ply === whitePly
+                  );
 
-                    const blackCoachNote = coachNotes.find(
-                      (note) => note.ply === blackPly
-                    );
+                  const blackCoachNote = coachNotes.find(
+                    (note) => note.ply === blackPly
+                  );
 
-                    const whiteMove = position.san[whiteMoveIndex];
-                    const blackMove = position.san[blackMoveIndex];
+                  const whiteMove = position.san[whiteMoveIndex];
+                  const blackMove = position.san[blackMoveIndex];
 
-                    return (
-                      <div className="move-row" key={index}>
-                        <b>{index + 1}.</b>
+                  return (
+                    <div className="move-row" key={index}>
+                      <b>{index + 1}.</b>
 
-                        {whiteMove ? (
-                          <button
-                            type="button"
-                            className={`move-cell ${
-                              historyPly === whitePly ? 'active' : ''
-                            } ${
-                              whiteCoachNote?.classification === 'blunder'
-                                ? 'move-blunder'
-                                : whiteCoachNote?.classification === 'mistake'
-                                  ? 'move-mistake'
-                                  : ''
+                      {whiteMove ? (
+                        <button
+                          type="button"
+                          className={`move-cell ${historyPly === whitePly ? 'active' : ''
+                            } ${whiteCoachNote?.classification === 'blunder'
+                              ? 'move-blunder'
+                              : whiteCoachNote?.classification === 'mistake'
+                                ? 'move-mistake'
+                                : ''
                             }`}
-                            onClick={() => {
-                              setHistoryPly(
-                                whitePly >= position.plyCount
-                                  ? null
-                                  : whitePly
-                              );
-                            }}
-                          >
-                            {whiteMove}
-                          </button>
-                        ) : (
-                          <span />
-                        )}
+                          onClick={() => {
+                            setHistoryPly(
+                              whitePly >= position.plyCount
+                                ? null
+                                : whitePly
+                            );
+                          }}
+                        >
+                          {whiteMove}
+                        </button>
+                      ) : (
+                        <span />
+                      )}
 
-                        {blackMove ? (
-                          <button
-                            type="button"
-                            className={`move-cell ${
-                              historyPly === blackPly ? 'active' : ''
-                            } ${
-                              blackCoachNote?.classification === 'blunder'
-                                ? 'move-blunder'
-                                : blackCoachNote?.classification === 'mistake'
-                                  ? 'move-mistake'
-                                  : ''
+                      {blackMove ? (
+                        <button
+                          type="button"
+                          className={`move-cell ${historyPly === blackPly ? 'active' : ''
+                            } ${blackCoachNote?.classification === 'blunder'
+                              ? 'move-blunder'
+                              : blackCoachNote?.classification === 'mistake'
+                                ? 'move-mistake'
+                                : ''
                             }`}
-                            onClick={() => {
-                              setHistoryPly(
-                                blackPly >= position.plyCount
-                                  ? null
-                                  : blackPly
-                              );
-                            }}
-                          >
-                            {blackMove}
-                          </button>
-                        ) : (
-                          <span />
-                        )}
-                      </div>
-                    );
-                  }
-                )
-              )}
-            </div>
+                          onClick={() => {
+                            setHistoryPly(
+                              blackPly >= position.plyCount
+                                ? null
+                                : blackPly
+                            );
+                          }}
+                        >
+                          {blackMove}
+                        </button>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
+                  );
+                }
+              )
+            )}
+          </div>
           <div className="game-actions">
+            <button className="ghost" onClick={analyzeGamePosition}>Save game</button>
+            <button className="ghost" onClick={analyzeGamePosition}>Analyze this position</button>
             {activeGame ? (
               <button
                 className="ghost"
@@ -4508,318 +4539,58 @@ function handlePuzzleMove(
             ) : null}
           </div>
         </section>}
+      </section>
 
-        <section className="card coach-card">
-          <div className="section-title">
-            <span>2</span>
+      {/* WINDOW 2: DEDICATED AI COACH COMMAND CENTER WINDOW WITH DEDICATED SCROLLBAR 2 */}
+      <CoachWindow
+        openingLabel={openingState?.name ? formatOpeningLabel(openingState) : ''}
+        openingStatus={openingState ? formatOpeningStatus(openingState, coachLanguage) : ''}
+        historyStatus={historyStatus}
+        coachResult={coachResult}
+        coachThinking={coachThinking}
+        coachError={coachError}
+        criticalPrompt={criticalPrompt}
+        coachNotes={orderedCoachNotes}
+        isMyTurn={isMyTurn}
+        voiceEnabled={voiceEnabled}
+        onToggleVoice={(enabled) => {
+          setVoiceEnabled(enabled);
+          if (enabled) {
+            void unlockCoachAudio().then(() =>
+              speakCoach(
+                coachLanguage === 'zh-CN'
+                  ? '语音教练已开启。关键时刻我会提醒你。'
+                  : "Voice coach is on. I'll speak up at the right moments.",
+                coachLanguage,
+              ),
+            );
+          } else {
+            stopCoachSpeech();
+          }
+        }}
+        ttsStatus={ttsStatus}
+        hintsEnabled={hintsEnabled}
+        onToggleHints={setHintsEnabled}
+        coachDetail={coachDetail}
+        onChangeCoachDetail={setCoachDetail}
+        coachLanguage={coachLanguage}
+        onChangeCoachLanguage={(lang) => {
+          stopCoachSpeech();
+          setCoachLanguage(lang);
+        }}
+        onReviewPosition={(res) => {
+          setReviewTarget(res);
+          setReviewMode('better');
+        }}
+        onSelectPly={(ply) => {
+          setHistoryPly(ply >= position.plyCount ? null : ply);
+        }}
+        currentPly={historyPly}
+        themeLabel={themeLabel}
+      />
 
-            {coachLanguage === 'zh-CN'
-              ? 'AI 教练'
-              : 'Live coach'}
-          </div>
-          {openingState?.name ? (
-            <div className="opening-badge coach-opening-badge">
-              <strong>{formatOpeningLabel(openingState)}</strong>
-              {formatOpeningStatus(openingState, coachLanguage) ? (
-                <small>{formatOpeningStatus(openingState, coachLanguage)}</small>
-              ) : null}
-            </div>
-          ) : null}
-          <div className={`coach-bubble ${coachResult?.classification || ''}`}>
-            {criticalPrompt && isMyTurn ? <>
-              {coachResult?.shouldCoach &&
-              coachResult.ply === criticalPrompt.ply - 1 ? (
-                <div className="coach-prior-feedback">
-                  <div className="coach-heading">
-                    <strong>{coachResult.title}</strong>
-                    <span className={`quality-badge ${coachResult.classification}`}>
-                      {coachResult.classification}
-                    </span>
-                  </div>
-
-                  <div>{coachResult.feedback}</div>
-
-                  {coachResult.themes?.length ? (
-                    <div className="coach-theme-tags">
-                      {coachResult.themes.map((theme) => (
-                        <span
-                          className="coach-theme-tag"
-                          key={theme}
-                        >
-                          {themeLabel(theme, coachLanguage)}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <button
-                    className="coach-review-button"
-                    onClick={() => {
-                      setReviewTarget(coachResult);
-                      setReviewMode('better');
-                    }}
-                  >
-                    {coachLanguage === 'zh-CN'
-                      ? '复盘这个局面'
-                      : 'Review this position'}
-                  </button>
-                </div>
-              ) : null}
-
-              {coachResult?.shouldCoach &&
-              coachResult.ply === criticalPrompt.ply - 1 ? (
-                <div className="coach-next-decision">
-                  {coachLanguage === 'zh-CN'
-                    ? '现在，落子之前'
-                    : 'Now, before you move'}
-                </div>
-              ) : null}
-
-              <div className="coach-heading">
-                <strong>{criticalPrompt.title}</strong>
-                <span className="quality-badge inaccuracy">
-                  {criticalPrompt.mateThreat
-                    ? coachLanguage === 'zh-CN'
-                      ? '将杀威胁'
-                      : 'Mate threat'
-                    : coachLanguage === 'zh-CN'
-                      ? '先想一想'
-                      : 'Think first'}
-                </span>
-              </div>
-
-              <div className="coach-question">
-                <span>
-                  {criticalPrompt.mateThreat
-                    ? coachLanguage === 'zh-CN'
-                      ? '优先处理'
-                      : 'Priority'
-                    : criticalPrompt.kind === 'opportunity'
-                    ? coachLanguage === 'zh-CN'
-                      ? '机会'
-                      : 'Opportunity'
-                    : criticalPrompt.kind === 'threat'
-                      ? coachLanguage === 'zh-CN'
-                        ? '对手意图'
-                        : 'Opponent idea'
-                      : coachLanguage === 'zh-CN'
-                        ? '关键局面'
-                        : 'Critical position'}
-                </span>
-
-                {criticalPrompt.question}
-              </div>
-            </> : coachThinking ? <div className="coach-thinking"><span className="spinner" />Analyzing your move…</div> : coachError ? <div className="inline-error">{coachError}</div> : coachResult ? <>
-              <div className="coach-heading">
-                <strong>{coachResult.title}</strong>
-                {coachResult.shouldCoach ? (
-                  <span className={`quality-badge ${coachResult.classification}`}>
-                    {coachResult.classification}
-                  </span>
-                ) : null}
-              </div>
-              <div>{coachResult.feedback}</div>
-              {coachResult.themes?.length ? (
-                <div
-                  className="coach-theme-tags"
-                  aria-label={coachLanguage === 'zh-CN'
-                    ? '棋局主题'
-                    : 'Chess themes'}
-                >
-                  {coachResult.themes.map((theme) => (
-                    <span
-                      className="coach-theme-tag"
-                      key={theme}
-                    >
-                      {themeLabel(theme, coachLanguage)}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {coachResult.question ? (
-                <div className="coach-question">
-                  <span>
-                    {coachLanguage === 'zh-CN'
-                      ? '想一想'
-                      : 'Ask yourself'}
-                  </span>
-
-                  {coachResult.question}
-                </div>
-              ) : null}
-              {coachResult.lesson ? (
-              <div className="coach-lesson">
-                {coachLanguage === 'zh-CN'
-                  ? '记住：'
-                  : 'Remember: '}
-
-                {coachResult.lesson}
-              </div>
-            ) : null}
-              {coachResult.shouldCoach ? <button className="coach-review-button" onClick={() => { setReviewTarget(coachResult); setReviewMode('better'); }}>Review this position</button> : null}
-            </> : <>
-              <strong>
-                {coachLanguage === 'zh-CN'
-                  ? '准备好了'
-                  : 'Ready to coach'}
-              </strong>
-              <div>
-                {coachLanguage === 'zh-CN'
-                  ? '继续下棋。没有重要内容时我会保持安静，关键时刻再提醒你。'
-                  : 'Keep playing. I’ll stay quiet when there is nothing important to add and step in when a position is worth discussing.'}
-              </div>
-            </>}
-          </div>
-          <div className="coach-detail-setting">
-            <span>
-              {coachLanguage === 'zh-CN'
-                ? '教练语言'
-                : 'Coach language'}
-            </span>
-
-            <div className="coach-detail-options">
-              {(
-                [
-                  ['en', 'English'],
-                  ['zh-CN', '中文'],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`coach-detail-button ${
-                    coachLanguage === value
-                      ? 'active'
-                      : ''
-                  }`}
-                  aria-pressed={
-                    coachLanguage === value
-                  }
-                  onClick={() => {
-                    stopCoachSpeech();
-                    setCoachLanguage(value);
-                  }}
-                >
-                  <span>{label}</span>
-
-                  {coachLanguage === value ? (
-                    <span
-                      className="coach-detail-check"
-                      aria-hidden="true"
-                    >
-                      ✓
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="coach-detail-setting">
-            <span>Coach detail</span>
-
-            <div className="coach-detail-options">
-              {(
-                [
-                  ['quick', 'Quick', 'Fast'],
-                  ['balanced', 'Balanced', 'Stronger'],
-                  ['deep', 'Deep', 'Deepest'],
-                ] as const
-              ).map(([value, label, strength]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`coach-detail-button ${
-                    coachDetail === value ? 'active' : ''
-                  }`}
-                  aria-pressed={coachDetail === value}
-                  onClick={() => setCoachDetail(value)}
-                >
-                  <span>{label}</span>
-                  <small>{strength} Stockfish</small>
-                  {coachDetail === value ? (
-                    <span className="coach-detail-check" aria-hidden="true">✓</span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="coach-actions">
-            <div className="voice-controls">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={voiceEnabled}
-                  onChange={(event) => {
-                    const enabled =
-                      event.target.checked;
-
-                    setVoiceEnabled(enabled);
-
-                    if (enabled) {
-                      /*
-                      * IMPORTANT:
-                      * This happens directly inside a user click,
-                      * so iOS can unlock audio playback.
-                      */
-                      void unlockCoachAudio().then(() =>
-                        speakCoach(
-                          coachLanguage === 'zh-CN'
-                            ? '语音教练已开启。关键时刻我会提醒你。'
-                            : "Voice coach is on. I'll speak up at the right moments.",
-                          coachLanguage,
-                        ),
-                      );
-                    } else {
-                      stopCoachSpeech();
-                    }
-                  }}
-                />
-
-                {coachLanguage === 'zh-CN'
-                  ? ' 语音'
-                  : ' Voice'}
-              </label>
-
-              <button
-                type="button"
-                className={`tts-status ${ttsStatus.state}`}
-                title={ttsStatus.detail || ttsStatusLabel}
-                onClick={testCoachVoice}
-              >
-                <i aria-hidden="true" />
-                {ttsStatusLabel}
-              </button>
-            </div>
-            <label><input type="checkbox" checked={hintsEnabled} onChange={(event) => setHintsEnabled(event.target.checked)} /> Board hints</label>
-          </div>
-          <div className="hint-legend"><span><i className="legend-line best" />best</span><span><i className="legend-line danger" />threat</span><span><i className="legend-square" />key square</span></div>
-        </section>
-
-        {(gameId || coachNotes.length > 0) && <section className="card learning-card">
-          <div className="section-title learning-title"><span>3</span><div>Learning log{!gameId && coachNotes.length ? <small>Saved from your last game</small> : null}</div></div>
-          {coachNotes.length === 0 ? <p className="muted">Your important coaching moments will collect here so you can review the exact position later.</p> : <div className="lesson-list">
-            {orderedCoachNotes.map((note) => <button
-              type="button"
-              className="lesson-item"
-              key={`${note.gameId}-${note.ply}`}
-              onClick={() => { setReviewTarget(note); setReviewMode('better'); }}
-            >
-              <span className={`lesson-dot ${note.classification}`} />
-              <div>
-                <strong>Move {note.moveNumber} · {note.playedMove} · {note.title}</strong>
-                <small>{note.lesson || 'Review the opponent’s forcing replies.'}</small>
-              </div>
-              <span className="review-chevron">›</span>
-            </button>)}
-          </div>}
-          {!activeGame && coachNotes.length > 0 ? <div className="session-review">
-            <strong>Game review</strong>
-            <div className="review-stats"><span><b>{coachingMoments}</b> coach moments</span><span><b>{mistakes}</b> mistakes</span><span><b>{blunders}</b> blunders</span></div>
-            {focusLessons.length ? <div className="focus-list"><span>Focus next game</span>{focusLessons.map((lesson) => <small key={lesson}>• {lesson}</small>)}</div> : <small className="muted">No major recurring issue found in this game.</small>}
-          </div> : null}
-        </section>}
-      </aside>
-    </main>
+      </main>
+    )}
 
     {reviewMode && reviewTarget && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Review coached position" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewMode(null); }}>
       <div
@@ -4923,6 +4694,12 @@ function handlePuzzleMove(
           <button className={reviewMode === 'better' ? 'active' : ''} onClick={() => setReviewMode('better')}>Before your move</button>
           <button className={reviewMode === 'threat' ? 'active' : ''} onClick={() => setReviewMode('threat')}>After your move</button>
         </div>
+        <button className="ghost wide" onClick={() => openAnalysis({
+          rootFen: reviewMode === 'better' ? reviewTarget.fenBefore : reviewTarget.fenAfter,
+          source: `Coach review · move ${reviewTarget.moveNumber}`,
+          sourceId: reviewTarget.recordId ? `${reviewTarget.recordId}:${reviewMode}` : undefined,
+          orientation: reviewOrientation,
+        })}>Explore on analysis board</button>
         <div className="review-context">
           {reviewMode === 'better' ? 'This is the exact position where you had to choose your move.' : `This is the position immediately after ${reviewTarget.playedMove}.`}
         </div>
@@ -4971,6 +4748,11 @@ function handlePuzzleMove(
           </div>
 
           <p>{reviewTarget.feedback}</p>
+          {reviewTarget.recordId ? <a
+            href={`${CONTROL_URL}/audit?record=${encodeURIComponent(reviewTarget.recordId)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >Inspect coaching record</a> : null}
 
           {reviewTarget.themes?.length ? (
             <div
@@ -5235,7 +5017,7 @@ function handlePuzzleMove(
       </div>
     )}
 
-{puzzleOpen && activePuzzle && (
+    {puzzleOpen && activePuzzle && (
       <div
         className="modal-backdrop"
         role="dialog"
@@ -5298,13 +5080,13 @@ function handlePuzzleMove(
               }
               movableColor={
                 puzzleState === 'correct' ||
-                puzzleState === 'revealed'
+                  puzzleState === 'revealed'
                   ? undefined
                   : puzzleMovableColor
               }
               destinations={
                 puzzleState === 'correct' ||
-                puzzleState === 'revealed'
+                  puzzleState === 'revealed'
                   ? new Map()
                   : puzzleDestinations
               }
@@ -5312,20 +5094,20 @@ function handlePuzzleMove(
               coachArrows={
                 puzzleState === 'revealed'
                   ? [
-                      {
-                        from:
-                          activePuzzle.bestMoveUci.slice(
-                            0,
-                            2,
-                          ),
-                        to:
-                          activePuzzle.bestMoveUci.slice(
-                            2,
-                            4,
-                          ),
-                        kind: 'best',
-                      },
-                    ]
+                    {
+                      from:
+                        activePuzzle.bestMoveUci.slice(
+                          0,
+                          2,
+                        ),
+                      to:
+                        activePuzzle.bestMoveUci.slice(
+                          2,
+                          4,
+                        ),
+                      kind: 'best',
+                    },
+                  ]
                   : []
               }
               coachHighlights={[]}
@@ -5379,7 +5161,7 @@ function handlePuzzleMove(
 
           <div className="puzzle-actions">
             {puzzleState !== 'correct' &&
-            puzzleState !== 'revealed' ? (
+              puzzleState !== 'revealed' ? (
               <button
                 className="ghost"
                 onClick={
@@ -5392,7 +5174,7 @@ function handlePuzzleMove(
 
             {(puzzleState === 'correct' ||
               puzzleState === 'revealed') &&
-            puzzleIndex <
+              puzzleIndex <
               practicePuzzles.length - 1 ? (
               <button
                 className="primary"
@@ -5408,7 +5190,7 @@ function handlePuzzleMove(
 
             {(puzzleState === 'correct' ||
               puzzleState === 'revealed') &&
-            puzzleIndex ===
+              puzzleIndex ===
               practicePuzzles.length - 1 ? (
               <button
                 className="primary"
