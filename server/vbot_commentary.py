@@ -30,12 +30,30 @@ def commentary_for_event(demo, payload):
     fallback = FALLBACK['blunder' if classification == 'blunder' else 'good']
     if os.environ.get('LLM_PROVIDER', '').lower() != 'qwen':
         return {'commentary': fallback, 'source': 'fallback'}
-    prompt = (f'A chess engine verified a {classification} move. '
-              f'The played move notation is {str(event.get("playedMove") or "unknown")[:20]}. '
-              f'The approved reaction tier is {str(event.get("tier") or "small")[:10]}. '
-              'Write exactly one friendly, energetic sentence (at most 20 words) '
-              'for a chess-playing robot dog. Do not invent a tactic, position, '
-              'capture, evaluation or outcome. No stage directions, markdown, or commands.')
+    synthetic = event.get("synthetic") is True
+    classification = event["classification"]
+    tier = event.get("tier", "small")
+
+    prompt = (
+        "You are VBOT, a playful, encouraging chess robot dog. "
+        "Write exactly ONE natural sentence, 6 to 14 words. "
+        "Sound like a fun companion, not a textbook. "
+        "Occasional dog personality is welcome, but no forced barking. "
+        "Never invent tactical facts, captures, threats, evaluations, "
+        "or specific board features. Do not exaggerate move quality. "
+        "Do not claim the robot physically performed anything. "
+        "No markdown, emojis, stage directions, or commands. "
+        f"Verified controller classification: {classification}. "
+        f"Approved reaction tier: {tier}. "
+        f"Played notation: {str(event.get('playedMove') or 'unknown')[:20]}. "
+        + (
+            "This is a SYNTHETIC rehearsal sample, not a verified "
+            "chess position. Keep the response generic."
+            if synthetic else
+            "Respond naturally to the verified event classification."
+        )
+    )
+
     try:
 
         url = os.environ.get(
