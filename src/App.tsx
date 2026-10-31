@@ -18,6 +18,7 @@ import { notifyVbotMove } from './vbotDemo';
 import { useVbotCompanion } from './useVbotCompanion';
 import { VbotCompanion } from './components/VbotCompanion';
 import { VbotPerformance } from './components/VbotPerformance';
+import { DemoWelcome, needsDemoWelcome, acknowledgeDemoWelcome, resetDemoWelcome } from './components/DemoWelcome';
 import { GameQrDialog } from './components/GameQrDialog';
 import { CapturePractice } from './components/CapturePractice';
 import { JoinRoomDialog } from './components/JoinRoomDialog';
@@ -1710,6 +1711,7 @@ export default function App() {
   const [capturePracticeOpen, setCapturePracticeOpen] = useState(false);
   const [roomLinkOpen, setRoomLinkOpen] = useState(() => readRoomJoinDraft() !== null);
   const [performanceOpen, setPerformanceOpen] = useState(false);
+  const [demoWelcomeOpen, setDemoWelcomeOpen] = useState(needsDemoWelcome);
   const [accountCheckError, setAccountCheckError] = useState('');
   const [accountCheckNonce, setAccountCheckNonce] = useState(0);
   useEffect(() => { setQrGameId(null); }, [gameId]);
@@ -4412,7 +4414,11 @@ export default function App() {
       navHidden={navHidden}
     />
 
-    <div className="capture-practice-entry"><button className="primary" onClick={() => setCapturePracticeOpen(true)}>🎯 Capture Practice</button><span>Easy queen and rook captures + Rock You rewards</span>
+    <div className="capture-practice-entry"><button className="ghost" disabled={startingGame || vbotCompanion.pending || Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy)}
+      title={vbotCompanion.status?.armed || vbotCompanion.status?.busy ? 'Stop robot reactions before welcoming the next guest.' : 'Show the quick introduction for the next visitor.'}
+      onClick={() => { resetDemoWelcome(); setDemoWelcomeOpen(true); }}>👋 Next guest</button>
+      {Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy) && <span>Stop dog reactions before welcoming the next guest.</span>}
+      <button className="primary" onClick={() => setCapturePracticeOpen(true)}>🎯 Capture Practice</button><span>Easy queen and rook captures + Rock You rewards</span>
       <button className="ghost" onClick={() => setPerformanceOpen(true)}>🎭 Dog stage{vbotCompanion.status?.sessionKind === 'performance' && (vbotCompanion.status.armed || vbotCompanion.status.busy) ? ' · Show live' : ' · Preview & perform'}</button>
     </div>
 
@@ -5419,6 +5425,21 @@ export default function App() {
       </div>
     )}
 
+    {demoWelcomeOpen && <DemoWelcome
+      onClose={() => { acknowledgeDemoWelcome(); setDemoWelcomeOpen(false); }}
+      onPractice={() => {
+        acknowledgeDemoWelcome(); setDemoWelcomeOpen(false); setSenseSetupOpen(false); setRoomLinkOpen(false);
+        setMenuModalOpen(false); setProfileModalOpen(false); setAnalysisOpen(false); window.location.hash = '';
+        setCapturePracticeOpen(true);
+      }}
+      onExplore={() => {
+        acknowledgeDemoWelcome(); setDemoWelcomeOpen(false); setSenseSetupOpen(false); setRoomLinkOpen(false);
+        setMenuModalOpen(false); setProfileModalOpen(false); setAnalysisOpen(false); window.location.hash = ''; setCurrentView('home');
+      }}
+      onPerformance={() => {
+        acknowledgeDemoWelcome(); setDemoWelcomeOpen(false); setSenseSetupOpen(false); setRoomLinkOpen(false);
+        setMenuModalOpen(false); setProfileModalOpen(false); setPerformanceOpen(true);
+      }} />}
     {capturePracticeOpen && <CapturePractice onClose={() => setCapturePracticeOpen(false)} />}
     {performanceOpen && <VbotPerformance control={vbotCompanion} onClose={() => setPerformanceOpen(false)} />}
     {roomLinkOpen && <JoinRoomDialog token={token} autoJoinAllowed={!gameId || vbotEnded} username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)}
