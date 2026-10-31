@@ -6,7 +6,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from openai import OpenAI
+if os.environ.get('CHESS_ANDROID') == '1':
+    from android_openai import OpenAI
+else:
+    from openai import OpenAI
 
 from .history import audit_call, record_attempt, timestamp
 

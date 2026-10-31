@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'com.chaquo.python'
 
 android {
     namespace = "com.andy.chessbuddy"
@@ -7,8 +8,9 @@ android {
         applicationId "com.andy.chessbuddy"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 105
-        versionName "1.0.5-tablet"
+        versionCode 106
+        versionName "1.0.6-standalone"
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -18,11 +20,39 @@ android {
     }
     buildTypes {
         release {
+            signingConfig signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    packaging {
+        jniLibs { useLegacyPackaging true; keepDebugSymbols += ['**/libstockfish.so'] }
+    }
 }
+
+tasks.register('copyChessPython', Sync) {
+    into layout.buildDirectory.dir('generated/chessPython')
+    from('../../server') { into 'server'; include '**/*.py', '**/*.json', '**/*.tsv', '**/*.txt' }
+    from('../../audit-dashboard') { into 'audit-dashboard'; include 'index.html' }
+}
+
+chaquopy {
+    defaultConfig {
+        version '3.13'
+        pip {
+            install 'chess==1.11.2'
+            install 'requests==2.32.5'
+            install 'python-dotenv==1.1.1'
+            install 'PyYAML==6.0.3'
+            install 'qrcode==8.2'
+        }
+        extractPackages 'server'
+    }
+    sourceSets {
+        main { srcDirs = ['src/main/python', "$buildDir/generated/chessPython"] }
+    }
+}
+tasks.configureEach { if (name != 'copyChessPython' && name.toLowerCase().contains('python')) dependsOn 'copyChessPython' }
 
 repositories {
     flatDir{
@@ -31,6 +61,7 @@ repositories {
 }
 
 dependencies {
+    implementation 'com.github.mwiede:jsch:0.2.24'
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"

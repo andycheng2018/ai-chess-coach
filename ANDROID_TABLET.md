@@ -1,5 +1,8 @@
 # Chess Buddy on an Android tablet
 
+**Paired variant:** this guide describes `codex/android-tablet`. For the current
+Mac-free APK on `codex/android-standalone`, use [Standalone Android](ANDROID_STANDALONE.md).
+
 This APK runs Chess Buddy's interface on Android 8.0/API 26 or newer. The Mac
 remains the companion backend for Stockfish, Luna, the Lichess bot, and VBOT SSH.
 SenseRobot connects through its existing Lichess room flow. Keep the Mac and

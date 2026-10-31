@@ -1,14 +1,14 @@
-name: Android tablet APK
+name: Standalone Android tablet APK
 on:
   workflow_dispatch:
   push:
-    branches: [codex/android-tablet]
+    branches: [codex/android-standalone]
 permissions:
   contents: read
 jobs:
   apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,21 +19,28 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Select installed Android NDK
+        run: echo "ANDROID_NDK_HOME=$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)" >> "$GITHUB_ENV"
+      - name: Build on-tablet Stockfish and package its matching source
+        run: python scripts/build_android_stockfish.py
       - run: npm ci
       - run: npm run build
       - run: npx cap sync android
       - name: Build installable demo APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleRelease --no-daemon
       - name: Verify and package
         run: |
           mkdir -p apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk apk/ChessBuddy-Android-demo.apk
+          cp android/app/build/outputs/apk/release/app-release.apk apk/ChessBuddy-Standalone-Android.apk
           signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
-          "$signer" verify --verbose --print-certs apk/ChessBuddy-Android-demo.apk
-          sha256sum apk/ChessBuddy-Android-demo.apk > apk/SHA256SUMS.txt
+          "$signer" verify --verbose --print-certs apk/ChessBuddy-Standalone-Android.apk
+          sha256sum apk/ChessBuddy-Standalone-Android.apk apk/Stockfish-Corresponding-Source.zip > apk/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: ChessBuddy-Android-tablet
+          name: ChessBuddy-Standalone-Android
           path: apk/
           retention-days: 30

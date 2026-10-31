@@ -3955,5 +3955,7 @@ header {
 .tablet-connection-card h1 { color: #b6d68a; }
 .tablet-connection-card p, .tablet-connection-card li { line-height: 1.6; }
 .tablet-connection-card label { display: grid; gap: 8px; margin: 18px 0; }
-.tablet-connection-card input { width: 100%; padding: 12px; color: #e8e6e3; background: #191817; border: 1px solid #ffffff33; border-radius: 8px; }
+.tablet-connection-card input:not([type="checkbox"]) { width: 100%; padding: 12px; color: #e8e6e3; background: #191817; border: 1px solid #ffffff33; border-radius: 8px; }
+.tablet-connection-card { flex-shrink: 0; }
+.tablet-connection-backdrop { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; }
 .tablet-connection-button { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); z-index: 2100; font-size: 12px; box-shadow: 0 4px 18px #0008; }

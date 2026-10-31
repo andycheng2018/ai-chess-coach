@@ -4957,7 +4957,7 @@ export default function App() {
           </div>
 
           <p>{reviewTarget.feedback}</p>
-          {reviewTarget.recordId && window.__CHESS_BACKEND_URL__ ? <p className="fine-print">This coaching record is saved on your Mac. Open Audit Studio there to inspect its model inputs and outputs.</p> : reviewTarget.recordId ? <a
+          {reviewTarget.recordId && window.__CHESS_BACKEND_URL__ ? <p className="fine-print">This coaching record is saved in this tablet's local journal.</p> : reviewTarget.recordId ? <a
             href={`${CONTROL_URL}/audit?record=${encodeURIComponent(reviewTarget.recordId)}`}
             target="_blank"
             rel="noopener noreferrer"

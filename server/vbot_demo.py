@@ -20,7 +20,14 @@ from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRES
 PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET)
 REMOTE_ROOT = "/userdata/vbot/chess-demo"
 SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"
-PROFILE_PATH = Path(__file__).resolve().parents[1] / "vbot-demo" / "device-verification.local.json"
+PROFILE_PATH = Path(os.environ.get('CHESS_DATA_HOME', Path(__file__).resolve().parents[1])) / "vbot-demo" / "device-verification.local.json"
+
+
+def run_ssh(command, **kwargs):
+    if os.environ.get('CHESS_ANDROID') == '1':
+        from android_backend import ssh_run
+        return ssh_run(command, timeout=kwargs.get('timeout', 125))
+    return subprocess.run(command, **kwargs)
 
 
 class RobotNotReady(RuntimeError):
@@ -50,6 +57,9 @@ def load_verification(path=PROFILE_PATH) -> dict | None:
 
 
 def known_host_fingerprints(target: str) -> set[str]:
+    if os.environ.get('CHESS_ANDROID') == '1':
+        from android_backend import trusted_fingerprints
+        return trusted_fingerprints(target)
     host = target.removeprefix("vbot@")
     found = subprocess.run(["ssh-keygen", "-F", host], capture_output=True, text=True, timeout=3, check=False)
     keys = "\n".join(line for line in found.stdout.splitlines() if line and not line.startswith("#"))
@@ -81,7 +91,7 @@ def ssh_command(target: str, preset: str, request_id: str, *, host_key_alias=Non
 
 def send_dance(target: str, preset: str, request_id: str, *, host_key_alias=None) -> dict:
     # A timeout or a lost SSH stream can leave a task running. Never retry it.
-    result = subprocess.run(ssh_command(target, preset, request_id, host_key_alias=host_key_alias), capture_output=True,
+    result = run_ssh(ssh_command(target, preset, request_id, host_key_alias=host_key_alias), capture_output=True,
                             text=True, timeout=125, check=False)
     terminal = None
     not_ready = None
@@ -120,7 +130,7 @@ def check_robot(target: str, *, host_key_alias=None) -> dict:
                              REMOTE_ROOT + "/robot_action.py", "--check-ready",
                              "--request-id", request_id])
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=25, check=False)
+        result = run_ssh(command, capture_output=True, text=True, timeout=25, check=False)
     except subprocess.TimeoutExpired:
         return {"ready": False, "code": "timeout", "reason": "Robot readiness check timed out. Check its power and Wi-Fi."}
     for line in result.stdout.splitlines():
@@ -137,7 +147,7 @@ def check_robot(target: str, *, host_key_alias=None) -> dict:
     if "host key verification failed" in error or "remote host identification has changed" in error:
         reason = "SSH host identity could not be verified. Inspect the saved host key; do not bypass verification."
     elif "permission denied" in error:
-        reason = "SSH authentication failed. Check this Mac's existing public-key access."
+        reason = "SSH authentication failed. Pair this tablet's public key with the dog in Tablet settings." if os.environ.get('CHESS_ANDROID') == '1' else "SSH authentication failed. Check this Mac's existing public-key access."
     else:
         reason = "Robot readiness could not be verified. Check power, Wi-Fi, SSH access, and the deployed helper."
     return {"ready": False, "code": "unavailable", "reason": reason}
@@ -797,4 +807,4 @@ class VbotDemo:
                 if tier in {"major", "sad"}: self.last_dance_finished = self.clock()
 
 
-demo = VbotDemo(network_book=NetworkBook())
+demo = VbotDemo(network_book=None if os.environ.get('CHESS_ANDROID') == '1' else NetworkBook())

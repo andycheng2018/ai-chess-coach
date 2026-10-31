@@ -192,7 +192,7 @@ class CoachHistory:
             temporary.replace(self.path)
 
 
-history = CoachHistory(Path(__file__).resolve().parents[2] / "logs" / "coach_logs.jsonl")
+history = CoachHistory(Path(os.environ.get('CHESS_DATA_HOME', Path(__file__).resolve().parents[2])) / "logs" / "coach_logs.jsonl")
 _call: ContextVar[dict[str, Any] | None] = ContextVar("coach_audit_call", default=None)
 
 

@@ -280,7 +280,7 @@ class LichessBotRuntime:
     def _credentials(self) -> tuple[str, str]:
         token, configured_username = _token_from_config()
         if _is_placeholder(token):
-            raise RuntimeError("Add the bot token to .env (LICHESS_BOT_TOKEN) or bot/config.yml.")
+            raise RuntimeError("Add your Lichess BOT account token in Tablet settings." if os.environ.get('CHESS_ANDROID') == '1' else "Add the bot token to .env (LICHESS_BOT_TOKEN) or bot/config.yml.")
         return token, configured_username
 
     @staticmethod

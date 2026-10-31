@@ -960,6 +960,8 @@ def chat_reply(payload: dict[str, Any]) -> dict[str, Any]:
     if old:
         return old
     if not os.environ.get("OPENAI_API_KEY", "").strip():
+        if os.environ.get('CHESS_ANDROID') == '1':
+            raise RuntimeError('Add an OpenAI API key in Tablet settings to talk with Luna.')
         raise RuntimeError("Luna needs the coach's OPENAI_API_KEY in the backend .env. Add it and restart the backend.")
     # Share the coaching model lock. Reject a busy request instead of building
     # an unbounded queue or paying for duplicate simultaneous sends.

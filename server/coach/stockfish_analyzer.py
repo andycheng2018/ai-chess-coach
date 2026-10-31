@@ -107,6 +107,8 @@ def find_stockfish() -> str:
         if candidate and Path(candidate).is_file():
             return str(Path(candidate).resolve())
 
+    if os.environ.get('CHESS_ANDROID') == '1':
+        raise FileNotFoundError("The tablet's bundled Stockfish engine is unavailable. Check the APK installation.")
     raise FileNotFoundError(
         "Stockfish was not found. On macOS run: brew install stockfish. "
         "Or set STOCKFISH_PATH=/full/path/to/stockfish."

@@ -33,3 +33,6 @@ vbot-demo/unresolved-action.json
 *.aab
 *.jks
 *.keystore
+/apk/
+/android/app/src/main/jniLibs/
+/android/app/src/main/assets/licenses/
