@@ -39,7 +39,7 @@ export type PerformancePlan = {
 };
 export type PerformanceState = PerformancePlan & {
   runId: string; running: boolean; phase: string; cueIndex: number; completedCues: number; phaseEndsAt: number | null;
-  stopReason?: string | null;
+  stopReason?: string | null; rescanReason?: string | null; rescanCount?: number; attemptCount?: number;
 };
 export type VbotStatus = {
   sessionKind?: 'game' | 'capture-practice' | 'performance';

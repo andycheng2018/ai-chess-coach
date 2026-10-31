@@ -70,7 +70,7 @@ class CueTransportTests(unittest.TestCase):
         self.run_id = 'a'*32
         self.cue_id = 'b'*32
         self.stream = Mock()
-        self.stream.readLine.side_effect = [json.dumps(dict(event='session_ready',requestId=self.run_id,protocol=1,ready=True))]
+        self.stream.readLine.side_effect = [json.dumps(dict(event='session_ready',requestId=self.run_id,protocol=1,rescanProtocol=1,ready=True))]
         self.factory = Mock(return_value=self.stream)
         self.session = CueSession('vbot@robot.example',self.run_id,'robot.example',stream_factory=self.factory)
         self.addCleanup(self.session.close)
@@ -152,3 +152,21 @@ class SharedExecutionTests(unittest.TestCase):
 
     def test_unknown_outcome_keeps_unresolved_guard_and_never_replays(self):
         self.execute(lost=True)
+
+class RescanCancellationTransportTests(unittest.TestCase):
+    def test_operator_stop_sends_cancel_without_replaying_the_cue(self):
+        import threading
+        stream=Mock(); stop=threading.Event(); run='a'*32; cue='b'*32
+        stream.readLine.side_effect=[json.dumps(dict(event='session_ready',requestId=run,protocol=1,rescanProtocol=1,ready=True))]
+        session=CueSession('vbot@robot.example',run,'robot.example',stream_factory=lambda _:stream)
+        session.cancel=stop
+        session.on_rescan=lambda _:stop.set()
+        stream.readLine.side_effect=[json.dumps(dict(event='rescan',requestId=cue,phase='rescanning')),
+                                    json.dumps(dict(event='not_ready',requestId=cue,code='operator_stop'))]
+        from vbot_demo import RobotNotReady
+        try:
+            with self.assertRaises(RobotNotReady):session.send('vbot@robot.example','actions/WAVE.json',cue)
+            frames=[json.loads(call.args[0]) for call in stream.writeLine.call_args_list]
+            self.assertEqual([frame['op'] for frame in frames],['cue','cancel'])
+            self.assertTrue(all(frame['requestId']==cue for frame in frames))
+        finally:session.close()

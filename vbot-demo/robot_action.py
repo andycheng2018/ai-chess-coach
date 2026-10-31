@@ -216,7 +216,100 @@ class LiveReadiness:
         return result if detailed else result['reason']
 
 
-def execute_preset(args, node, sdk, client, codec, result_type, read_check):
+STATIC_TASKS = {'actions/ROCKYOU.json': 'rockyou_30s'}
+TRANSIENT_GATES = {'head_busy', 'head_pending', 'posture', 'not_static'}
+
+
+def precondition_refusal(result, task_name):
+    """Narrow root refusal, never a generic ABORTED/timeout/partial DAG failure."""
+    if not result or result.get('status') != 'ABORTED' or result.get('code') != 'HANDLER_ERROR' or result.get('durationMs') is not None:
+        return False
+    try:
+        detail = json.loads(result.get('message', ''))
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(detail, dict) or not isinstance(detail.get('taskError'), dict):
+        return False
+    message = detail['taskError'].get('message', '')
+    return (detail.get('schemaVersion') == 1 and detail.get('task_name') == task_name
+            and detail.get('error_category') == 7 and detail.get('error_category_str') == 'PRECONDITION_FAILED'
+            and detail['taskError'].get('code') == 'rcp.execution.precondition_failed'
+            and isinstance(message, str) and message.startswith('Precondition check failed:')
+            and "Precondition 'is_robot_static' failed" in message
+            and 'false == true evaluated to false' in message
+            and not any(key in detail or key in detail['taskError'] for key in ('failed_at', 'failedAt', 'completed_nodes')))
+
+
+def make_static_probe(request_id):
+    """Only a 1 ms Sleep with a root predicate; no static setup or motion node."""
+    from aorta.action.rcp.ExecuteTaskGoal import ExecuteTaskGoalT
+    from aorta.services.rcp.DagInput import DagInput
+    from aorta.services.rcp.DagSpec import DagSpecT
+    from aorta.services.rcp.DagNode import DagNodeT
+    from aorta.services.rcp.NodeCommand import NodeCommand
+    from aorta.services.rcp.SleepCommand import SleepCommandT
+    from aorta.services.rcp.PreconditionExpr import PreconditionExprT
+    from aorta.services.rcp.ConditionValue import ConditionValueT
+    return ExecuteTaskGoalT(source='chess-coach-static-probe', inputType=DagInput.DagSpec,
+        input=DagSpecT(taskId='chess-static-probe-'+request_id, skipBatchPreCheck=False, requiresStatic=False,
+            requiredResources=[], optionalResources=[],
+            preconditions=PreconditionExprT(key='is_robot_static', value=ConditionValueT(kind=1, boolValue=True)),
+            nodes=[DagNodeT(id='observe-only', dependencies=[], executionTimeoutMs=1000, lifecycle=1,
+                commandType=NodeCommand.SleepCommand, command=SleepCommandT(durationMs=1))]))
+
+
+def rescan_cue(preset, read_check, static_check, perform, canceled, announce,
+               *, clock=time.monotonic, wait=time.sleep, timeout=30, max_attempts=3):
+    """One logical cue. Repeat observations, only retry a verified root refusal.
+
+    perform raises on unknown outcomes; those exceptions are never caught here.
+    Static-check goals contain no motion. The original show confirmations remain
+    required, and operator cancellation is polled before EVERY movement attempt.
+    """
+    deadline = clock() + timeout
+    attempts, scans, after = 0, 0, None
+    reason = 'Waiting for fresh safety conditions.'
+    def blocked(code, message):
+        return {'event': 'not_ready', 'ready': False, 'code': code, 'reason': message,
+                'attemptCount': attempts, 'rescanCount': scans}
+    while clock() < deadline:
+        if canceled(): return blocked('operator_stop', 'Stopped before the next movement attempt.')
+        scans += 1
+        ready = read_check(timeout=min(1, max(.01, deadline-clock())), detailed=True, after=after)
+        if ready['ready'] and preset in STATIC_TASKS:
+            ready = static_check()
+        if not ready['ready']:
+            reason = ready.get('reason') or 'Waiting for the robot to settle.'
+            if ready.get('code') not in TRANSIENT_GATES:
+                return blocked(ready.get('code', 'not_ready'), reason)
+            announce({'phase': 'rescanning', 'reason': reason, 'attemptCount': attempts, 'rescanCount': scans})
+            after = clock()
+            if canceled(): return blocked('operator_stop', 'Stopped during safety rescans.')
+            wait(min(.25, max(0, deadline-clock())))
+            continue
+        if canceled(): return blocked('operator_stop', 'Stopped before the movement command.')
+        if clock() >= deadline: break
+        announce({'phase': 'acting', 'reason': None, 'attemptCount': attempts+1, 'rescanCount': scans})
+        result = perform()
+        if result is None:  # execute_preset positively refused BEFORE submitting a goal.
+            after = clock()
+            wait(min(.25, max(0, deadline-clock())))
+            continue
+        attempts += 1
+        if canceled():
+            return {**result, 'stopRequested': True, 'attemptCount': attempts, 'rescanCount': scans}
+        if (preset in STATIC_TASKS and precondition_refusal(result, STATIC_TASKS[preset])
+                and attempts < max_attempts):
+            reason = 'Dance refused before execution: waiting for the provider’s static condition.'
+            announce({'phase': 'rescanning', 'reason': reason, 'attemptCount': attempts, 'rescanCount': scans})
+            after = clock()
+            wait(min(.25, max(0, deadline-clock())))
+            continue
+        return {**result, 'attemptCount': attempts, 'rescanCount': scans}
+    return blocked('rescan_timeout', 'Safety rescan window expired. No further movement attempts. ' + reason)
+
+
+def execute_preset(args, node, sdk, client, codec, result_type, read_check, *, goal_factory=None, publish=True, action_timeout=90):
     """Shared one-shot execution; a session never bypasses this guarded path."""
     directory = Path(__file__).resolve().parent
     requests = directory / "requests"
@@ -230,7 +323,7 @@ def execute_preset(args, node, sdk, client, codec, result_type, read_check):
         emit(event="not_ready", requestId=args.request_id, **readiness)
         return None
     requests.mkdir(mode=0o700, exist_ok=True)
-    record = {"requestId": args.request_id, "preset": args.preset, "goalId": goal_id}
+    record = {"requestId": args.request_id, "preset": args.preset, "goalId": goal_id, "logicalRequestId": getattr(args, "logical_request_id", None)}
     # Keep handled IDs across reconnects; no goal is sent before both exclusive records exist.
     with (requests / (args.request_id + ".json")).open("x") as file:
         json.dump(record, file)
@@ -238,8 +331,8 @@ def execute_preset(args, node, sdk, client, codec, result_type, read_check):
         json.dump({"requestId": args.request_id, "goalId": goal_id, "preset": args.preset}, file)
     emit(event="submitting", requestId=args.request_id, goalId=goal_id, preset=args.preset)
     try:
-        handle = client.send_goal_with_id(goal_id, codec.serialize(make_goal(args.preset)))
-        deadline = time.monotonic() + 90
+        handle = client.send_goal_with_id(goal_id, codec.serialize((goal_factory or make_goal)(args.preset)))
+        deadline = time.monotonic() + action_timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -285,7 +378,8 @@ def execute_preset(args, node, sdk, client, codec, result_type, read_check):
             unresolved.unlink()
     # A session may receive its next cue immediately after this frame. Publish
     # only after the durable result and unresolved-action cleanup are complete.
-    emit(**summary)
+    if publish:
+        emit(**summary)
     return summary
 
 def main(argv=None):
@@ -347,7 +441,7 @@ def main(argv=None):
         if args.serve:
             live = resources.enter_context(LiveReadiness(node, sdk, readiness_topics()))
             initial = live.check(detailed=True)
-            emit(event="session_ready", requestId=args.request_id, protocol=1, **initial)
+            emit(event="session_ready", requestId=args.request_id, protocol=1, rescanProtocol=1, **initial)
             if not initial["ready"]:
                 return 1
             deadline = time.monotonic() + 900
@@ -370,10 +464,55 @@ def main(argv=None):
                     continue
                 if not args.execute or command.get("op") != "cue" or command.get("preset") not in PRESETS:
                     raise ValueError("Invalid session cue")
-                provider_ready()
-                cue = argparse.Namespace(request_id=request_id, preset=command["preset"])
-                result = execute_preset(cue, node, sdk, client, codec, ExecuteTaskResultT, live.check)
-                if not result or result['status'] != 'SUCCEEDED' or result['errorCategory'] != 0 or result['readyForNext'] is not True:
+                # Reserve the logical identity before ANY probe or movement. A lost
+                # response cannot cause a new session to replay this logical cue.
+                requests = directory / 'requests'
+                requests.mkdir(mode=0o700, exist_ok=True)
+                logical_path = requests / ('logical-' + request_id + '.json')
+                logical = {'requestId': request_id, 'preset': command['preset'], 'attemptIds': [], 'probeIds': []}
+                with logical_path.open('x') as record:
+                    json.dump(logical, record)
+                def canceled():
+                    if not select.select([sys.stdin], [], [], 0)[0]: return False
+                    frame = sys.stdin.readline(4097)
+                    if not frame: return True
+                    if len(frame) > 4096 or not frame.endswith('\n'): raise ValueError('Invalid cancellation frame')
+                    value = json.loads(frame)
+                    if value.get('op') == 'close' or (value.get('op') == 'cancel' and value.get('requestId') == request_id): return True
+                    raise ValueError('Only cancellation may interrupt a pending cue; pipelining is forbidden')
+                def static_check():
+                    provider_ready()
+                    probe_id = uuid.uuid4().hex
+                    logical['probeIds'].append(probe_id)
+                    probe = argparse.Namespace(request_id=probe_id, preset='safety/is_robot_static', logical_request_id=request_id)
+                    result = execute_preset(probe, node, sdk, client, codec, ExecuteTaskResultT, live.check,
+                        goal_factory=lambda _: make_static_probe(probe_id), publish=False, action_timeout=3)
+                    if result and result['status'] == 'SUCCEEDED' and result['errorCategory'] == 0:
+                        return {'ready': result['readyForNext'], 'code': 'ready' if result['readyForNext'] else 'probe_postflight',
+                                'reason': result.get('postflightReason')}
+                    if result is None:
+                        current = live.check(timeout=1, detailed=True)
+                        return current if not current['ready'] else {'ready': False, 'code': 'not_static', 'reason': 'Static probe was not submitted; rescanning before any movement.'}
+                    if precondition_refusal(result, 'chess-static-probe-'+probe_id):
+                        return {'ready': False, 'code': 'not_static', 'reason': 'Waiting for the provider to confirm is_robot_static.'}
+                    return {'ready': False, 'code': 'probe_failed', 'reason': 'The non-motion static-condition probe failed. Inspect the saved probe result.'}
+                def perform():
+                    provider_ready()
+                    attempt_id = uuid.uuid4().hex
+                    logical['attemptIds'].append(attempt_id)
+                    cue = argparse.Namespace(request_id=attempt_id, preset=command['preset'], logical_request_id=request_id)
+                    return execute_preset(cue, node, sdk, client, codec, ExecuteTaskResultT, live.check, publish=False)
+                result = rescan_cue(command['preset'], live.check, static_check, perform, canceled,
+                    lambda frame: emit(event='rescan', requestId=request_id, **frame),
+                    timeout=min(30, max(0, deadline-time.monotonic())))
+                logical['result'] = result
+                temporary = logical_path.with_suffix('.complete.tmp')
+                with temporary.open('x') as record: json.dump(logical, record)
+                os.replace(temporary, logical_path)
+                # Keep the logical request identity on the wire, actual attempt
+                # goal identity in goalId, and every attempt in the device journal.
+                emit(**{**result, 'requestId': request_id})
+                if result.get('event') == 'not_ready' or result.get('stopRequested') or result.get('status') != 'SUCCEEDED' or result.get('errorCategory') != 0 or result.get('readyForNext') is not True:
                     return 1
             return 0
         if args.check_ready:

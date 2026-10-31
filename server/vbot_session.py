@@ -54,6 +54,10 @@ class CueSession:
         from vbot_demo import ssh_command
         self.target = target
         self.failed = False
+        self.cancel = None
+        self.on_rescan = None
+        self.active_request = None
+        self.cancel_sent = False
         self.seen = set()
         self.closed = False
         command = ssh_command(target, 'actions/ROCKYOU.json', run_id, host_key_alias=anchor)
@@ -73,7 +77,7 @@ class CueSession:
             self.stream = ProcessStream(command)
         try:
             ready = self._receive(run_id, {'session_ready'}, 25)
-            if ready.get('protocol') != 1 or ready.get('ready') is not True:
+            if ready.get('protocol') != 1 or ready.get('rescanProtocol') != 1 or ready.get('ready') is not True:
                 raise RuntimeError('Robot does not support a ready persistent cue session. No show started.')
         except BaseException:
             self.close()
@@ -82,24 +86,34 @@ class CueSession:
     def _receive(self, request_id, events, timeout):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if self.active_request == request_id and self.cancel is not None and self.cancel.is_set() and not self.cancel_sent:
+                self.cancel_sent = True
+                self.stream.writeLine(json.dumps({'op': 'cancel', 'requestId': request_id}))
             line = str(self.stream.readLine(250))
             if not line: continue
             if len(line) > 65536:
                 raise RuntimeError('Oversized session frame; inspect the robot, do not replay.')
             try: item = json.loads(line)
             except ValueError: continue  # Non-protocol SDK diagnostics never authorize another cue.
-            if isinstance(item, dict) and item.get('requestId') == request_id and item.get('event') in events:
-                return item
+            if isinstance(item, dict) and item.get('requestId') == request_id:
+                if item.get('event') == 'rescan' and self.on_rescan:
+                    self.on_rescan(item)
+                elif item.get('event') in events:
+                    return item
         raise TimeoutError('Robot session outcome unconfirmed. No reconnect or automatic retry.')
 
     def send(self, target, preset, request_id):
         from vbot_demo import PRESETS, RobotNotReady, RobotRejected
         if self.closed or self.failed or target != self.target or not re.fullmatch('[a-f0-9]{32}', request_id) or request_id in self.seen or preset not in PRESETS:
             raise ValueError('Closed session, repeated cue identity, or unlisted preset.')
+        if self.cancel is not None and self.cancel.is_set():
+            raise RobotNotReady('Stopped before submitting the cue.')
+        self.active_request = request_id
+        self.cancel_sent = False
         self.seen.add(request_id)  # Record BEFORE writing, including uncertain/lost writes.
         try:
             self.stream.writeLine(json.dumps({'op': 'cue', 'preset': preset, 'requestId': request_id}))
-            result = self._receive(request_id, {'not_ready', 'terminal'}, 125)
+            result = self._receive(request_id, {'not_ready', 'terminal'}, 155)
             if result['event'] == 'not_ready':
                 raise RobotNotReady(result.get('reason') or 'The robot is not ready. No next cue submitted.')
             if result.get('status') in {'ABORTED', 'CANCELED'}:
@@ -109,10 +123,13 @@ class CueSession:
             if result.get('readyForNext') is not True:
                 self.failed = True
             return {'status': 'completed', 'goalId': result.get('goalId'), 'durationMs': result.get('durationMs'),
-                    'readyForNext': result.get('readyForNext') is True, 'postflightReason': result.get('postflightReason')}
+                    'readyForNext': result.get('readyForNext') is True, 'postflightReason': result.get('postflightReason'),
+                    'attemptCount': result.get('attemptCount', 1), 'rescanCount': result.get('rescanCount', 1)}
         except BaseException:
             self.failed = True
             raise
+        finally:
+            self.active_request = None
 
     def close(self):
         if not self.closed:

@@ -472,6 +472,16 @@ class VbotDemo:
         try:
             if self.session_factory:
                 session = self.session_factory(self.target, run_id, self._ssh_identity_anchor())
+                session.cancel = cancel
+                def rescan_progress(frame):
+                    with self.lock:
+                        if self.performance and self.performance['runId'] == run_id and self.generation == generation:
+                            self.performance.update(phase=frame.get('phase', 'rescanning'),
+                                rescanReason=frame.get('reason'), rescanCount=frame.get('rescanCount'), attemptCount=frame.get('attemptCount'))
+                            self._event('performance_rescan', performanceRunId=run_id, requestId=frame.get('requestId'),
+                                message=frame.get('reason') or 'Safety checks passed; attempting the cue.',
+                                rescanCount=frame.get('rescanCount'), attemptCount=frame.get('attemptCount'))
+                session.on_rescan = rescan_progress
             for index, cue in enumerate(self.performance['cues']):
                 with self.lock:
                     if cancel.is_set() or not self.armed or generation != self.generation:
@@ -480,7 +490,7 @@ class VbotDemo:
                         self.performance['stopReason'] = 'The 15-minute performance limit was reached. No next cue submitted.'
                         self._event('performance_expired', message='Performance time limit reached; no next cue submitted.')
                         return
-                    self.performance.update(cueIndex=index, phase='acting', phaseEndsAt=None)
+                    self.performance.update(cueIndex=index, phase='acting', phaseEndsAt=None, rescanReason=None, rescanCount=0, attemptCount=0)
                     self.busy = True  # Reserve the same dispatcher used by chess reactions.
                     self.last_started = self.clock()
                     request_id = uuid.uuid4().hex

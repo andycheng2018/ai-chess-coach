@@ -74,6 +74,35 @@ motion still needs the onsite handset Stop if it must be interrupted. The native
 Android bridge uses the existing configured target, private key and pinned host
 fingerprint; this adds no listener or pairing permission.
 
+## Rescans and bounded retry
+
+Transient head-busy/pending, standing-idle transitions, or a false static condition
+keep the logical cue pending for up to 30 seconds. Each scan reads current live
+telemetry; this never repeats a cached readiness decision. Battery, charging,
+alarms, system faults, head faults, stale/malformed/incomplete telemetry, provider
+mismatch and uncertain task results stop the cue immediately.
+
+Before Rock You, the provider evaluates its exact `is_robot_static == true`
+precondition through a separate 1 ms Sleep-only DAG. The probe has no motion node,
+no requested resources, `requires_static=false`, and normal prechecks enabled.
+It does not prepare/change posture or set a context value. A failed static
+predicate is observed again; validation or other probe failures stop the cue.
+
+A motion attempt is repeated only for the recognized root `rockyou_30s` refusal:
+ABORTED/HANDLER_ERROR, no motion-duration result, schema version 1, category 7
+PRECONDITION_FAILED, `rcp.execution.precondition_failed`, the exact root task name,
+and the false-to-true static predicate diagnostic. Nested-node failure markers,
+cancellation, timeout, missing replies and generic ABORTED results are excluded.
+The cue rescans all conditions and reruns the static probe before resubmitting.
+There are at most three movement attempts, within the bounded rescan window.
+
+Each logical cue is reserved durably before probes or movement; every probe and
+movement attempt uses its own UUID and durable request record linked to the
+logical cue. Only the final logical outcome acknowledges the client. Lost replies
+never reconnect or replay a logical cue. The UI shows the pending rescan reason.
+**Stop further cues** sends cancellation to a pending rescan; the helper polls
+before each movement attempt. Use the handset Stop for already active movement.
+
 ## During the show
 
 The panel shows the current act, cue, completed cue count, and rest countdown.
@@ -84,9 +113,10 @@ indicates a live show and reopens its controls.
 **Stop further cues** cancels upcoming cues and interrupts a waiting rest. It is
 not a physical emergency stop: use the onsite handset Stop for current movement.
 Every motion still requires the existing provider, fresh telemetry, posture,
-battery, host-identity and terminal-outcome checks. A rejection, unknown result,
-identity change, or failed postflight ends the remaining score. There is no
-automatic replay, recovery dance, or endless loop. No new cue is submitted after
+battery, host-identity and terminal-outcome checks. An unrecognized rejection, unknown result, identity change, hard fault, or failed
+postflight ends the remaining score. Only the narrow precondition-refusal path
+above may resubmit a movement after rescans; there is no replay of uncertain
+requests, recovery dance, or endless loop. No new cue is submitted after
 the 15-minute execution window; an in-flight motion still requires the handset
 Stop if it must be interrupted. A repeated start-request identity cannot replay it.
 

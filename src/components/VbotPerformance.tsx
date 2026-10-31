@@ -49,6 +49,7 @@ export function VbotPerformance({ control, onClose }: { control: VbotCompanionCo
       <strong>{show.phase === 'completed' ? 'Last show complete' : show.phase === 'stopped' ? 'Show stopped' : show.phase === 'stopping' ? 'Stopping after the current motion' : `${cue?.act || 'Starting'} · ${show.phase}`}</strong>
       <p>{cue?.caption}</p><p>{show.completedCues} / {show.cues.length} cues completed.</p>
       {show.phase === 'resting' && show.phaseEndsAt && <p>Transition · {Math.max(0, Math.ceil((show.phaseEndsAt - Date.now()) / 1000))}s until the next cue. </p>}
+      {show.phase === 'rescanning' && <p role="status">Safety rescan {show.rescanCount || 1} · {show.rescanReason || 'Waiting for the robot to settle.'} No next movement until checks pass. You can stop further cues at any time.</p>}
       {show.stopReason && <p className="inline-error">{show.stopReason}</p>}
     </div>}
     {!active && <>
@@ -65,7 +66,7 @@ export function VbotPerformance({ control, onClose }: { control: VbotCompanionCo
         <option value="flow">Flow · minimal pauses</option><option value="lively">Lively · 0.75 seconds between short cues</option><option value="theatrical">Theatrical · 2 seconds</option><option value="relaxed">Relaxed · 5 seconds</option>
       </select></label>
     </div>
-    <p className="vbot-footnote">Flow uses 0.15-second transition beats and 2 seconds after body performances. Every cue still waits for successful completion and fresh idle-state checks. The score ends after the selected encores; it never loops endlessly.</p>
+    <p className="vbot-footnote">Flow uses 0.15-second transition beats and 2 seconds after body performances. Every cue still waits for successful completion and fresh idle-state checks. Transient settling triggers safety rescans for up to 30 seconds. A confirmed root dance-precondition refusal can get up to three total attempts, each after fresh checks and a non-motion static probe. Faults or unknown outcomes stop the show. The score ends after the selected encores.</p>
     <button className="ghost" disabled={locked || offline || !available} onClick={() => void preview()}>{previewing ? 'Building score…' : 'Preview the whole score · no motion'}</button>
     </>}
     {visiblePlan && <>
