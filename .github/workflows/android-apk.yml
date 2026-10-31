@@ -52,9 +52,7 @@ jobs:
           signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
           "$signer" verify --verbose --print-certs apk/ChessBuddy-Standalone-Android.apk > apk/signature.txt
           cat apk/signature.txt
-          expected=$(tr -d '\n\r' < android/signing-certificate.sha256)
-          actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apk/signature.txt)
-          test "$actual" = "$expected"
+          python scripts/verify_android_signature.py apk/signature.txt android/signing-certificate.sha256
           sha256sum apk/ChessBuddy-Standalone-Android.apk apk/Stockfish-Corresponding-Source.zip > apk/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
