@@ -36,3 +36,4 @@ vbot-demo/unresolved-action.json
 /apk/
 /android/app/src/main/jniLibs/
 /android/app/src/main/assets/licenses/
+/android/app/wheels/

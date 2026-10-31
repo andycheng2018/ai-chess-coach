@@ -26,6 +26,8 @@ jobs:
         run: echo "ANDROID_NDK_HOME=$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)" >> "$GITHUB_ENV"
       - name: Build on-tablet Stockfish and package its matching source
         run: python scripts/build_android_stockfish.py
+      - name: Build universal Python chess wheel
+        run: python -m pip wheel --no-deps --wheel-dir android/app/wheels chess==1.11.2
       - run: npm ci
       - run: npm run build
       - run: npx cap sync android

@@ -6,6 +6,8 @@ import android.os.IBinder;
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
 import org.json.JSONObject;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Keeps the tablet's loopback backend alive with a visible, stoppable notification. */
 public class StandaloneService extends Service {
@@ -13,6 +15,7 @@ public class StandaloneService extends Service {
     public static volatile String error;
     private static volatile boolean starting;
     private static volatile int generation;
+    private static final ExecutorService lifecycle = Executors.newSingleThreadExecutor();
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && "stop".equals(intent.getAction())) { stopSelf(); return START_NOT_STICKY; }
         StandaloneHost.init(this);
@@ -28,23 +31,23 @@ public class StandaloneService extends Service {
             if (state == null && !starting) {
                 starting = true; error = null;
                 final int selectedGeneration = ++generation;
-                new Thread(() -> {
+                lifecycle.execute(() -> {
                     try {
                         if (!Python.isStarted()) Python.start(new AndroidPlatform(getApplicationContext()));
                         String engine = getApplicationInfo().nativeLibraryDir + "/libstockfish.so";
                         JSONObject started = new JSONObject(Python.getInstance().getModule("android_backend").callAttr("start", getFilesDir().getAbsolutePath() + "/chessbuddy", engine).toString());
                         if (generation != selectedGeneration) { Python.getInstance().getModule("android_backend").callAttr("stop"); return; }
                         state = started;
-                    } catch (Exception exception) { error = exception.getMessage(); }
-                    finally { starting = false; }
-                }, "chess-runtime-start").start();
+                    } catch (Exception exception) { if (generation == selectedGeneration) error = exception.getMessage(); }
+                    finally { if (generation == selectedGeneration) starting = false; }
+                });
             }
         }
         return START_NOT_STICKY;
     }
     @Override public void onDestroy() {
-        generation++; state = null; error = "Local backend stopped.";
-        if (Python.isStarted()) new Thread(() -> { try { Python.getInstance().getModule("android_backend").callAttr("stop"); } catch (Exception ignored) {} }).start();
+        generation++; starting = false; state = null; error = "Local backend stopped.";
+        lifecycle.execute(() -> { if (Python.isStarted()) try { Python.getInstance().getModule("android_backend").callAttr("stop"); } catch (Exception ignored) {} });
         super.onDestroy();
     }
     @Override public IBinder onBind(Intent intent) { return null; }

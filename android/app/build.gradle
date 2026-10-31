@@ -40,7 +40,9 @@ chaquopy {
     defaultConfig {
         version '3.13'
         pip {
-            install 'chess==1.11.2'
+            // Upstream publishes this version as source only. Build its pure
+            // Python wheel on the host before Chaquopy's cross-platform install.
+            install 'wheels/chess-1.11.2-py3-none-any.whl'
             install 'requests==2.32.5'
             install 'python-dotenv==1.1.1'
             install 'PyYAML==6.0.3'
