@@ -25,6 +25,9 @@ from coach.opening_recognizer import recognize_opening
 from coach.stockfish_analyzer import StockfishAnalyzer, capture_context, find_stockfish
 from coach.history import history
 from coach.analysis_search import analysis_searches
+from tablet_access import TabletAccess, TABLET_ORIGIN, TABLET_HEADER
+
+tablet_access = TabletAccess(os.environ.get('CHESS_TABLET_TOKEN', ''), os.environ.get('CHESS_TABLET_URL', ''))
 from vbot_demo import demo as vbot_demo
 
 # Reuse the bot's one canonical game stream for result celebrations.
@@ -1494,6 +1497,8 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "AIChessCoach/1.0"
 
     def _vbot_local_request(self) -> bool:
+        if tablet_access.authorized(self.client_address[0], self.headers.get('Origin', ''), self.headers.get(TABLET_HEADER, '')):
+            return True
         # Physical motion controls are local to the demo Mac, including same-origin
         # browser checks. Existing public coaching APIs retain their own CORS rules.
         port = self.server.server_port
@@ -1516,6 +1521,8 @@ class Handler(BaseHTTPRequestHandler):
         }
 
         allowed_origins.update(EXTRA_CORS_ORIGINS)
+        if tablet_access.enabled:
+            allowed_origins.add(TABLET_ORIGIN)
 
         # Allow Chess Buddy frontend deployed on Render.
         if origin.startswith("https://") and origin.endswith(".onrender.com"):
@@ -1534,7 +1541,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", self._cors_origin())
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", f"Content-Type, {TABLET_HEADER}")
+            if tablet_access.enabled and self.headers.get('Origin') == TABLET_ORIGIN:
+                self.send_header('Access-Control-Allow-Private-Network', 'true')
             self.send_header("Cache-Control", "no-store")
             if status != 204:
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1578,7 +1587,7 @@ class Handler(BaseHTTPRequestHandler):
 
             self.send_header(
                 "Access-Control-Allow-Headers",
-                "Content-Type",
+                f"Content-Type, {TABLET_HEADER}",
             )
 
             self.send_header(
@@ -1630,6 +1639,15 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self) -> None:  # noqa: N802
+        if self._tablet_api_denied():
+            return
+        if urlsplit(self.path).path == '/tablet':
+            # The pairing key is shown only on the host Mac, never to LAN clients.
+            if not tablet_access.enabled or not self._host_pairing_page_allowed():
+                self._send(403, {'message': 'Open pairing on the Mac using the tablet backend launcher.'})
+            else:
+                self._send_bytes(200, tablet_access.page(), 'text/html; charset=utf-8')
+            return
         if urlsplit(self.path).path in {"/vbot", "/vbot/", "/api/vbot/status"}:
             if not self._vbot_local_request():
                 self._send(403, {"message": "Open VBOT Demo locally on the demo Mac."})
@@ -1651,6 +1669,7 @@ class Handler(BaseHTTPRequestHandler):
                 warning = str(exc)
             self._send(200, {
                 "ok": True,
+                "tabletPairing": tablet_access.enabled,
                 "vbotDemo": True,
                 "coach": {"configured": bool(os.environ.get("OPENAI_API_KEY", "").strip())},
                 "stockfish": stockfish,
@@ -1741,6 +1760,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"message": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if self._tablet_api_denied():
+            return
         try:
             if self.path.startswith("/api/vbot/"):
                 if not self._vbot_local_request() or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
@@ -1883,6 +1904,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         return
+
+    def _host_pairing_page_allowed(self):
+        port = self.server.server_port
+        return (self.client_address[0] in {'127.0.0.1', '::1'}
+                and self.headers.get('Host') in {f'localhost:{port}', f'127.0.0.1:{port}', f'[::1]:{port}'}
+                and not self.headers.get('Origin'))
+
+    def _tablet_api_denied(self):
+        if not tablet_access.enabled or not urlsplit(self.path).path.startswith('/api/'):
+            return False
+        address = self.client_address[0]
+        native = self.headers.get('Origin') == TABLET_ORIGIN
+        if address in {'127.0.0.1', '::1'} and not native:
+            return False
+        if tablet_access.authorized(address, self.headers.get('Origin', ''), self.headers.get(TABLET_HEADER, '')):
+            return False
+        self._send(403, {'message': 'Pair this tablet with the key shown on the Mac.'})
+        return True
 
 
 def bootstrap_bot() -> None:

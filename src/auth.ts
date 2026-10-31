@@ -10,11 +10,11 @@ const VERIFIER_KEY = 'lichess_pkce_verifier';
 const STATE_KEY = 'lichess_oauth_state';
 
 // Lichess requires an HTTPS redirect. This tiny GitHub Pages bridge immediately
-// forwards the OAuth query string back into the installed iOS app.
+// forwards the OAuth query string back into the installed native app.
 const NATIVE_OAUTH_REDIRECT =
   'https://andycheng2018.github.io/chessbuddy-oauth/oauth-callback.html';
 
-// Registered in Xcode under Target > Info > URL Types > URL Schemes.
+// Registered in iOS URL Types and the Android manifest intent filter.
 const APP_CALLBACK = 'chessbuddy://oauth/callback';
 
 const clientId =

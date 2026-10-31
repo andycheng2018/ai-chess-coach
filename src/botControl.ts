@@ -30,7 +30,7 @@ export type CachedGameState = {
   updatedAt: number;
 };
 
-const CONTROL_URL = import.meta.env.VITE_BOT_CONTROL_URL || 'http://127.0.0.1:8765';
+const CONTROL_URL = (typeof window !== 'undefined' && window.__CHESS_BACKEND_URL__) || import.meta.env.VITE_BOT_CONTROL_URL || 'http://127.0.0.1:8765';
 
 async function jsonRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${CONTROL_URL}${path}`, init);

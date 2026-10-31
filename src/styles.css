@@ -3950,3 +3950,10 @@ header {
 .room-discovery { padding:16px; border:1px solid #6e9348; border-radius:12px; margin:16px 0; }
 .room-discovery ul { padding-left:20px; } .room-discovery li { margin:14px 0; overflow-wrap:anywhere; }
 .room-discovery button { min-height:44px; margin:6px; } .room-discovery label { display:flex; gap:10px; align-items:center; margin-top:14px; }
+.tablet-connection-backdrop { position: fixed; inset: 0; z-index: 2200; background: #191817f5; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) 20px; overflow-y: auto; }
+.tablet-connection-card { width: min(660px, 100%); padding: 28px; }
+.tablet-connection-card h1 { color: #b6d68a; }
+.tablet-connection-card p, .tablet-connection-card li { line-height: 1.6; }
+.tablet-connection-card label { display: grid; gap: 8px; margin: 18px 0; }
+.tablet-connection-card input { width: 100%; padding: 12px; color: #e8e6e3; background: #191817; border: 1px solid #ffffff33; border-radius: 8px; }
+.tablet-connection-button { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); z-index: 2100; font-size: 12px; box-shadow: 0 4px 18px #0008; }

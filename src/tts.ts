@@ -1,6 +1,7 @@
 import type { CoachLanguage } from './coach';
 
 const CONTROL_URL =
+  (typeof window !== 'undefined' && window.__CHESS_BACKEND_URL__) ||
   import.meta.env.VITE_BOT_CONTROL_URL ||
   'http://127.0.0.1:8765';
 

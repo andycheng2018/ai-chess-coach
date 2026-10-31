@@ -27,3 +27,9 @@ vbot-demo/unresolved-action.json
 # Keep local robot verification backups and interrupted rehearsal writes private.
 /vbot-demo/device-verification.local.json.bak-*
 /vbot-demo/.verification-rehearsal-*.tmp
+
+# Android build artifacts and local signing material.
+*.apk
+*.aab
+*.jks
+*.keystore

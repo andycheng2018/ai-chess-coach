@@ -8,7 +8,7 @@ import { Capacitor } from '@capacitor/core';
 
 const QR_CODE = 0 as CapacitorBarcodeScannerTypeHint;
 
-export async function scanSenseRoomUrl(): Promise<string> {
+export async function scanSenseRoomUrl(instructions = 'Scan the SenseRobot room QR code'): Promise<string> {
   if (!Capacitor.isNativePlatform()) {
     const { scanWebSenseRoom } = await import('./webSenseScanner');
     return scanWebSenseRoom();
@@ -17,7 +17,7 @@ export async function scanSenseRoomUrl(): Promise<string> {
     hint: QR_CODE,
     cameraDirection: CapacitorBarcodeScannerCameraDirection.BACK,
     scanOrientation: CapacitorBarcodeScannerScanOrientation.ADAPTIVE,
-    scanInstructions: 'Scan the SenseRobot room QR code',
+    scanInstructions: instructions,
   });
 
   const rawValue = result.ScanResult?.trim();
