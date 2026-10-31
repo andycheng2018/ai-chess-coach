@@ -1,16 +1,22 @@
 apply plugin: 'com.android.application'
 apply plugin: 'com.chaquo.python'
 
+def releaseKeystore = System.getenv('ANDROID_KEYSTORE_PATH')
+def releasePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def releaseSigningReady = releaseKeystore && releasePassword
+def buildNumber = (System.getenv('ANDROID_VERSION_CODE') ?: '107').toInteger()
+
 android {
     namespace = "com.andy.chessbuddy"
     compileSdk = rootProject.ext.compileSdkVersion
     testBuildType 'release'
+    buildFeatures { buildConfig true }
     defaultConfig {
         applicationId "com.andy.chessbuddy"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 106
-        versionName "1.0.6-standalone"
+        versionCode buildNumber
+        versionName "1.0.${buildNumber}"
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -19,15 +25,32 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        persistent {
+            if (releaseSigningReady) {
+                storeFile file(releaseKeystore)
+                storeType 'PKCS12'
+                storePassword releasePassword
+                keyAlias 'chessbuddy'
+                keyPassword releasePassword
+            }
+        }
+    }
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.persistent
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
     packaging {
         jniLibs { useLegacyPackaging true; keepDebugSymbols += ['**/libstockfish.so'] }
+    }
+}
+
+tasks.configureEach {
+    if (name == 'preReleaseBuild') doFirst {
+        if (!releaseSigningReady) throw new GradleException('Release builds require ANDROID_KEYSTORE_PATH and ANDROID_KEYSTORE_PASSWORD. Never generate a new signing key for an update.')
     }
 }
 

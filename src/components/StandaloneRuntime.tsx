@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
 import { authenticatedBackendFetch } from '../nativeBackend';
-import { standalone, type LocalSettings } from '../standaloneRuntime';
+import { standalone, type LocalSettings, type AndroidUpdate } from '../standaloneRuntime';
 
 export function StandaloneRuntime({ children }: { children: ReactNode }) {
   const android = Capacitor.getPlatform() === 'android';
@@ -15,6 +16,27 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
   const [key, setKey] = useState('');
   const [password, setPassword] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+  const [appUpdate, setAppUpdate] = useState<AndroidUpdate | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateError, setUpdateError] = useState('');
+  async function checkUpdate() {
+    setCheckingUpdate(true); setUpdateError('');
+    try { setAppUpdate(await standalone.checkForUpdate()); }
+    catch (cause) { setUpdateError(String((cause as Error).message || cause)); }
+    finally { setCheckingUpdate(false); }
+  }
+  async function downloadUpdate() {
+    if (!appUpdate?.downloadUrl) return;
+    setCheckingUpdate(true); setUpdateError('');
+    try {
+      await standalone.prepareUpdate();
+      await Browser.open({ url: appUpdate.downloadUrl });
+    } catch (cause) { setUpdateError(String((cause as Error).message || cause)); }
+    finally { setCheckingUpdate(false); }
+  }
+  useEffect(() => {
+    if (android) void checkUpdate();
+  }, [android]);
   useEffect(() => {
     if (!android) return;
     let active = true;
@@ -53,13 +75,21 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
     finally { setPassword(''); setBusy(false); }
   }
   if (!android) return <>{children}</>;
-  if (!ready) return <div className="tablet-connection-backdrop"><section className="card tablet-connection-card"><h1>Starting Chess Buddy on this tablet…</h1><p>Loading the local chess engine and coaching backend.</p>{error && <><p role="alert">{error}</p><button className="primary" onClick={() => window.location.reload()}>Try again</button></>}</section></div>;
+  const updates = <section aria-label="App updates">
+    <h2>App updates</h2>
+    {appUpdate && <p>{appUpdate.available ? `Chess Buddy ${appUpdate.versionName} is available.` : `Version ${appUpdate.currentVersion} · No newer published version found.`}</p>}
+    <button className="ghost" disabled={checkingUpdate} onClick={() => void checkUpdate()}>{checkingUpdate ? 'Checking…' : 'Check for updates'}</button>
+    {appUpdate?.available && <><p className="fine-print">Finish your game and turn robot reactions off before installing. Open the downloaded APK and approve Android's update prompt. Your saved data stays on this tablet.</p><button className="primary" disabled={checkingUpdate} onClick={() => void downloadUpdate()}>Download update</button>{appUpdate.releaseUrl && <button className="ghost" onClick={() => void Browser.open({ url: appUpdate.releaseUrl! }).catch(cause => setUpdateError(String(cause?.message || cause)))}>What's new</button>}</>}
+    {updateError && <p role="status">{updateError}</p>}
+  </section>;
+  if (!ready) return <div className="tablet-connection-backdrop"><section className="card tablet-connection-card"><h1>Starting Chess Buddy on this tablet…</h1><p>Loading the local chess engine and coaching backend.</p>{error && <><p role="alert">{error}</p><button className="primary" onClick={() => window.location.reload()}>Try again</button>{updates}</>}</section></div>;
   return <>
     {children}
-    {!open && <button className="tablet-connection-button ghost" onClick={() => setOpen(true)}>Tablet settings</button>}
+    {!open && <button className="tablet-connection-button ghost" onClick={() => setOpen(true)}>{appUpdate?.available ? 'Update available · Tablet settings' : 'Tablet settings'}</button>}
     {open && <div className="tablet-connection-backdrop"><section className="card tablet-connection-card" role="dialog" aria-modal="true" aria-labelledby="standalone-title">
       <span className="eyebrow">CHESS BUDDY · STANDALONE</span><h1 id="standalone-title">Everything runs from this tablet</h1>
       <p>Stockfish and the coaching backend run locally. Lichess and Luna need Internet. VBOT connects directly over Wi-Fi; SenseRobot uses its Lichess room.</p>
+      {updates}
       <form onSubmit={event => { event.preventDefault(); void save(); }}>
         <label>OpenAI API key {settings.openaiKeyConfigured && '· saved'}<input type="password" autoComplete="off" value={fields.openaiKey || ''} onChange={e => update('openaiKey', e.target.value)} placeholder="Leave blank to keep the saved key"/></label>
         <label>Luna model<input value={fields.model || ''} onChange={e => update('model', e.target.value)}/></label>

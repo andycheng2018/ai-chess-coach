@@ -17,9 +17,10 @@ this version is developed on `codex/android-standalone`.
 ## Install and configure
 
 1. Install `ChessBuddy-Standalone-Android.apk` on an Android 8.0/API 26 or newer
-   64-bit ARM tablet. x86-64 is included for compatible emulators. This demo is
-   development-signed, not a Play Store release. A differently signed later build
-   can require uninstalling; export analysis PGNs before uninstalling.
+   64-bit ARM tablet. x86-64 is included for compatible emulators. The first demo
+   was development-signed: moving from that demo to the permanent signing identity
+   requires a one-time reinstall. Export analysis PGNs before uninstalling it.
+   Future releases signed with the permanent identity install as updates.
 2. Open the app and **Tablet settings**. The embedded engine starts locally;
    Stockfish analysis does not require API keys.
 3. Enter an OpenAI key for Luna and your Lichess **BOT account** username/token
@@ -60,8 +61,8 @@ setup operation. No perception-triggered gestures are added by this port.
 
 `Standalone Android tablet APK` builds on `codex/android-standalone`. It compiles
 official Stockfish `sf_19` with the Android NDK for arm64 and x86-64, embeds Python
-with Chaquopy, and builds a non-debuggable release variant using the development
-signing configuration. The artifact includes the APK, matching Stockfish source,
+with Chaquopy, and builds a non-debuggable release variant using the permanent
+signing identity. The artifact includes the APK, matching Stockfish source,
 NNUE files, license/build helper, and SHA-256 checksums.
 
 Python backend sources are copied from this checkout at build time rather than
@@ -77,3 +78,19 @@ QR permissions, background/resume, and direct robot access on the target tablet.
 Physical rehearsals require onsite supervision and the existing stop procedure.
 Turning reactions off prevents future commands; use the dog's stop control for
 movement already underway.
+
+## Ship an Android update
+
+After the one-time setup in [ANDROID_UPDATES.md](ANDROID_UPDATES.md), push the
+finished changes to `codex/android-standalone`. GitHub builds and tests the full
+app, checks its signing certificate, and publishes an `android-v<number>` release
+only if all checks pass. The tablet checks for those releases at startup; it also
+has **Tablet settings → App updates → Check for updates**. **Download update**
+opens the official GitHub APK download. Open that file and approve Android's
+installation prompt. No Mac download server is needed for published releases.
+
+Finish the game first. The download button refuses to proceed while robot
+reactions are armed or an action is busy. Installation closes the old app, so it
+must not be treated as safe during ongoing robot activity. Ordinary updates keep
+the application ID and signing identity, and retain app data; export PGNs before
+uninstalling or intentionally resetting data.

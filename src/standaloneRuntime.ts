@@ -6,7 +6,13 @@ export type LocalSettings = {
   elevenLabsKeyConfigured?: boolean; voiceIdConfigured?: boolean;
 };
 export type LocalRuntime = { url: string; token: string; standalone: boolean; settings: LocalSettings };
+export type AndroidUpdate = {
+  available: boolean; currentCode: number; currentVersion: string;
+  versionCode?: number; versionName?: string; downloadUrl?: string; releaseUrl?: string;
+};
 export const standalone = registerPlugin<{
+  checkForUpdate(): Promise<AndroidUpdate>;
+  prepareUpdate(): Promise<void>;
   boot(): Promise<LocalRuntime>;
   configure(values: Record<string, string>): Promise<LocalSettings>;
   publicKey(): Promise<{ publicKey: string }>;

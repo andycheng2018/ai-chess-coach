@@ -22,6 +22,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Restore permanent signing identity and assign update version
+        env:
+          ANDROID_SIGNING_BUNDLE: ${{ secrets.ANDROID_SIGNING_BUNDLE }}
+        run: |
+          python scripts/android_signing.py restore
+          echo "ANDROID_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
       - name: Select installed Android NDK
         run: echo "ANDROID_NDK_HOME=$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)" >> "$GITHUB_ENV"
       - name: Build on-tablet Stockfish and package its matching source
@@ -29,6 +35,11 @@ jobs:
       - name: Build universal Python chess wheel
         run: python -m pip wheel --no-deps --wheel-dir android/app/wheels chess==1.11.2
       - run: npm ci
+      - name: Run web and backend tests
+        run: |
+          python -m pip install -r requirements.txt
+          node --test tests/*.test.mjs
+          python -m unittest discover -s tests
       - run: npm run build
       - run: npx cap sync android
       - name: Build installable demo APK
@@ -39,7 +50,11 @@ jobs:
           mkdir -p apk
           cp android/app/build/outputs/apk/release/app-release.apk apk/ChessBuddy-Standalone-Android.apk
           signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
-          "$signer" verify --verbose --print-certs apk/ChessBuddy-Standalone-Android.apk
+          "$signer" verify --verbose --print-certs apk/ChessBuddy-Standalone-Android.apk > apk/signature.txt
+          cat apk/signature.txt
+          expected=$(tr -d '\n\r' < android/signing-certificate.sha256)
+          actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apk/signature.txt)
+          test "$actual" = "$expected"
           sha256sum apk/ChessBuddy-Standalone-Android.apk apk/Stockfish-Corresponding-Source.zip > apk/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
@@ -62,3 +77,43 @@ jobs:
         with:
           name: Android-runtime-test-results
           path: android/app/build/outputs/androidTest-results/
+      - name: Remove temporary signing files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/chessbuddy-release.p12"
+  publish:
+    needs: apk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ChessBuddy-Standalone-Android
+          path: apk
+      - name: Publish the tested Android update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          code=$((1000 + GITHUB_RUN_NUMBER))
+          tag="android-v$code"
+          cat > notes.md <<EOF
+          Install this APK over your existing permanently signed Chess Buddy app to preserve saved data.
+
+          Finish your game and turn robot reactions off before installing. Android asks you to confirm the update.
+
+          The original development-signed demo requires a one-time reinstall. Export saved PGNs before removing that demo.
+
+          Validation: Android release checks, signature verification, and emulator backend/Stockfish/restart checks passed.
+          Source commit: $BUILD_SHA
+          Matching Stockfish source, license and build instructions are attached.
+          EOF
+          gh api "repos/$GH_REPO/commits/$BUILD_SHA" --jq .commit.message > commit-message.txt
+          python - <<'PY'
+          from pathlib import Path
+          subject = Path('commit-message.txt').read_text().splitlines()[0]
+          with Path('notes.md').open('a') as notes:
+              notes.write('\nChanges in this build: ' + subject + '\n')
+          PY
+          gh release create "$tag" apk/* --repo "$GH_REPO" --target "$BUILD_SHA" --title "Chess Buddy Android 1.0.$code" --notes-file notes.md --latest=false

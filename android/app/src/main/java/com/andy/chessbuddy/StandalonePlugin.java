@@ -10,6 +10,20 @@ import org.json.JSONObject;
 @CapacitorPlugin(name="StandaloneBackend")
 public class StandalonePlugin extends Plugin {
     @Override public void load() { StandaloneHost.init(getContext()); }
+    @PluginMethod public void checkForUpdate(PluginCall call) {
+        new Thread(() -> {
+            try { call.resolve(new JSObject(AndroidUpdates.check().toString())); }
+            catch (Exception exception) { call.reject(exception.getMessage()); }
+        }, "chess-update-check").start();
+    }
+    @PluginMethod public void prepareUpdate(PluginCall call) {
+        new Thread(() -> {
+            try {
+                if (Python.isStarted()) Python.getInstance().getModule("android_backend").callAttr("can_configure");
+                call.resolve();
+            } catch (Exception exception) { call.reject(exception.getMessage()); }
+        }).start();
+    }
     @PluginMethod public void boot(PluginCall call) {
         ContextCompat.startForegroundService(getContext(), new Intent(getContext(), StandaloneService.class));
         new Thread(() -> {
