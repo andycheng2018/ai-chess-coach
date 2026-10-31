@@ -10,7 +10,9 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.util.Arrays;
-import javax.crypto.*;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 /** Private app storage and strict, one-shot robot SSH. No automatic host trust. */
