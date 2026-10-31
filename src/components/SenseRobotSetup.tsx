@@ -4,6 +4,8 @@ import { Capacitor } from '@capacitor/core';
 import { App as NativeApp } from '@capacitor/app';
 import { buildSenseRoomUrl, getSetupHealth, type BotRuntimeStatus, type SetupHealth } from '../botControl';
 import { isPrivateIPv4, normalizeMacAddress, isRememberedSenseGame, readSenseSetup, saveSenseSetup, senseSetupStep, type SenseSetupDraft, type SenseSetupStep } from '../senseSetup';
+import { RoomInvitationInput } from './RoomInvitationInput';
+import { roomJoinPreview } from '../roomJoin';
 
 const SENSE_APP = 'https://www.senserobotchess.com/pages/app-download';
 const SENSE_HELP = 'https://www.senserobotchess.com/pages/help-center-page';
@@ -63,6 +65,12 @@ export function SenseRobotSetup(props: Props) {
     && isRememberedSenseGame(draft, props.gameId, props.username) && !props.verified);
   const blockedByGame = Boolean(props.gameId && !waitingForGame && !props.verified);
   const busy = props.busy || working;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  let roomPreview: ReturnType<typeof roomJoinPreview> | null = null;
+  let roomError = '';
+  try { if (roomUrl.trim()) roomPreview = roomJoinPreview(roomUrl); }
+  catch (cause) { roomError = cause instanceof Error ? cause.message : 'Invalid room invitation.'; }
   const serviceReady = health?.ok && health.stockfish && health.coach?.configured;
   const accountConfirmed = Boolean(props.username && draft.networkReady &&
     draft.linkedUsername.toLowerCase() === props.username.toLowerCase());
@@ -139,8 +147,8 @@ export function SenseRobotSetup(props: Props) {
     panel.current?.focus();
     function keydown(event: KeyboardEvent) {
       // A camera dialog owns focus while the room scanner is open.
-      if (props.busy) return;
-      if (event.key === 'Escape' && !props.busy) { closeRef.current(); return; }
+      if (busyRef.current) return;
+      if (event.key === 'Escape') { closeRef.current(); return; }
       if (event.key !== 'Tab') return;
       const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>(
         'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]',
@@ -160,7 +168,7 @@ export function SenseRobotSetup(props: Props) {
       document.removeEventListener('keydown', keydown);
       previous?.focus();
     };
-  }, [props.open, props.busy]);
+  }, [props.open]);
 
   async function external(url: string) {
     handoff.current = true;
@@ -265,12 +273,11 @@ export function SenseRobotSetup(props: Props) {
               {props.levels.map(level => <option key={level.id} value={level.id}>{level.label} · ~{level.elo}</option>)}
             </select>
             <p className="fine-print">The room sets your color and clock; we apply the strength you choose here.</p>
-            <button className="primary wide" disabled={!canJoin} onClick={() => void join()}>Scan room QR & connect</button>
-            <form onSubmit={event => { event.preventDefault(); if (canJoin && roomUrl.trim()) void join(roomUrl); }}>
-              <label className="sense-label" htmlFor="sense-room">Or paste the room link</label>
-              <input id="sense-room" type="url" inputMode="url" autoComplete="off" placeholder="https://lichess.org/…?color=…"
-                value={roomUrl} disabled={busy || Boolean(props.gameId)} onChange={event => setRoomUrl(event.target.value)} />
-              <button type="submit" className="ghost wide" disabled={!canJoin || !roomUrl.trim()}>Connect this room</button>
+            <form onSubmit={event => { event.preventDefault(); if (canJoin && roomPreview) void join(roomUrl); }}>
+              <RoomInvitationInput id="sense-room" value={roomUrl} disabled={busy || Boolean(props.gameId)} onChange={setRoomUrl} onBusyChange={setWorking} />
+              {roomError && <p className="inline-error" role="status">{roomError}</p>}
+              {roomPreview && <p className="sense-notice">Room <strong>{roomPreview.challengeId}</strong> · Bot plays <strong>{roomPreview.color}</strong> · You play <strong>{roomPreview.playerColor}</strong>.</p>}
+              <button type="submit" className="primary wide" disabled={!canJoin || !roomPreview}>Connect this room</button>
             </form>
             {blockedByGame && <p className="inline-error">A game is already open. Use the existing-game option below if it is on SenseRobot, or finish it before joining a new room.</p>}
             {!props.recoveryChecked && props.username && <p className="fine-print">Checking for an existing training game…</p>}

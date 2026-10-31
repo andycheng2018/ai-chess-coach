@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getOutgoingRoomChallenges, getPlayingGames, LichessHttpError } from '../lichess';
 import { discoverRooms, discoverJoinedRooms, nextAutomaticRoom, type DiscoveredRoom } from '../roomDiscovery';
 import { roomJoinPreview, readRoomJoinDraft, saveRoomJoinDraft } from '../roomJoin';
+import { RoomInvitationInput } from './RoomInvitationInput';
 
 type Props = { token?: string | null; autoJoinAllowed?: boolean; username?: string; botUsername: string; currentGameId: string | null; onJoin: (url: string) => Promise<string>; onClose: () => void;
   onLogin: () => Promise<void>; authChecking?: boolean; authError?: string; onRetryAccount: () => void };
@@ -108,8 +109,8 @@ export function JoinRoomDialog({ token, autoJoinAllowed = false, username, botUs
   return <dialog ref={dialog} className="game-qr-dialog room-join-dialog" aria-labelledby="room-join-title" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
     <div className="modal-header"><div><span className="modal-kicker">SENSEROBOT · LICHESS ROOM</span><h2 id="room-join-title">Your Lichess rooms & games</h2></div>
       <button type="button" className="ghost" disabled={busy} onClick={onClose} aria-label="Close room link">✕</button></div>
-    <p>Create a room on SenseRobot using the same Lichess account. Select its invitation below; no phone relay is needed when Lichess exposes the room.</p>
-    {username && <section className="room-discovery" aria-label="Account room selector">
+    <p>Create a room on SenseRobot, then scan its invitation here using this device’s camera or a QR photo.</p>
+    {username && <details className="room-discovery" aria-label="Account room selector"><summary>Find rooms & games from my Lichess account</summary>
       <h3>Outgoing invitations · {rooms.length}</h3>
       <p className="muted">All visible pending invitations from {username}, including rooms created before you opened this panel or clicked Refresh.</p>
       <p role="status">{roomStatus || 'Loading account invitations and games…'}</p>
@@ -129,8 +130,8 @@ export function JoinRoomDialog({ token, autoJoinAllowed = false, username, botUs
       }} />Automatically join the next new eligible room</label>
       <p className="muted">One room only, while this panel stays open. Only this automatic mode ignores existing rooms; multiple new rooms require selection. No acceptance retries. {autoJoinAllowed ? 'Create a new room after enabling this switch.' : 'Finish the current game before enabling automatic joining.'}</p>
       <p className="muted">This API cannot identify which device created an invitation. Use this mode only while you are creating the intended room on SenseRobot. Rooms not associated with your account may not appear.</p>
-    </section>}
-    <h3>Invitation link fallback</h3>
+    </details>}
+    <h3>Scan or bring a room invitation</h3>
     {!username && <div className="sense-notice" role="status">
       <p>{authChecking ? 'Checking your Lichess account…' : authError || 'Sign in with the same Lichess account linked on SenseRobot first.'}</p>
       {!authChecking && <>
@@ -140,8 +141,7 @@ export function JoinRoomDialog({ token, autoJoinAllowed = false, username, botUs
     </div>}
     {username && <p className="muted">Signed in as <strong>{username}</strong>. Use the account linked on SenseRobot. <button type="button" className="ghost" disabled={busy} onClick={() => void signIn()}>Change Chess Buddy sign-in</button></p>}
     <form onSubmit={event => { event.preventDefault(); void join(); }}>
-      <label htmlFor="join-room-url">SenseRobot room invitation</label>
-      <input id="join-room-url" type="url" autoComplete="off" placeholder="https://lichess.org/game/AbCd1234?color=black" value={url} disabled={busy} onChange={event => { setUrl(event.target.value); setError(''); }} />
+      <RoomInvitationInput id="join-room-url" value={url} disabled={busy} onChange={value => { setUrl(value); setError(''); }} onBusyChange={value => { autoRef.current = false; setAutoJoin(false); inFlight.current = value; setBusy(value); }} />
       {parseError && <p className="inline-error" role="status">{parseError}</p>}
       {preview && <p className="sense-notice">Room <strong>{preview.challengeId}</strong> · {botUsername} joins as <strong>{preview.color}</strong> · {username || 'You'} play <strong>{preview.playerColor}</strong>.</p>}
       {currentGameId && preview?.challengeId !== currentGameId && <p className="muted">Game {currentGameId} stays open. A successful join switches Chess Buddy to the supplied room.</p>}

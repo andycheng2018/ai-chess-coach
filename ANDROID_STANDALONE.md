@@ -30,6 +30,13 @@ this version is developed on `codex/android-standalone`.
    are not bundled into the APK. Empty secret fields retain saved values.
 5. Join SenseRobot through its setup/room flow or start ordinary training play.
 
+In **Lichess rooms & existing games** or the setup wizard's **Room** step, use
+**Scan room QR** to point this tablet's camera directly at the robot's invitation.
+**Choose QR photo** reads a saved image; on the web you can also paste or drop a
+QR screenshot into the invitation area. Decoding stays on this device. Review the
+room ID and both colors, then connect. Reading a QR does not join a game. A failed
+scan clears the previous invitation so it cannot accidentally be reused.
+
 Keep the app foregrounded during a live demo. The ongoing notification can stop
 the backend. Android may limit background service lifetime/network activity;
 stopping the backend does not stop the Lichess clock.

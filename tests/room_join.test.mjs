@@ -13,6 +13,14 @@ function load(name) {
  return exports;
 }
 const {roomJoinPreview,recoverJoinedRoom,requireExactJoinedRoom}=load('roomJoin');
+const {normalizeRoomInvitation}=load('roomInvitation');
+test('QR imports keep only the exact public room and explicit color',()=>{
+ assert.equal(normalizeRoomInvitation(' https://lichess.org/AbCd1234?color=black&tracking=discard '),'https://lichess.org/game/AbCd1234?color=black');
+ assert.equal(normalizeRoomInvitation('https://lichess.org/game/AbCd1234?color=white'),'https://lichess.org/game/AbCd1234?color=white');
+});
+test('QR imports reject unrelated, private, and ambiguous invitations',()=>{
+ for(const url of ['WIFI:S:network;P:secret;;','https://example.com/AbCd1234?color=white','https://lichess.org/AbCd1234/white','https://lichess.org/AbCd1234secret?color=white','https://lichess.org/AbCd1234','https://lichess.org/AbCd1234?color=white&color=black','https://user:password@lichess.org/AbCd1234?color=white','https://lichess.org:8443/AbCd1234?color=white','https://lichess.org/AbCd1234?color=white#private']) assert.throws(()=>normalizeRoomInvitation(url));
+});
 const target={gameId:'4TKUBiH1',color:'white',opponent:{username:'MonkeyKingZach'}};
 test('room preview gives the invitation color to the bot and opposite color to the person',()=>{
  for(const [bot,human] of [['black','white'],['white','black']]) {
