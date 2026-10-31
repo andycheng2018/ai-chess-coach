@@ -88,6 +88,13 @@ movement already underway.
 
 ## Ship an Android update
 
+For a standalone Halloween show, open **Dog stage → Preview & perform** on the
+home screen. It runs independently of a chess match, using this same local
+controller and direct robot SSH connection. See
+[the performance guide](vbot-demo/PERFORMANCE.md) for the full score, measured
+pacing, 1–3 dances, onsite rehearsal and stopping controls. Save a new Wi-Fi robot
+address in Tablet settings before checking the robot from Dog stage.
+
 After the one-time setup in [ANDROID_UPDATES.md](ANDROID_UPDATES.md), push the
 finished changes to `codex/android-standalone`. GitHub builds and tests the full
 app, checks its signing certificate, and publishes an `android-v<number>` release

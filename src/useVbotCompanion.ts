@@ -37,17 +37,27 @@ export function useVbotCompanion(context: CompanionContext) {
     return () => { mounted.current = false; revision.current++; window.clearInterval(timer); };
   }, [refresh]);
 
-  const perform = useCallback(async (path: 'check' | 'connect' | 'disarm' | 'finish' | 'networks/remember', payload: object) => {
+  const perform = useCallback(async (path: 'check' | 'connect' | 'disarm' | 'finish' | 'networks/remember' | 'performance/start', payload: object) => {
     if (inFlight.current) return;
     inFlight.current = true; revision.current++;
     setPending(true); setActionError('');
     const originGame = current.current.gameId;
     try {
+      let requestPayload = payload;
+      if (path === 'performance/start') {
+        const target = (payload as { target: string }).target;
+        const checked = await vbotRequest('check', { target });
+        if (!mounted.current || current.current.gameId !== originGame) throw new Error('The selected context changed during readiness checks. Start the show again deliberately.');
+        if (!checked.readinessFresh || !checked.readiness?.ready || checked.readiness.target !== target) {
+          throw new Error(checked.readiness?.reason || 'The robot is not ready for the performance.');
+        }
+        requestPayload = { ...payload, readinessProbe: checked.readiness.probeToken };
+      }
       let next = path === 'connect'
         ? await connectVbotWithReadiness(payload as VbotConnectPayload, () => mounted.current
           && current.current.gameId === originGame && current.current.canArm
           && current.current.playerColor === (payload as VbotConnectPayload).playerColor)
-        : await vbotRequest(path, payload);
+        : await vbotRequest(path, requestPayload);
       // A game can finish/change during a slow connection request. Disarm only
       // that exact session, never a newer session armed from another tab.
       if (path === 'connect' && (current.current.gameId !== originGame || !current.current.canArm)) {
@@ -80,6 +90,7 @@ export function useVbotCompanion(context: CompanionContext) {
     status, pending, offline: Boolean(connectionError), error: actionError || connectionError,
     check: (target: string) => perform('check', { target }),
     remember: (target: string, label: string, networkId: string) => perform('networks/remember', { target, label, networkId }),
+    startPerformance: (payload: { target: string; dances: number; pace: string; requestId: string; confirmSafeWorkspace: boolean; confirmHandsetStop: boolean }) => perform('performance/start', payload),
     connect: (mode: 'live' | 'rehearsal', target: string, confirmed: boolean, reactionProfile: ReactionProfile = 'balanced') => {
       const c = current.current;
       if (!c.canArm || !c.gameId) return Promise.resolve();

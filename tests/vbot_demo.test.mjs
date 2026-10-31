@@ -36,6 +36,12 @@ test('native game lifecycle disarms on finish/switch but waits for initial recov
   assert.equal(vbotNeedsDetach(state,{gameId:'AbCd1234',resolved:true,ended:true}),true);
   assert.equal(vbotNeedsDetach(state,{gameId:null,resolved:false,ended:false}),false);
 });
+test('standalone shows are never adopted or detached by a chess-game lifecycle',()=>{
+  const {vbotNeedsDetach,vbotManagedSession}=load(async()=>({ok:true}));
+  const state={sessionKind:'performance',armed:true,gameId:'',generation:5};
+  assert.equal(vbotNeedsDetach(state,{gameId:'AbCd1234',resolved:true,ended:true}),false);
+  assert.equal(vbotManagedSession(state,{gameId:'AbCd1234',generation:4},'AbCd1234'),null);
+});
 test('native readiness probe cannot execute a motion or retry after transport failure',async()=>{
   const calls=[];
   const {vbotRequest}=load(async(url,options)=>{calls.push([url,JSON.parse(options.body)]);throw Error('offline');});

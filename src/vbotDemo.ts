@@ -32,7 +32,19 @@ export type VbotNetwork = {
   profiles: { id: string; label: string; targets: string[] }[];
 };
 export type ReactionProfile = 'quiet' | 'balanced' | 'showmanship';
+export type PerformancePlan = {
+  title: string; dances: number; pace: string; target: string; allRehearsed: boolean;
+  estimatedSeconds: number | null; missingPresets: string[]; note: string;
+  cues: { act: string; caption: string; preset: string; restSeconds: number; durationMs: number | null; rehearsed: boolean }[];
+};
+export type PerformanceState = PerformancePlan & {
+  runId: string; running: boolean; phase: string; cueIndex: number; completedCues: number; phaseEndsAt: number | null;
+  stopReason?: string | null;
+};
 export type VbotStatus = {
+  sessionKind?: 'game' | 'capture-practice' | 'performance';
+  performanceApiVersion?: number;
+  performance?: PerformanceState | null; performancePreview?: PerformancePlan;
   reactionProfile?: ReactionProfile;
   network?: VbotNetwork | null;
   companionApiVersion?: number; generation: number; armed: boolean;
@@ -40,12 +52,12 @@ export type VbotStatus = {
   cooldownRemaining: number; danceCooldownRemaining: number; events: VbotEvent[];
   readinessFresh?: boolean; sadPresetVerified?: boolean; finishPending?: boolean; victoryPending?: boolean;
   smallPresets?: string[]; smallPresetCandidates?: string[]; operatorApprovedPresets?: string[];
-  readiness?: { ready: boolean; target: string; reason?: string; code?: string; checkedAt: number } | null;
+  readiness?: { ready: boolean; target: string; reason?: string; code?: string; checkedAt: number; probeToken?: string } | null;
   verification?: { applicationVersion?: string | null } | null;
 };
 
 /** Mutations are deliberate single requests. Never retry a physical operation. */
-export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm' | 'finish' | 'networks/remember', body?: object): Promise<VbotStatus> {
+export async function vbotRequest(path: 'status' | 'check' | 'connect' | 'disarm' | 'finish' | 'networks/remember' | 'performance/preview' | 'performance/start', body?: object): Promise<VbotStatus> {
   const response = await fetch(`${CONTROL_URL}/api/vbot/${path}`, {
     ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(path === 'check' ? 30000 : 10000),
@@ -82,7 +94,7 @@ export async function connectVbotWithReadiness(payload: VbotConnectPayload, isCu
 }
 
 export function vbotNeedsDetach(status: VbotStatus, context: { gameId: string | null; resolved: boolean; ended: boolean }): boolean {
-  return status.armed && context.resolved && (status.gameId !== context.gameId || context.ended);
+  return status.sessionKind !== 'performance' && status.armed && context.resolved && (status.gameId !== context.gameId || context.ended);
 }
 
 export function vbotReactionLabel(preset: string): string {
@@ -114,6 +126,7 @@ export function vbotEventText(event: VbotEvent): string {
 
 /** Adopt only a session for this tab's selected game. A different tab may own another. */
 export function vbotManagedSession(status: VbotStatus, previous: { gameId: string; generation: number } | null, gameId: string | null) {
+  if (status.sessionKind === 'performance') return null;
   if (!status.armed) return null;
   if (previous?.gameId === status.gameId && previous.generation === status.generation) return previous;
   return status.gameId === gameId ? { gameId: status.gameId, generation: status.generation } : null;

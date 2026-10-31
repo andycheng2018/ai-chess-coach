@@ -3894,6 +3894,16 @@ header {
 
 /* Local QR overlay: native dialog keeps focus and Escape behavior contained. */
 .room-invitation-input { padding: 16px; margin: 12px 0; border: 1px dashed var(--border); border-radius: 12px; }
+.vbot-score { max-height: 380px; overflow-y: auto; padding-left: 28px; }
+.vbot-score li { margin: 10px 0; padding: 10px; border-radius: 8px; }
+.vbot-score li[aria-current="step"] { background: #aade7c22; outline: 1px solid #aade7c; }
+.vbot-score p { margin: 4px 0; }
+.vbot-performance label { display: block; margin: 12px 0; }
+.game-qr-dialog.vbot-stage-dialog { width:min(840px,calc(100vw - 32px)); padding:0; overflow:hidden; }
+.vbot-stage-dialog .vbot-companion { margin:0; padding:20px; max-height:calc(100dvh - 120px); overflow-y:auto; border:0; border-radius:0; }
+.vbot-stage-dialog .modal-header { margin:0; background:var(--panel); padding:14px 20px; }
+.vbot-performance .vbot-actions > label { flex:1 1 240px; }
+.vbot-performance input:not([type="checkbox"]), .vbot-performance select { width:100%; box-sizing:border-box; padding:10px; border:1px solid var(--border); border-radius:8px; background:#1b1d19; color:inherit; font:inherit; }
 .room-invitation-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
 .room-invitation-actions button { flex: 1 1 160px; min-height: 44px; }
 .room-invitation-input input[type="url"] { width: 100%; box-sizing: border-box; }

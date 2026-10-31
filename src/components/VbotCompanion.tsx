@@ -52,6 +52,7 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
   const events = status?.events.filter(e => e.gameId === gameId || (e.requestId && requests.has(e.requestId))).slice(0, 5) || [];
   const attention = events.find(e => ['not_ready', 'rejected', 'unknown'].includes(e.status));
 
+  if (status?.sessionKind === 'performance' && (status.armed || status.busy)) return null;
   return <section id="vbot-companion" className="vbot-companion" aria-label="VBOT companion">
     <div className="vbot-header"><div><span className="vbot-kicker">ROBOT COMPANION</span><h3>VBOT reacts with you</h3></div>
       <span className={`vbot-badge ${linked ? 'on' : ''}`} role="status">{badge}</span></div>

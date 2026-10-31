@@ -17,6 +17,7 @@ import { finishOAuthCallback, getToken, loginWithLichess, logout, listenForNativ
 import { notifyVbotMove } from './vbotDemo';
 import { useVbotCompanion } from './useVbotCompanion';
 import { VbotCompanion } from './components/VbotCompanion';
+import { VbotPerformance } from './components/VbotPerformance';
 import { GameQrDialog } from './components/GameQrDialog';
 import { CapturePractice } from './components/CapturePractice';
 import { JoinRoomDialog } from './components/JoinRoomDialog';
@@ -1708,6 +1709,7 @@ export default function App() {
   const [qrGameId, setQrGameId] = useState<string | null>(null);
   const [capturePracticeOpen, setCapturePracticeOpen] = useState(false);
   const [roomLinkOpen, setRoomLinkOpen] = useState(() => readRoomJoinDraft() !== null);
+  const [performanceOpen, setPerformanceOpen] = useState(false);
   const [accountCheckError, setAccountCheckError] = useState('');
   const [accountCheckNonce, setAccountCheckNonce] = useState(0);
   useEffect(() => { setQrGameId(null); }, [gameId]);
@@ -4410,7 +4412,9 @@ export default function App() {
       navHidden={navHidden}
     />
 
-    <div className="capture-practice-entry"><button className="primary" onClick={() => setCapturePracticeOpen(true)}>🎯 Capture Practice</button><span>Easy queen and rook captures + Rock You rewards</span></div>
+    <div className="capture-practice-entry"><button className="primary" onClick={() => setCapturePracticeOpen(true)}>🎯 Capture Practice</button><span>Easy queen and rook captures + Rock You rewards</span>
+      <button className="ghost" onClick={() => setPerformanceOpen(true)}>🎭 Dog stage{vbotCompanion.status?.sessionKind === 'performance' && (vbotCompanion.status.armed || vbotCompanion.status.busy) ? ' · Show live' : ' · Preview & perform'}</button>
+    </div>
 
     {currentView === 'home' ? (
       <HomeHub
@@ -4445,8 +4449,8 @@ export default function App() {
     ) : (
       <main className="arena-layout">
       <section className="match-arena-window">
-        <button type="button" className="vbot-shortcut" onClick={() => document.getElementById('vbot-companion')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
-          <span>🐾 VBOT companion</span><strong>{vbotCompanion.offline ? 'Unavailable' : vbotCompanion.status?.armed && vbotCompanion.status.gameId === gameId ? vbotCompanion.status.mode === 'live' ? 'Live reactions' : 'Preview only' : 'Off · connect robot'} →</strong>
+        <button type="button" className="vbot-shortcut" onClick={() => vbotCompanion.status?.sessionKind === 'performance' && (vbotCompanion.status.armed || vbotCompanion.status.busy) ? setPerformanceOpen(true) : document.getElementById('vbot-companion')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+          <span>🐾 VBOT companion</span><strong>{vbotCompanion.offline ? 'Unavailable' : vbotCompanion.status?.sessionKind === 'performance' && (vbotCompanion.status.armed || vbotCompanion.status.busy) ? 'Standalone show running' : vbotCompanion.status?.armed && vbotCompanion.status.gameId === gameId ? vbotCompanion.status.mode === 'live' ? 'Live reactions' : 'Preview only' : 'Off · connect robot'} →</strong>
         </button>
         {/* Arena top navigation bar with back button */}
         <div className="arena-header-bar">
@@ -5416,6 +5420,7 @@ export default function App() {
     )}
 
     {capturePracticeOpen && <CapturePractice onClose={() => setCapturePracticeOpen(false)} />}
+    {performanceOpen && <VbotPerformance control={vbotCompanion} onClose={() => setPerformanceOpen(false)} />}
     {roomLinkOpen && <JoinRoomDialog token={token} autoJoinAllowed={!gameId || vbotEnded} username={account?.username} botUsername={BOT_USERNAME} currentGameId={gameId} onJoin={url => connectSenseRobotRoom(url, true)}
       onLogin={loginWithLichess} authChecking={Boolean(token && !account && !accountCheckError)} authError={accountCheckError}
       onRetryAccount={() => setAccountCheckNonce(value => value + 1)}

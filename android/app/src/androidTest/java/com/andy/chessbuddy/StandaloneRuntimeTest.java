@@ -57,7 +57,13 @@ public class StandaloneRuntimeTest {
                 assertTrue(request(runtime, "/api/health", null, true).getBoolean("ok"));
                 JSONObject result = request(runtime, "/api/analysis/position", "{\"rootFen\":\"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\",\"moves\":[],\"detail\":\"quick\"}", true);
                 assertTrue(result.toString(), result.getJSONArray("lines").length() > 0);
-                assertFalse(request(runtime, "/api/vbot/status", null, true).getBoolean("armed"));
+                JSONObject stage = request(runtime, "/api/vbot/performance/preview", "{\"dances\":2,\"pace\":\"theatrical\"}", true).getJSONObject("performancePreview");
+                assertEquals(2, stage.getInt("dances"));
+                assertFalse(stage.getBoolean("allRehearsed"));
+                assertTrue(stage.getJSONArray("cues").length() > 0);
+                JSONObject robotStatus = request(runtime, "/api/vbot/status", null, true);
+                assertFalse(robotStatus.getBoolean("armed"));
+                assertEquals(1, robotStatus.getInt("performanceApiVersion"));
             } finally { backend.callAttr("stop"); }
         }
     }

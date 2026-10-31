@@ -16,6 +16,7 @@ import uuid
 from vbot_networks import NetworkBook, normalize_target
 from capture_practice import PRACTICE_ID, exercise as capture_exercise, assess_capture
 from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES, MAX_SMALL_DURATION_MS, JUMP_PRESETS
+from vbot_performance import performance_plan
 
 PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET)
 REMOTE_ROOT = "/userdata/vbot/chess-demo"
@@ -202,6 +203,9 @@ class VbotDemo:
         self.records = OrderedDict()
         self.seen = OrderedDict()
         self.events = deque(maxlen=80)
+        self.performance = None
+        self.performance_cancel = threading.Event()
+        self.performance_requests = OrderedDict()
 
     def _event(self, status: str, **fields) -> dict:
         event = {"time": int(time.time() * 1000), "status": status, "gameId": self.game_id, **fields}
@@ -257,7 +261,8 @@ class VbotDemo:
     def status(self) -> dict:
         self._sync_network()
         with self.lock:
-            return {"sessionKind": self.session_kind, "companionApiVersion": 1, "generation": self.generation,
+            return {"sessionKind": self.session_kind, "performance": self.performance, "performanceApiVersion": 1,
+                    "companionApiVersion": 1, "generation": self.generation,
                     "reactionProfile": self.reaction_profile,
                     "network": self.network_book.snapshot() if self.network_book is not None else None,
                     "readiness": self.readiness,
@@ -357,7 +362,7 @@ class VbotDemo:
                     # them against the unrelated default network.
                     result={**result,"rememberWarning":str(error)}
             self.target = target
-            self.readiness = {**result, "target": target, "checkedAt": int(time.time() * 1000)}
+            self.readiness = {**result, "target": target, "checkedAt": int(time.time() * 1000), 'probeToken': uuid.uuid4().hex}
             self.readiness_at = self.clock()
             return self.status()
 
@@ -406,6 +411,101 @@ class VbotDemo:
             attempt['result']=response
             return response
 
+    def preview_performance(self, payload):
+        target = str(payload.get('target', self.target)).strip()
+        plan = performance_plan(payload, lambda preset: self._verified_entry(target, preset))
+        return {**self.status(), 'performancePreview': {**plan, 'target': target}}
+
+    def start_performance(self, payload):
+        self._sync_network(force=True)
+        target = str(payload.get('target', self.target)).strip()
+        request_id = payload.get('requestId', '')
+        if not isinstance(request_id, str) or not re.fullmatch(r'[a-f0-9]{32}', request_id):
+            raise ValueError('A unique performance request identity is required.')
+        plan = performance_plan(payload, lambda preset: self._verified_entry(target, preset))
+        identity = (target, plan['dances'], plan['pace'])
+        ssh_command(target, PRESETS[0], request_id)
+        with self.lock:
+            if request_id in self.performance_requests:
+                if self.performance_requests[request_id] != identity:
+                    raise ValueError('This request identity belongs to a different performance.')
+                return self.status()  # Never replay an uncertain/repeated HTTP request.
+            if self.armed or self.busy:
+                raise ValueError('Turn reactions off and wait for the current action before starting a performance.')
+            if payload.get('confirmSafeWorkspace') is not True or payload.get('confirmHandsetStop') is not True:
+                raise ValueError('Confirm clear performance space and an onsite handset Stop before live motion.')
+            if plan['missingPresets']:
+                raise ValueError('Every cue needs a successful, measured rehearsal on this robot: ' + ', '.join(plan['missingPresets']))
+            if not self._identity_matches(target):
+                raise ValueError('The trusted host identity does not match the rehearsed robot.')
+            if (not self.readiness or self.readiness.get('ready') is not True or
+                    self.readiness.get('target') != target or self.clock() - self.readiness_at > 30):
+                raise ValueError('Check this robot’s fresh readiness before starting the show.')
+            if not self.readiness.get('probeToken') or payload.get('readinessProbe') != self.readiness['probeToken']:
+                raise ValueError('The readiness check changed. Check the robot again before starting this show.')
+            self.performance_requests[request_id] = identity
+            while len(self.performance_requests) > 256:
+                self.performance_requests.popitem(last=False)
+            self.performance_cancel = cancel = threading.Event()
+            self.generation += 1
+            generation = self.generation
+            self.armed = True
+            self.mode, self.session_kind, self.game_id = 'live', 'performance', ''
+            self.target = target
+            self.player_color = None
+            self.finish_pending = self.victory_pending = False
+            self.compatibility = {'basis': 'tested-preset', 'applicationVersion': None}
+            self.performance = {**plan, 'runId': request_id, 'target': target, 'running': True,
+                                'phase': 'starting', 'cueIndex': 0, 'completedCues': 0, 'phaseEndsAt': None, 'stopReason': None}
+            self._event('performance_started', performanceRunId=request_id, message=plan['title'])
+            threading.Thread(target=self._perform_score, args=(request_id, generation, cancel), daemon=True).start()
+            return self.status()
+
+    def _perform_score(self, run_id, generation, cancel):
+        deadline = self.clock() + 15 * 60
+        completed = False
+        try:
+            for index, cue in enumerate(self.performance['cues']):
+                with self.lock:
+                    if cancel.is_set() or not self.armed or generation != self.generation:
+                        return
+                    if self.clock() >= deadline:
+                        self.performance['stopReason'] = 'The 15-minute performance limit was reached. No next cue submitted.'
+                        self._event('performance_expired', message='Performance time limit reached; no next cue submitted.')
+                        return
+                    self.performance.update(cueIndex=index, phase='acting', phaseEndsAt=None)
+                    self.busy = True  # Reserve the same dispatcher used by chess reactions.
+                    self.last_started = self.clock()
+                    request_id = uuid.uuid4().hex
+                    target = self.target
+                    self._event('performance_cue', performanceRunId=run_id, requestId=request_id,
+                                preset=cue['preset'], act=cue['act'], message=cue['caption'])
+                # _run performs the existing identity, provider, fresh telemetry,
+                # one-shot dispatch, terminal-result and postflight checks.
+                if self._run(target, cue['preset'], request_id, generation, 'performance') is not True:
+                    with self.lock:
+                        if self.performance and self.performance['runId'] == run_id:
+                            issue = next((event for event in self.events if event.get('requestId') == request_id and event['status'] in {'not_ready', 'rejected', 'unknown'}), {})
+                            self.performance['stopReason'] = issue.get('reason') or issue.get('message') or 'The cue did not confirm successful completion and readiness. No next cue submitted.'
+                    return
+                with self.lock:
+                    if cancel.is_set() or not self.armed or generation != self.generation:
+                        return
+                    self.performance.update(completedCues=index + 1, phase='resting',
+                                            phaseEndsAt=int((time.time() + cue['restSeconds']) * 1000))
+                if cancel.wait(cue['restSeconds']):
+                    return
+            completed = True
+        finally:
+            with self.lock:
+                if self.performance and self.performance['runId'] == run_id:
+                    self.performance.update(running=False, phase='completed' if completed else 'stopped', phaseEndsAt=None)
+                if generation == self.generation:
+                    self.armed = False
+                    self.generation += 1
+                self._event('performance_completed' if completed else 'performance_stopped', performanceRunId=run_id,
+                            message='Show complete.' if completed else 'No further cues will run. Inspect any interrupted action onsite before restarting.')
+
     def arm(self, payload: dict) -> dict:
         self._sync_network(force=True)
         mode = payload.get("mode", "rehearsal")
@@ -437,6 +537,8 @@ class VbotDemo:
                 compatibility = {"basis": "tested-preset", "applicationVersion": None,
                                  "target": target, "preset": preset}
         with self.lock:
+            if self.performance and self.performance.get('running'):
+                raise ValueError('Stop the standalone performance before enabling chess reactions.')
             if self.busy:
                 raise ValueError("Wait for the current action to finish before changing the demo.")
             self.reaction_profile = reaction_profile
@@ -460,6 +562,10 @@ class VbotDemo:
             if payload and (payload.get("gameId") != self.game_id or payload.get("generation") != self.generation):
                 return self.status()  # A stale tab cannot disable a newer arming session.
             self.armed = False
+            self.performance_cancel.set()
+            if self.performance and self.performance.get('running'):
+                self.performance.update(running=False, phase='stopping' if self.busy else 'stopped', phaseEndsAt=None,
+                                        stopReason='Further cues canceled. Use the onsite handset Stop if current movement must stop immediately.')
             self.finish_pending = self.victory_pending = False
             self.finish_generation = None
             self.generation += 1
@@ -786,6 +892,7 @@ class VbotDemo:
                     self.armed = False
                     self._event("not_ready", requestId=request_id,
                                 reason=outcome.get("postflightReason") or "Robot is not ready for another action. Inspect and rearm onsite.")
+                return outcome.get('status') == 'completed' and outcome.get('readyForNext') is True
         except (RobotNotReady, RobotRejected) as error:
             with self.lock:
                 self.readiness = None
@@ -804,7 +911,8 @@ class VbotDemo:
             with self.lock:
                 self.busy = False
                 self.last_finished = self.clock()
-                if tier in {"major", "sad"}: self.last_dance_finished = self.clock()
+                if tier in {"major", "sad"} or (tier == 'performance' and preset in {PRESETS[0], SAD_PRESET}):
+                    self.last_dance_finished = self.clock()
 
 
 demo = VbotDemo(network_book=None if os.environ.get('CHESS_ANDROID') == '1' else NetworkBook())

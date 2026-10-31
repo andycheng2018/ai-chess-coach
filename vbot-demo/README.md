@@ -1,5 +1,9 @@
 # Chess Buddy × VBOT demo
 
+For a standalone Halloween show with a character arc and 1–3 full dances, see
+[Dog stage: Midnight Mischief](PERFORMANCE.md). It reuses this same controller
+and dispatcher; no chess match is required.
+
 [English](README.md) | [中文](README.zh-CN.md)
 
 This local extension connects the existing Lichess/coach integration to a documented

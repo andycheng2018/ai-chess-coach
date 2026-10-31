@@ -1791,6 +1791,10 @@ class Handler(BaseHTTPRequestHandler):
                     response = vbot_demo.reconcile(payload, runtime.game_state)
                 elif self.path == "/api/vbot/rehearse":
                     response = vbot_demo.rehearse(payload.get("classification", "good"), payload.get("scenario", "ordinary"))
+                elif self.path == '/api/vbot/performance/preview':
+                    response = vbot_demo.preview_performance(payload)
+                elif self.path == '/api/vbot/performance/start':
+                    response = vbot_demo.start_performance(payload)
                 else:
                     self._send(404, {"message": "Not found"})
                     return
