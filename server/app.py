@@ -173,6 +173,12 @@ def reset_analyzer() -> None:
     _analyzer = None
 
 
+def coach_is_configured() -> bool:
+    if os.getenv("LLM_PROVIDER", "openai").lower() == "qwen":
+        return os.environ.get("CHESS_ANDROID") != "1" and bool(os.getenv("QWEN_BASE_URL", "http://127.0.0.1:18000/v1").strip())
+    return bool(os.environ.get("OPENAI_API_KEY", "").strip())
+
+
 def get_llm_coach() -> Any:
     global _llm_coach
     if _llm_coach is None:
@@ -356,13 +362,8 @@ def generate_llm_coaching(
     frontend can honestly show that the explanation did not load.
     """
 
-    if not os.environ.get(
-        "OPENAI_API_KEY",
-        "",
-    ).strip():
-        raise RuntimeError(
-            "OPENAI_API_KEY is not configured."
-        )
+    if not coach_is_configured():
+        raise RuntimeError("Chess coaching LLM provider is not configured.")
 
     try:
         with _llm_lock:
@@ -959,10 +960,10 @@ def chat_reply(payload: dict[str, Any]) -> dict[str, Any]:
     old = existing_turn()
     if old:
         return old
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
+    if not coach_is_configured():
         if os.environ.get('CHESS_ANDROID') == '1':
             raise RuntimeError('Add an OpenAI API key in Tablet settings to talk with Luna.')
-        raise RuntimeError("Luna needs the coach's OPENAI_API_KEY in the backend .env. Add it and restart the backend.")
+        raise RuntimeError("Configure OPENAI_API_KEY or enable Qwen in .env and restart the backend.")
     # Share the coaching model lock. Reject a busy request instead of building
     # an unbounded queue or paying for duplicate simultaneous sends.
     if not _llm_lock.acquire(timeout=0.25):
@@ -1495,6 +1496,13 @@ def critical_position_question(
         ),
     }
 
+
+
+def qwen_vbot_commentary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Generate text ONLY for an already-recorded reaction; never request robot motion."""
+    from vbot_commentary import commentary_for_event
+    return commentary_for_event(vbot_demo, payload)
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AIChessCoach/1.0"
 
@@ -1673,7 +1681,7 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "tabletPairing": tablet_access.enabled,
                 "vbotDemo": True,
-                "coach": {"configured": bool(os.environ.get("OPENAI_API_KEY", "").strip())},
+                "coach": {"configured": coach_is_configured()},
                 "stockfish": stockfish,
                 "bot": runtime.status(),
                 "coachTimeMs": COACH_TIME_MS,
@@ -1789,6 +1797,8 @@ class Handler(BaseHTTPRequestHandler):
                     response = vbot_demo.capture_reward(payload)
                 elif self.path == "/api/vbot/celebrate":
                     response = vbot_demo.reconcile(payload, runtime.game_state)
+                elif self.path == "/api/vbot/commentary":
+                    response = qwen_vbot_commentary(payload)
                 elif self.path == "/api/vbot/rehearse":
                     response = vbot_demo.rehearse(payload.get("classification", "good"), payload.get("scenario", "ordinary"))
                 else:

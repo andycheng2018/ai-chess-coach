@@ -564,12 +564,15 @@ class LLMCoach:
                 f"Coach prompt not found: {PROMPT_PATH}"
             )
 
-        self.client = OpenAI()
-
-        self.model = model or os.getenv(
-            "OPENAI_MODEL",
-            "gpt-4.1-mini",
-        )
+        if os.getenv("LLM_PROVIDER", "openai").lower() == "qwen":
+            if os.environ.get("CHESS_ANDROID") == "1":
+                raise RuntimeError("Qwen tunnel provider is for the local Mac backend")
+            from coach.qwen_adapter import QwenClient
+            self.client = QwenClient()
+            self.model = model or os.getenv("QWEN_MODEL", "qwen3.8-27b:latest")
+        else:
+            self.client = OpenAI()
+            self.model = model or os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
         self.instructions = PROMPT_PATH.read_text(
             encoding="utf-8"
