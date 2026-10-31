@@ -43,7 +43,7 @@ export function VbotPerformance({ control, onClose }: { control: VbotCompanionCo
     <section className="vbot-companion vbot-performance" aria-label="Standalone dog performance">
     <span className="eyebrow">VBOT · HALLOWEEN STAGE</span>
     <h2>Midnight Mischief</h2>
-    <p>A curious entrance, a dramatic wobble of confidence, playful audience gestures, then Rock You and an optional encore. No chess game needed.</p>
+    <p>A curious entrance, a surprise happy bounce, playful audience gestures, then Rock You and an optional encore. No chess game needed.</p>
     {status && !available && <p className="inline-error">Restart the updated coach backend to load Dog stage. On Android, install the latest complete app update.</p>}
     {show && <div className="vbot-notice" role="status">
       <strong>{show.phase === 'completed' ? 'Last show complete' : show.phase === 'stopped' ? 'Show stopped' : show.phase === 'stopping' ? 'Stopping after the current motion' : `${cue?.act || 'Starting'} · ${show.phase}`}</strong>

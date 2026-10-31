@@ -5,7 +5,7 @@ No Lichess game, synthetic chess move, cloud model call, or voice service is nee
 for this standalone performance. The existing VBOT controller, SSH identity, robot
 helper, motion dispatcher, and readiness checks are reused.
 
-The authored sequence is entrance → curiosity → theatrical disappointment →
+The authored sequence is entrance → curiosity → surprise happy bounce →
 playfulness → Rock You → optional encores → curtain call. The default is two
 dances in Flow pace: 0.15-second transition beats after short cues and two seconds
 after body performances. The first live run of the older pacing took 6:58: 139
