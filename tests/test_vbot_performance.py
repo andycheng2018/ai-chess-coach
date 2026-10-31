@@ -49,11 +49,11 @@ class PerformanceTests(unittest.TestCase):
         self.assertFalse(self.demo.armed)
         self.checker.assert_not_called(); self.sender.assert_not_called()
 
-    def test_score_is_bounded_and_rest_is_never_removed_from_body_cues(self):
+    def test_score_is_bounded_and_flow_retains_a_brief_body_transition(self):
         for dances in (1, 2, 3):
             plan = performance_plan({'dances': dances, 'pace': 'lively'}, lambda _: {'durationMs': 1000})
             self.assertEqual(sum(c['preset'] == DANCE for c in plan['cues']), dances)
-            self.assertTrue(all(c['restSeconds'] >= 20 for c in plan['cues'] if c['preset'] == DANCE))
+            self.assertTrue(all(c['restSeconds'] >= 2 for c in plan['cues'] if c['preset'] == DANCE))
         for bad in (0, 4, True, '2'):
             with self.assertRaises(ValueError): performance_plan({'dances': bad}, lambda _: None)
 
@@ -155,3 +155,12 @@ class PerformanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'readiness check changed'):
             self.start()
         self.sender.assert_not_called()
+
+    def test_default_flow_removes_dead_air_without_changing_chess_cooldowns(self):
+        from vbot_policy import RULES
+        plan = performance_plan({}, lambda _: {'durationMs': 1000})
+        self.assertEqual(plan['pace'], 'flow')
+        self.assertLess(sum(c['restSeconds'] for c in plan['cues']), 8)
+        self.assertEqual(plan['cues'][-1]['restSeconds'], 0)
+        self.assertEqual(RULES['danceRestSeconds'], 20)
+        self.assertEqual(RULES['smallRestSeconds'], 5)

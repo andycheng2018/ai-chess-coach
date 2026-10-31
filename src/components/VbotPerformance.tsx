@@ -8,7 +8,7 @@ export function VbotPerformance({ control, onClose }: { control: VbotCompanionCo
   const android = Capacitor.getPlatform() === 'android';
   const [target, setTarget] = useState(status?.target || '');
   const [dances, setDances] = useState(2);
-  const [pace, setPace] = useState('theatrical');
+  const [pace, setPace] = useState('flow');
   const [plan, setPlan] = useState<PerformancePlan | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -48,7 +48,7 @@ export function VbotPerformance({ control, onClose }: { control: VbotCompanionCo
     {show && <div className="vbot-notice" role="status">
       <strong>{show.phase === 'completed' ? 'Last show complete' : show.phase === 'stopped' ? 'Show stopped' : show.phase === 'stopping' ? 'Stopping after the current motion' : `${cue?.act || 'Starting'} · ${show.phase}`}</strong>
       <p>{cue?.caption}</p><p>{show.completedCues} / {show.cues.length} cues completed.</p>
-      {show.phase === 'resting' && show.phaseEndsAt && <p>Breathing room · {Math.max(0, Math.ceil((show.phaseEndsAt - Date.now()) / 1000))}s until the next cue. Let the audience applaud.</p>}
+      {show.phase === 'resting' && show.phaseEndsAt && <p>Transition · {Math.max(0, Math.ceil((show.phaseEndsAt - Date.now()) / 1000))}s until the next cue. </p>}
       {show.stopReason && <p className="inline-error">{show.stopReason}</p>}
     </div>}
     {!active && <>
@@ -62,10 +62,10 @@ export function VbotPerformance({ control, onClose }: { control: VbotCompanionCo
         <option value={1}>One grand finale</option><option value={2}>Finale + one encore</option><option value={3}>Finale + two encores</option>
       </select></label>
       <label>Breathing room<select value={pace} disabled={locked} onChange={event => setPace(event.target.value)}>
-        <option value="lively">Lively · 3 seconds between short cues</option><option value="theatrical">Theatrical · 5 seconds</option><option value="relaxed">Relaxed · 8 seconds</option>
+        <option value="flow">Flow · minimal pauses</option><option value="lively">Lively · 0.75 seconds between short cues</option><option value="theatrical">Theatrical · 2 seconds</option><option value="relaxed">Relaxed · 5 seconds</option>
       </select></label>
     </div>
-    <p className="vbot-footnote">Full dances and the dramatic body gesture get at least 20 seconds of rest after completion. Fresh robot checks run before every cue. The score ends after the selected encores; it never loops endlessly.</p>
+    <p className="vbot-footnote">Flow uses 0.15-second transition beats and 2 seconds after body performances. Every cue still waits for successful completion and fresh idle-state checks. The score ends after the selected encores; it never loops endlessly.</p>
     <button className="ghost" disabled={locked || offline || !available} onClick={() => void preview()}>{previewing ? 'Building score…' : 'Preview the whole score · no motion'}</button>
     </>}
     {visiblePlan && <>

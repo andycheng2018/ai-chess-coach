@@ -1,13 +1,14 @@
 """Authored stage score. Planning never contacts the robot or fabricates chess events."""
-from vbot_policy import RULES, SAD_PRESET, MAX_SMALL_DURATION_MS
+from vbot_policy import SAD_PRESET, MAX_SMALL_DURATION_MS
 
-PACE = {'lively': 3, 'theatrical': 5, 'relaxed': 8}
+PACE = {'flow': .15, 'lively': .75, 'theatrical': 2, 'relaxed': 5}
+BODY_REST = {'flow': 2, 'lively': 3, 'theatrical': 5, 'relaxed': 20}
 DANCE = 'actions/ROCKYOU.json'
 
 
 def performance_plan(payload, verified):
     dances = payload.get('dances', 2)
-    pace = payload.get('pace', 'theatrical')
+    pace = payload.get('pace', 'flow')
     if type(dances) is not int or dances not in {1, 2, 3} or pace not in PACE:
         raise ValueError('Choose 1–3 dances and a listed performance pace.')
     score = [
@@ -28,7 +29,7 @@ def performance_plan(payload, verified):
     score += [('Curtain call', 'Thank you. You have been a wonderful crowd.', 'actions/WAVE.json'),
               ('Curtain call', 'And… scene.', 'atom/look_forward.json')]
     cues, missing, estimate = [], [], 0
-    for act, caption, preset in score:
+    for index, (act, caption, preset) in enumerate(score):
         entry = verified(preset)
         duration = (entry or {}).get('durationMs')
         maximum = 120000 if preset in {DANCE, SAD_PRESET} else MAX_SMALL_DURATION_MS
@@ -36,7 +37,11 @@ def performance_plan(payload, verified):
                  and 0 < duration <= maximum)
         if not ready and preset not in missing:
             missing.append(preset)
-        rest = RULES['danceRestSeconds'] if preset in {DANCE, SAD_PRESET} else PACE[pace]
+        # Stage beats are independent of the chess-reaction cooldown policy.
+        # Confirmed completion and fresh idle telemetry still gate every cue.
+        rest = BODY_REST[pace] if preset in {DANCE, SAD_PRESET} else PACE[pace]
+        if index == len(score) - 1:
+            rest = 0
         cues.append({'act': act, 'caption': caption, 'preset': preset, 'restSeconds': rest,
                      'durationMs': duration if ready else None, 'rehearsed': ready})
         estimate += (duration / 1000 if ready else 0) + rest

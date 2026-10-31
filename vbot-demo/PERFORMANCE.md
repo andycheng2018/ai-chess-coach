@@ -7,8 +7,13 @@ helper, motion dispatcher, and readiness checks are reused.
 
 The authored sequence is entrance → curiosity → theatrical disappointment →
 playfulness → Rock You → optional encores → curtain call. The default is two
-dances with five-second pauses between short cues: roughly 4–5 minutes using the
-saved rehearsal timings, plus fresh telemetry checks. Captions are operator stage
+dances in Flow pace: 0.15-second transition beats after short cues and two seconds
+after body performances. The first live run of the older pacing took 6:58: 139
+seconds of motion, 115 seconds of scripted rests, and about 164 seconds of check/
+connection overhead. Flow removes most scripted dead air. A concurrent telemetry experiment passed
+a read-only device check but did not reduce measured latency (7.8 seconds versus
+7.5 seconds for the existing check), so it was not deployed. Connection/helper
+startup overhead remains; revised whole-show timing is not yet measured. Captions are operator stage
 directions. Speech playback and audience perception are separate integrations.
 
 ## Before the party
@@ -28,9 +33,11 @@ directions. Speech playback and audience perception are separate integrations.
    duration, breathing room, and the expected total duration. Preview never arms
    the controller or calls the robot. Missing individual rehearsal evidence blocks
    live start; a broad demo approval does not replace measured evidence here.
-5. Select 1–3 dances and Lively (3 seconds), Theatrical (5), or Relaxed (8) pauses.
-   Full dances and the dramatic body gesture always get at least 20 seconds after
-   their confirmed completion. Changing pacing does not shorten that rest.
+5. Select 1–3 dances. Flow (default) uses 0.15-second short transitions and
+   two seconds after body performances. Lively uses 0.75/3 seconds, Theatrical
+   2/5 seconds, and Relaxed 5/20 seconds. No rest follows the final cue.
+   These stage beats are separate from the unchanged chess-reaction cooldowns;
+   successful completion and fresh idle telemetry still gate each new cue.
 6. Confirm the actual performance space and an onsite operator with the handset
    Stop ready. **Check robot & start live performance** performs another fresh
    check and submits one bounded show. Rehearse this complete sequence onsite
