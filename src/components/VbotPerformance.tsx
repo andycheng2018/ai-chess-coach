@@ -86,7 +86,7 @@ export function VbotPerformance({ control, onClose }: { control: VbotCompanionCo
       <label><input type="checkbox" checked={space} disabled={locked} onChange={event => setSpace(event.target.checked)} /> I checked the performance area and the audience is clear of the dog’s moving space.</label>
       <label><input type="checkbox" checked={stop} disabled={locked} onChange={event => setStop(event.target.checked)} /> An onsite operator has the handset Stop ready.</label>
       <button className="primary" disabled={locked || offline || !available || !plan?.allRehearsed || !target.trim() || !space || !stop || Boolean(status?.armed || status?.busy)}
-        onClick={() => void control.startPerformance({ target: target.trim(), dances, pace, requestId: crypto.randomUUID().replaceAll('-', ''), confirmSafeWorkspace: space, confirmHandsetStop: stop })}>Check robot & start live performance</button>
+        onClick={() => void control.startPerformance({ target: target.trim(), dances, pace, requestId: crypto.randomUUID().replaceAll('-', ''), confirmSafeWorkspace: space, confirmHandsetStop: stop }).catch(cause => setLocalError(cause instanceof Error ? cause.message : 'Could not start the performance.'))}>Check robot & start live performance</button>
     </>}
     {(localError || error) && <p className="inline-error" role="alert">{localError || error}</p>}
     {active && <p className="vbot-footnote">Closing this panel leaves the show running. Open Dog stage again to monitor or stop further cues. Use the handset Stop for current motion.</p>}

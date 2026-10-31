@@ -3990,3 +3990,7 @@ header {
 .demo-welcome-help,.demo-welcome-host { font-size:13px; line-height:1.5; color:var(--muted); margin-top:18px; }
 .demo-welcome-host summary { cursor:pointer; }
 @media(max-width:480px) { .demo-welcome-body { padding:0 18px 18px; } .demo-welcome .modal-header { padding:12px 18px; } }
+.demo-host-checks { border:1px solid var(--border); border-radius:10px; margin:12px 0; padding:14px; }
+.demo-host-checks label { display:flex; align-items:flex-start; gap:8px; margin:10px 0; color:var(--text); }
+.demo-host-checks input { flex-shrink:0; margin-top:3px; }
+.demo-host-checks p { margin-bottom:0; }

@@ -38,7 +38,7 @@ export function useVbotCompanion(context: CompanionContext) {
   }, [refresh]);
 
   const perform = useCallback(async (path: 'check' | 'connect' | 'disarm' | 'finish' | 'networks/remember' | 'performance/start', payload: object) => {
-    if (inFlight.current) return;
+    if (inFlight.current || !mounted.current) return;
     inFlight.current = true; revision.current++;
     setPending(true); setActionError('');
     const originGame = current.current.gameId;
@@ -47,7 +47,7 @@ export function useVbotCompanion(context: CompanionContext) {
       if (path === 'performance/start') {
         const target = (payload as { target: string }).target;
         const checked = await vbotRequest('check', { target });
-        if (!mounted.current || current.current.gameId !== originGame) throw new Error('The selected context changed during readiness checks. Start the show again deliberately.');
+        if (!mounted.current) throw new Error('The demo closed during readiness checks. Start the show again deliberately.');
         if (!checked.readinessFresh || !checked.readiness?.ready || checked.readiness.target !== target) {
           throw new Error(checked.readiness?.reason || 'The robot is not ready for the performance.');
         }
@@ -64,8 +64,10 @@ export function useVbotCompanion(context: CompanionContext) {
         next = await vbotRequest('disarm', { gameId: next.gameId, generation: next.generation, reason: 'match_changed_during_connect' });
       }
       if (mounted.current) { setStatus(next); setConnectionError(''); }
+      return next;
     } catch (error) {
       if (mounted.current) setActionError(error instanceof Error ? error.message : 'VBOT request failed.');
+      if (path === 'performance/start') throw error;
     } finally {
       inFlight.current = false;
       if (mounted.current) { setPending(false); void refresh(); }

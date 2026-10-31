@@ -18,6 +18,7 @@ import { notifyVbotMove } from './vbotDemo';
 import { useVbotCompanion } from './useVbotCompanion';
 import { VbotCompanion } from './components/VbotCompanion';
 import { VbotPerformance } from './components/VbotPerformance';
+import { createDemoStarter, hostCheckValid, type DemoHostCheck } from './demoPerformance';
 import { DemoWelcome, needsDemoWelcome, acknowledgeDemoWelcome, resetDemoWelcome } from './components/DemoWelcome';
 import { GameQrDialog } from './components/GameQrDialog';
 import { CapturePractice } from './components/CapturePractice';
@@ -1712,6 +1713,10 @@ export default function App() {
   const [roomLinkOpen, setRoomLinkOpen] = useState(() => readRoomJoinDraft() !== null);
   const [performanceOpen, setPerformanceOpen] = useState(false);
   const [demoWelcomeOpen, setDemoWelcomeOpen] = useState(needsDemoWelcome);
+  const [demoHost, setDemoHost] = useState<DemoHostCheck>({ target: '', space: false, stop: false, checkedAt: 0 });
+  const [demoStarting, setDemoStarting] = useState(false);
+  const [demoStartError, setDemoStartError] = useState('');
+  const demoStarter = useRef(createDemoStarter());
   const [accountCheckError, setAccountCheckError] = useState('');
   const [accountCheckNonce, setAccountCheckNonce] = useState(0);
   useEffect(() => { setQrGameId(null); }, [gameId]);
@@ -1905,6 +1910,25 @@ export default function App() {
   const vbotEnded = Boolean(gameId && !['idle', 'recovering', 'created', 'started'].includes(gameStatus));
   const vbotCompanion = useVbotCompanion({ gameId, playerColor: myColor,
     resolved: recoveryChecked, ended: vbotEnded, canArm: vbotCanArm });
+  const demoControl = useRef(vbotCompanion);
+  demoControl.current = vbotCompanion;
+  const demoTarget = vbotCompanion.status?.target || '';
+  const demoPrepared = hostCheckValid(demoHost, demoTarget);
+  function confirmDemoHost(field: 'space' | 'stop', value: boolean) {
+    setDemoHost(previous => ({ ...(previous.target === demoTarget && Date.now()-previous.checkedAt < 15*60*1000
+      ? previous : { target: demoTarget, space: false, stop: false, checkedAt: 0 }),
+      target: demoTarget, [field]: value, checkedAt: Date.now() }));
+  }
+  async function startVisitorDemo() {
+    setDemoStarting(true); setDemoStartError('');
+    try {
+      await demoStarter.current(demoHost, () => demoControl.current);
+      acknowledgeDemoWelcome(); setDemoWelcomeOpen(false); setSenseSetupOpen(false); setRoomLinkOpen(false);
+      setMenuModalOpen(false); setProfileModalOpen(false); setPerformanceOpen(true);
+    } catch (cause) { setDemoStartError(cause instanceof Error ? cause.message : 'Could not start the demo.'); }
+    finally { setDemoStarting(false); }
+  }
+
   const coachArrows: Arrow[] = useMemo(() => {
     if (!hintsEnabled || !coachResult) return [];
     // A best-move arrow belongs to the position *before* the student's move,
@@ -4416,7 +4440,7 @@ export default function App() {
 
     <div className="capture-practice-entry"><button className="ghost" disabled={startingGame || vbotCompanion.pending || Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy)}
       title={vbotCompanion.status?.armed || vbotCompanion.status?.busy ? 'Stop robot reactions before welcoming the next guest.' : 'Show the quick introduction for the next visitor.'}
-      onClick={() => { resetDemoWelcome(); setDemoWelcomeOpen(true); }}>👋 Next guest</button>
+      onClick={() => { resetDemoWelcome(); setDemoStartError(''); setDemoWelcomeOpen(true); }}>👋 Next guest</button>
       {Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy) && <span>Stop dog reactions before welcoming the next guest.</span>}
       <button className="primary" onClick={() => setCapturePracticeOpen(true)}>🎯 Capture Practice</button><span>Easy queen and rook captures + Rock You rewards</span>
       <button className="ghost" onClick={() => setPerformanceOpen(true)}>🎭 Dog stage{vbotCompanion.status?.sessionKind === 'performance' && (vbotCompanion.status.armed || vbotCompanion.status.busy) ? ' · Show live' : ' · Preview & perform'}</button>
@@ -5426,6 +5450,15 @@ export default function App() {
     )}
 
     {demoWelcomeOpen && <DemoWelcome
+      onStart={() => void startVisitorDemo()}
+      busy={demoStarting || vbotCompanion.pending}
+      startDisabled={!demoPrepared || vbotCompanion.offline || !demoTarget || Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy)}
+      startError={demoStartError || vbotCompanion.error}
+      hostControls={<fieldset className="demo-host-checks"><legend>Enable the visitor Start button</legend>
+        <label><input type="checkbox" disabled={demoStarting || !demoTarget} checked={demoHost.target === demoTarget && demoHost.space} onChange={event => confirmDemoHost('space', event.target.checked)} /> Clear, stable floor; people are outside the dog’s moving space.</label>
+        <label><input type="checkbox" disabled={demoStarting || !demoTarget} checked={demoHost.target === demoTarget && demoHost.stop} onChange={event => confirmDemoHost('stop', event.target.checked)} /> I’m supervising with the handset Stop ready.</label>
+        <p>These checks enable visitor starts for 15 minutes on this dog connection. Every Start checks live robot readiness again. Use Dog performance to configure or monitor the show.</p>
+      </fieldset>}
       onClose={() => { acknowledgeDemoWelcome(); setDemoWelcomeOpen(false); }}
       onPractice={() => {
         acknowledgeDemoWelcome(); setDemoWelcomeOpen(false); setSenseSetupOpen(false); setRoomLinkOpen(false);
