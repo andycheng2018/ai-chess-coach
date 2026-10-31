@@ -4,6 +4,7 @@ apply plugin: 'com.chaquo.python'
 android {
     namespace = "com.andy.chessbuddy"
     compileSdk = rootProject.ext.compileSdkVersion
+    testBuildType 'release'
     defaultConfig {
         applicationId "com.andy.chessbuddy"
         minSdkVersion rootProject.ext.minSdkVersion

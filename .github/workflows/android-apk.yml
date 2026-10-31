@@ -46,3 +46,16 @@ jobs:
           name: ChessBuddy-Standalone-Android
           path: apk/
           retention-days: 30
+      - name: Verify embedded backend and Stockfish on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          disable-animations: true
+          script: cd android && ./gradlew connectedReleaseAndroidTest --no-daemon
+      - name: Save native test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-runtime-test-results
+          path: android/app/build/outputs/androidTest-results/
