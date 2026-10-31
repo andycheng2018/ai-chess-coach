@@ -46,10 +46,13 @@ jobs:
           name: ChessBuddy-Standalone-Android
           path: apk/
           retention-days: 30
+      - name: Allow this ephemeral runner to use its emulator accelerator
+        run: sudo setfacl -m "u:$(id -un):rw" /dev/kvm
       - name: Verify embedded backend and Stockfish on Android
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
+          target: google_apis
           arch: x86_64
           disable-animations: true
           script: cd android && ./gradlew connectedReleaseAndroidTest --no-daemon
