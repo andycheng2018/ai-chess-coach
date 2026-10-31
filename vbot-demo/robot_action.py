@@ -2,6 +2,11 @@
 """One bounded, identified VBOT RCP preset. Default invocation is an offline preview."""
 from __future__ import annotations
 import argparse
+from collections import deque
+from contextlib import ExitStack
+import select
+import sys
+import threading
 import importlib.metadata
 import json
 import os
@@ -129,8 +134,163 @@ def make_goal(preset):
                             input=DagPresetRefT(relativePath=preset, templateArgs=[]))
 
 
+def readiness_topics():
+    from bms.BmsState import BmsState
+    from sm.SmStatus import SmStatus
+    from locomotion.LocomotionStatus import LocomotionStatus
+    from locomotion.HeadStatus import HeadStatus
+    return [
+        ('battery', '/bms_state', BmsState, lambda m: dict(soc=m.SocPercent(), charger=m.IsChargerConnected(), alarm=m.Alarm()), 2, lambda m: True),
+        ('system', '/system/sm_status', SmStatus, lambda m: dict(heartbeat=m.HeartbeatSeq(), state=text(m.StateName()), powerSaving=m.InPowerSaving(), severity=m.Severity(), active=m.IsActive()), 2, lambda m: m.Category() == 0),
+        ('body', '/locomotion/status', LocomotionStatus, lambda m: dict(heartbeat=m.HeartbeatSeq(), posture=m.Posture(), motion=m.Motion(), action=text(m.CurrentAction())), 3, lambda m: True),
+        ('head', '/locomotion/head_status', HeadStatus, lambda m: dict(state=m.State(), pending=text(m.PendingAction()), fault=text(m.FaultReason())), 2, lambda m: True),
+    ]
+
+
+class LiveReadiness:
+    """Fresh rolling telemetry for one bounded session. No readiness-result cache.
+
+    Retains the original sample counts and predicates. The newest sample on every
+    topic must be <=1.5s old and the entire window <=3.5s. Postflight body/head
+    samples must all arrive AFTER observing the terminal action result.
+    """
+    def __init__(self, node, sdk, topics, clock=time.monotonic):
+        self.node, self.sdk, self.topics, self.clock = node, sdk, topics, clock
+        self.condition = threading.Condition()
+        self.samples = {name: deque(maxlen=count) for name, _, _, _, count, _ in topics}
+        self.error = False
+        self.closed = False
+        self.resources = ExitStack()
+
+    def __enter__(self):
+        try:
+            for name, route, cls, extract, count, predicate in self.topics:
+                def receive(payload, context, name=name, cls=cls, extract=extract, predicate=predicate):
+                    try:
+                        message = cls.GetRootAs(bytes(payload), 0)
+                        if not predicate(message): return
+                        sample = extract(message)
+                        with self.condition:
+                            self.samples[name].append((self.clock(), sample))
+                            self.condition.notify_all()
+                    except Exception:
+                        with self.condition:
+                            self.error = True
+                            self.condition.notify_all()
+                self.resources.enter_context(self.node.create_subscriber(route, receive,
+                    options=self.sdk.SubscriberOptions(receive_depth=16)))
+            return self
+        except BaseException:
+            self.resources.close()
+            raise
+
+    def __exit__(self, *exc):
+        with self.condition:
+            self.closed = True
+            self.condition.notify_all()
+        return self.resources.__exit__(*exc)
+
+    def check(self, timeout=8, detailed=False, after=None):
+        deadline = self.clock() + timeout
+        with self.condition:
+            while True:
+                now = self.clock()
+                if self.closed or self.error:
+                    result = {'ready': False, 'code': 'telemetry', 'reason': 'The live telemetry session failed or closed.'}
+                    break
+                complete = all(len(self.samples[name]) == count for name, _, _, _, count, _ in self.topics)
+                if complete:
+                    stale = any(now - values[-1][0] > 1.5 or now - values[0][0] > 3.5 for values in self.samples.values())
+                    if stale:
+                        result = {'ready': False, 'code': 'stale', 'reason': 'Live robot telemetry is stale. No next cue submitted.'}
+                        break
+                    settled_samples = after is None or all(self.samples[name][0][0] > after for name in ('body', 'head'))
+                    if settled_samples:
+                        result = readiness_details({name: [sample for _, sample in values] for name, values in self.samples.items()})
+                        break
+                remaining = deadline - now
+                if remaining <= 0:
+                    result = {'ready': False, 'code': 'telemetry', 'reason': 'Fresh live telemetry did not arrive before the deadline.'}
+                    break
+                self.condition.wait(min(.05, remaining))
+        return result if detailed else result['reason']
+
+
+def execute_preset(args, node, sdk, client, codec, result_type, read_check):
+    """Shared one-shot execution; a session never bypasses this guarded path."""
+    directory = Path(__file__).resolve().parent
+    requests = directory / "requests"
+    unresolved = directory / "unresolved-action.json"
+    if unresolved.exists():
+        raise FileExistsError("An unresolved request requires inspection before another submission.")
+    goal_id, handle, terminal_observed = args.request_id, None, False
+    ExecuteTaskResultT = result_type
+    readiness = read_check(timeout=8, detailed=True)
+    if not readiness["ready"]:
+        emit(event="not_ready", requestId=args.request_id, **readiness)
+        return None
+    requests.mkdir(mode=0o700, exist_ok=True)
+    record = {"requestId": args.request_id, "preset": args.preset, "goalId": goal_id}
+    # Keep handled IDs across reconnects; no goal is sent before both exclusive records exist.
+    with (requests / (args.request_id + ".json")).open("x") as file:
+        json.dump(record, file)
+    with unresolved.open("x") as file:
+        json.dump({"requestId": args.request_id, "goalId": goal_id, "preset": args.preset}, file)
+    emit(event="submitting", requestId=args.request_id, goalId=goal_id, preset=args.preset)
+    try:
+        handle = client.send_goal_with_id(goal_id, codec.serialize(make_goal(args.preset)))
+        deadline = time.monotonic() + 90
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Dance deadline expired")
+            try:
+                result = handle.wait_result(timeout=min(0.25, remaining))
+                break
+            except sdk.TimeoutError:
+                continue
+        terminal_observed = result.status in {
+            sdk.ActionStatus.SUCCEEDED, sdk.ActionStatus.CANCELED, sdk.ActionStatus.ABORTED}
+        if not terminal_observed:
+            raise RuntimeError("Action result did not contain a terminal lifecycle state")
+        data = ExecuteTaskResultT.InitFromPackedBuf(result.result, 0) if result.result else None
+        terminal_at = time.monotonic()
+        postflight = (settle_postflight(lambda timeout: read_check(timeout=timeout, detailed=True, after=terminal_at))
+                      if result.status == sdk.ActionStatus.SUCCEEDED else
+                      {"ready": False, "code": "action_failed", "reason": "Inspect the failed/canceled task before rearming."})
+        summary = dict(event="terminal", requestId=args.request_id, goalId=goal_id,
+                       status=result.status.name, code=result.code.name, message=diagnostic(result.message),
+                       durationMs=data.durationMs if data else None,
+                       errorCategory=data.errorCategory if data else None,
+                       readyForNext=postflight["ready"], postflightReason=postflight["reason"],
+                       postflightReadiness=postflight)
+        record["terminal"] = summary
+        temporary = requests / (args.request_id + ".terminal.tmp")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as file:
+            json.dump(record, file)
+        os.replace(temporary, requests / (args.request_id + ".json"))
+    finally:
+        if not terminal_observed and handle is not None:
+            try:
+                handle.cancel()
+                terminal = handle.wait_result(timeout=5)
+                terminal_observed = terminal.status in {
+                    sdk.ActionStatus.SUCCEEDED, sdk.ActionStatus.CANCELED, sdk.ActionStatus.ABORTED}
+                emit(event="cleanup", requestId=args.request_id, status=terminal.status.name)
+            except Exception:
+                emit(event="unknown", requestId=args.request_id, goalId=goal_id,
+                     message="Cancellation not confirmed. Use the onsite stop and inspect the task.")
+        if terminal_observed:
+            unresolved.unlink()
+    # A session may receive its next cue immediately after this frame. Publish
+    # only after the durable result and unresolved-action cleanup are complete.
+    emit(**summary)
+    return summary
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--serve", action="store_true", help="Bounded identified cue session over stdin; never queues motion")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--confirm-motion", action="store_true")
     parser.add_argument("--check-ready", action="store_true", help="Read-only live telemetry/provider check; never submits a goal")
@@ -142,6 +302,8 @@ def main(argv=None):
             raise ValueError()
     except (ValueError, AttributeError):
         parser.error("request-id must be a lowercase 32-character UUID hex string")
+    if args.serve and not (args.execute or args.check_ready):
+        parser.error("A session requires explicit execution or read-only checks")
     if not args.execute and not args.check_ready:
         emit(event="preview", execute=False, requestId=args.request_id,
              route="/rcp/execute_task", input_type="DagPresetRef",
@@ -162,87 +324,65 @@ def main(argv=None):
     from aorta.action.rcp.ExecuteTaskGoal import ExecuteTaskGoalT
     from aorta.action.rcp.ExecuteTaskResult import ExecuteTaskResultT
     from aorta.action.rcp.ExecuteTaskFeedbackData import ExecuteTaskFeedbackDataT
+    import fcntl
     directory = Path(__file__).resolve().parent
-    requests = directory / "requests"
-    unresolved = directory / "unresolved-action.json"
-    if unresolved.exists():
-        raise FileExistsError("An unresolved request requires inspection before another submission.")
-    goal_id = args.request_id
-    handle = None
-    terminal_observed = False
     def interrupted(_signum, _frame):
         raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, interrupted)
-    with sdk.Node("edu_sdk") as node:
+    with ExitStack() as resources:
+        lock = resources.enter_context((directory / "controller.lock").open("a"))
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if (directory / "unresolved-action.json").exists():
+            raise FileExistsError("An unresolved action requires onsite inspection")
+        node = resources.enter_context(sdk.Node("edu_sdk"))
         codec = sdk.FlatbuffersActionCodec(goal=ExecuteTaskGoalT, result=ExecuteTaskResultT,
                                            feedback=ExecuteTaskFeedbackDataT)
-        with node.create_action_client("/rcp/execute_task", codec,
-                options=sdk.ActionClientOptions(control_timeout_ms=3000, info_timeout_ms=3000)) as client:
+        client = resources.enter_context(node.create_action_client("/rcp/execute_task", codec,
+                options=sdk.ActionClientOptions(control_timeout_ms=3000, info_timeout_ms=3000)))
+        def provider_ready():
             info = client.info()
             if info is None or not info.supports_cancel or info.schema_hash_hex != SCHEMA_HASH:
                 raise RuntimeError("A cancellable RCP provider with the exact client schema is required.")
-            readiness = check_readiness(node, sdk, detailed=True)
-            if args.check_ready:
-                emit(event="readiness", requestId=args.request_id, **readiness)
-                return 0 if readiness["ready"] else 1
-            if not readiness["ready"]:
-                emit(event="not_ready", requestId=args.request_id, **readiness)
+        provider_ready()
+        if args.serve:
+            live = resources.enter_context(LiveReadiness(node, sdk, readiness_topics()))
+            initial = live.check(detailed=True)
+            emit(event="session_ready", requestId=args.request_id, protocol=1, **initial)
+            if not initial["ready"]:
                 return 1
-            requests.mkdir(mode=0o700, exist_ok=True)
-            record = {"requestId": args.request_id, "preset": args.preset, "goalId": goal_id}
-            # Keep handled IDs across reconnects; no goal is sent before both exclusive records exist.
-            with (requests / (args.request_id + ".json")).open("x") as file:
-                json.dump(record, file)
-            with unresolved.open("x") as file:
-                json.dump({"requestId": args.request_id, "goalId": goal_id, "preset": args.preset}, file)
-            emit(event="submitting", requestId=args.request_id, goalId=goal_id, preset=args.preset)
-            try:
-                handle = client.send_goal_with_id(goal_id, codec.serialize(make_goal(args.preset)))
-                deadline = time.monotonic() + 90
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError("Dance deadline expired")
-                    try:
-                        result = handle.wait_result(timeout=min(0.25, remaining))
-                        break
-                    except sdk.TimeoutError:
-                        continue
-                terminal_observed = result.status in {
-                    sdk.ActionStatus.SUCCEEDED, sdk.ActionStatus.CANCELED, sdk.ActionStatus.ABORTED}
-                if not terminal_observed:
-                    raise RuntimeError("Action result did not contain a terminal lifecycle state")
-                data = ExecuteTaskResultT.InitFromPackedBuf(result.result, 0) if result.result else None
-                postflight = (settle_postflight(lambda timeout: check_readiness(node, sdk, timeout=timeout, detailed=True))
-                              if result.status == sdk.ActionStatus.SUCCEEDED else
-                              {"ready": False, "code": "action_failed", "reason": "Inspect the failed/canceled task before rearming."})
-                summary = dict(event="terminal", requestId=args.request_id, goalId=goal_id,
-                               status=result.status.name, code=result.code.name, message=diagnostic(result.message),
-                               durationMs=data.durationMs if data else None,
-                               errorCategory=data.errorCategory if data else None,
-                               readyForNext=postflight["ready"], postflightReason=postflight["reason"],
-                               postflightReadiness=postflight)
-                emit(**summary)
-                record["terminal"] = summary
-                temporary = requests / (args.request_id + ".terminal.tmp")
-                fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(fd, "w") as file:
-                    json.dump(record, file)
-                os.replace(temporary, requests / (args.request_id + ".json"))
-                return 0 if result.status == sdk.ActionStatus.SUCCEEDED and data and data.errorCategory == 0 else 1
-            finally:
-                if not terminal_observed and handle is not None:
-                    try:
-                        handle.cancel()
-                        terminal = handle.wait_result(timeout=5)
-                        terminal_observed = terminal.status in {
-                            sdk.ActionStatus.SUCCEEDED, sdk.ActionStatus.CANCELED, sdk.ActionStatus.ABORTED}
-                        emit(event="cleanup", requestId=args.request_id, status=terminal.status.name)
-                    except Exception:
-                        emit(event="unknown", requestId=args.request_id, goalId=goal_id,
-                             message="Cancellation not confirmed. Use the onsite stop and inspect the task.")
-                if terminal_observed:
-                    unresolved.unlink()
+            deadline = time.monotonic() + 900
+            for _ in range(20):
+                if time.monotonic() >= deadline or not select.select([sys.stdin], [], [], min(30, max(0, deadline-time.monotonic())))[0]:
+                    return 0
+                line = sys.stdin.readline(4097)
+                if not line:
+                    return 0
+                if len(line) > 4096 or not line.endswith("\n"):
+                    raise ValueError("Invalid session frame")
+                command = json.loads(line)
+                if command.get("op") == "close":
+                    return 0
+                request_id = command.get("requestId")
+                if not isinstance(request_id, str) or not re.fullmatch('[a-f0-9]{32}', request_id):
+                    raise ValueError("Invalid cue identity")
+                if command.get("op") == "check":
+                    emit(event="readiness", requestId=request_id, **live.check(detailed=True))
+                    continue
+                if not args.execute or command.get("op") != "cue" or command.get("preset") not in PRESETS:
+                    raise ValueError("Invalid session cue")
+                provider_ready()
+                cue = argparse.Namespace(request_id=request_id, preset=command["preset"])
+                result = execute_preset(cue, node, sdk, client, codec, ExecuteTaskResultT, live.check)
+                if not result or result['status'] != 'SUCCEEDED' or result['errorCategory'] != 0 or result['readyForNext'] is not True:
+                    return 1
+            return 0
+        if args.check_ready:
+            readiness = check_readiness(node, sdk, detailed=True)
+            emit(event="readiness", requestId=args.request_id, **readiness)
+            return 0 if readiness["ready"] else 1
+        result = execute_preset(args, node, sdk, client, codec, ExecuteTaskResultT,
+            lambda timeout=8, detailed=True, after=None: check_readiness(node, sdk, timeout=timeout, detailed=detailed))
+        return 0 if result and result['status'] == 'SUCCEEDED' and result['errorCategory'] == 0 else 1
 
 
 if __name__ == "__main__":

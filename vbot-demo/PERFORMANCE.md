@@ -12,8 +12,12 @@ after body performances. The first live run of the older pacing took 6:58: 139
 seconds of motion, 115 seconds of scripted rests, and about 164 seconds of check/
 connection overhead. Flow removes most scripted dead air. A concurrent telemetry experiment passed
 a read-only device check but did not reduce measured latency (7.8 seconds versus
-7.5 seconds for the existing check), so it was not deployed. Connection/helper
-startup overhead remains; revised whole-show timing is not yet measured. Captions are operator stage
+7.5 seconds for the existing check), so it was not deployed. That experiment was superseded by a show-scoped persistent SSH/SDK session
+and continuously subscribed telemetry. On-device read-only checks over that
+session returned ready in 8–138 ms after a one-time 5.5-second startup. A three-head-gesture live check then completed every cue with 0.286–0.409 seconds
+of request overhead (elapsed time minus the robot-reported motion duration),
+plus the authored 0.15-second transition. That measures transport/check overhead,
+not an exact visual gap or a complete revised-show rehearsal. Captions are operator stage
 directions. Speech playback and audience perception are separate integrations.
 
 ## Before the party
@@ -44,6 +48,32 @@ directions. Speech playback and audience perception are separate integrations.
    before presenting it to a crowd; individual preset rehearsals do not establish
    the combined sequence's acceptance on a new floor or in a new audience layout.
 
+## Persistent cue session
+
+Install the updated `robot_action.py` helper on the dog before using this version
+of Dog stage. It adds `--serve` to the same guarded preset executor; old single
+preset commands remain supported. An older helper stops show startup rather than
+silently falling back to per-cue reconnects. No vendor service restart is needed.
+
+One SSH connection, SDK node, provider client and telemetry observer remain open
+for one show. The local controller still sends just one identified cue at a time;
+there is no remote queue. Every cue retains the rehearsal/host checks, provider
+schema check, exclusive request record, unresolved-action guard, terminal result,
+and postflight checks. A controller lock prevents overlapping helper processes.
+
+The live observer requires the same 2 battery, 2 advancing system, 3 advancing
+body and 2 head samples. Every topic's newest sample must be no older than 1.5
+seconds and its complete window no older than 3.5 seconds. Postflight body/head
+samples must all arrive after the terminal result. Malformed or stale telemetry
+refuses another cue. Only the established head-busy/pending settling path waits;
+other failed conditions stop immediately. No cached readiness boolean is reused.
+
+The session expires after 15 minutes, 20 commands or 30 seconds waiting for its
+next command. EOF/connection loss never triggers reconnect or replay. The current
+motion still needs the onsite handset Stop if it must be interrupted. The native
+Android bridge uses the existing configured target, private key and pinned host
+fingerprint; this adds no listener or pairing permission.
+
 ## During the show
 
 The panel shows the current act, cue, completed cue count, and rest countdown.
@@ -71,5 +101,5 @@ Offline tests replace robot I/O and cover ordered execution, repeated starts,
 stopping during rest/motion, failed or unknown results, host identity changes,
 freshness/rehearsal admission, and shared-controller exclusion. Browser preview
 uses rehearsal metadata only. Those witnesses do not prove a live, whole-show
-robot rehearsal. The robot helper and its preset allowlist do not need modification
-for this score, provided the existing helper and rehearsed presets are installed.
+robot rehearsal. The helper must support the persistent session protocol; the preset allowlist
+and motion definitions are unchanged.

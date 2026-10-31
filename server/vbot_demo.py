@@ -156,7 +156,11 @@ def check_robot(target: str, *, host_key_alias=None) -> dict:
 
 class VbotDemo:
     def __init__(self, *, sender=send_dance, clock=time.monotonic, verification=None,
-                 fingerprint_reader=known_host_fingerprints, chooser=random.choice, checker=check_robot, victory_wait=time.sleep, network_book=None):
+                 fingerprint_reader=known_host_fingerprints, chooser=random.choice, checker=check_robot, victory_wait=time.sleep, network_book=None, session_factory=None):
+        self.session_factory = session_factory
+        if session_factory is None and sender is send_dance:
+            from vbot_session import CueSession
+            self.session_factory = CueSession
         self.sender, self.clock, self.chooser = sender, clock, chooser
         self.victory_wait = victory_wait
         self.network_book = network_book
@@ -464,7 +468,10 @@ class VbotDemo:
     def _perform_score(self, run_id, generation, cancel):
         deadline = self.clock() + 15 * 60
         completed = False
+        session = None
         try:
+            if self.session_factory:
+                session = self.session_factory(self.target, run_id, self._ssh_identity_anchor())
             for index, cue in enumerate(self.performance['cues']):
                 with self.lock:
                     if cancel.is_set() or not self.armed or generation != self.generation:
@@ -482,7 +489,7 @@ class VbotDemo:
                                 preset=cue['preset'], act=cue['act'], message=cue['caption'])
                 # _run performs the existing identity, provider, fresh telemetry,
                 # one-shot dispatch, terminal-result and postflight checks.
-                if self._run(target, cue['preset'], request_id, generation, 'performance') is not True:
+                if self._run(target, cue['preset'], request_id, generation, 'performance', sender=session.send if session else None) is not True:
                     with self.lock:
                         if self.performance and self.performance['runId'] == run_id:
                             issue = next((event for event in self.events if event.get('requestId') == request_id and event['status'] in {'not_ready', 'rejected', 'unknown'}), {})
@@ -496,7 +503,14 @@ class VbotDemo:
                 if cancel.wait(cue['restSeconds']):
                     return
             completed = True
+        except Exception:
+            with self.lock:
+                if self.performance and self.performance['runId'] == run_id:
+                    self.performance['stopReason'] = 'Persistent robot session failed or closed. No reconnect or replay; inspect the robot before restarting.'
         finally:
+            if session:
+                try: session.close()
+                except Exception: pass  # Still disarm even if transport cleanup fails.
             with self.lock:
                 if self.performance and self.performance['runId'] == run_id:
                     self.performance.update(running=False, phase='completed' if completed else 'stopped', phaseEndsAt=None)
@@ -869,7 +883,7 @@ class VbotDemo:
         threading.Thread(target=self._run, args=(self.target, preset, request_id, generation, tier), daemon=True).start()
         return {"status":"requested", "requestId":request_id, "tier":tier, "preset":preset}
 
-    def _run(self, target, preset, request_id, generation, tier="small"):
+    def _run(self, target, preset, request_id, generation, tier="small", sender=None):
         try:
             self._sync_network(force=True)
             with self.lock:
@@ -883,7 +897,7 @@ class VbotDemo:
                 if not self.armed or generation != self.generation:
                     self._event("skipped",requestId=request_id,reason="Connection/session changed before dispatch.")
                     return
-            outcome = self.sender(target, preset, request_id)
+            outcome = (sender or self.sender)(target, preset, request_id)
             with self.lock:
                 self._event(outcome["status"], requestId=request_id, **{"preset":preset, "tier":tier, **{k: v for k, v in outcome.items() if k != "status"}})
                 if outcome.get("readyForNext") is False:

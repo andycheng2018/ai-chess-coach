@@ -164,3 +164,31 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(plan['cues'][-1]['restSeconds'], 0)
         self.assertEqual(RULES['danceRestSeconds'], 20)
         self.assertEqual(RULES['smallRestSeconds'], 5)
+
+    def test_persistent_session_is_shared_by_all_cues_and_closed_once(self):
+        transport = Mock()
+        transport.send.return_value = {'status': 'completed', 'readyForNext': True}
+        self.demo.session_factory = Mock(return_value=transport)
+        self.start(); self.execute()
+        self.demo.session_factory.assert_called_once()
+        self.assertEqual(transport.send.call_count,14)
+        self.sender.assert_not_called()
+        transport.close.assert_called_once()
+        self.assertFalse(self.demo.armed)
+
+    def test_lost_persistent_session_stops_without_reconnect(self):
+        transport = Mock()
+        transport.send.side_effect = EOFError()
+        self.demo.session_factory = Mock(return_value=transport)
+        self.start(); self.execute()
+        self.demo.session_factory.assert_called_once()
+        self.assertEqual(transport.send.call_count,1)
+        transport.close.assert_called_once()
+        self.assertFalse(self.demo.armed)
+
+    def test_failed_session_handshake_never_dispatches_or_leaves_armed(self):
+        self.demo.session_factory = Mock(side_effect=TimeoutError())
+        self.start(); self.execute()
+        self.sender.assert_not_called()
+        self.assertFalse(self.demo.armed)
+        self.assertIn('session failed',self.demo.performance['stopReason'])

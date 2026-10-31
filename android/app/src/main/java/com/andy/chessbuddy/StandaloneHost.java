@@ -132,6 +132,65 @@ public final class StandaloneHost {
         } finally { channel.disconnect(); }
     }
 
+    /** One explicitly opened, pinned session; never reconnects or retries a cue. */
+    public static final class SshStream {
+        private final Session session;
+        private final ChannelExec channel;
+        private final InputStream input;
+        private final OutputStream output;
+        private final ByteArrayOutputStream partial = new ByteArrayOutputStream();
+        private boolean closed;
+        private SshStream(String target, String command) throws Exception {
+            session = session(target, null);
+            ChannelExec opening = null;
+            try {
+                opening = (ChannelExec) session.openChannel("exec");
+                opening.setCommand(command);
+                input = opening.getInputStream();
+                output = opening.getOutputStream();
+                opening.setErrStream(new OutputStream() { public void write(int ignored) {} });
+                opening.connect(5000);
+                channel = opening;
+            } catch (Exception error) {
+                if (opening != null) opening.disconnect();
+                session.disconnect();
+                throw error;
+            }
+        }
+        public void writeLine(String line) throws Exception {
+            if (closed || line.length() > 4096 || line.indexOf('\n') >= 0) throw new IOException("Invalid or closed cue stream");
+            output.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+            output.flush();
+        }
+        public String readLine(int timeout) throws Exception {
+            long deadline = System.nanoTime() + timeout * 1000000L;
+            do {
+                while (input.available() > 0) {
+                    int value = input.read();
+                    if (value < 0) throw new EOFException("Robot session closed");
+                    if (value == '\n') {
+                        String line = partial.toString("UTF-8"); partial.reset(); return line;
+                    }
+                    partial.write(value);
+                    if (partial.size() > 65536) throw new IOException("Robot session frame too large");
+                }
+                if (closed || channel.isClosed() || !session.isConnected()) throw new EOFException("Robot session closed; no replay");
+                Thread.sleep(10);
+            } while (System.nanoTime() < deadline);
+            return "";
+        }
+        public void close() {
+            if (!closed) {
+                closed = true;
+                try { output.close(); } catch (IOException ignored) {}
+                channel.disconnect(); session.disconnect();
+            }
+        }
+    }
+    public static SshStream openSshStream(String target, String command) throws Exception {
+        return new SshStream(target, command);
+    }
+
     public static String runSsh(String target, String command, int timeout) throws Exception {
         Session session = session(target, null);
         try { return execute(session, command, Math.min(125000, Math.max(1000, timeout))); } finally { session.disconnect(); }
