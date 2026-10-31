@@ -1,0 +1,2 @@
+# Preserve the generated Windows Gradle wrapper's native CRLF line endings.
+android/gradlew.bat text eol=crlf whitespace=cr-at-eol

@@ -26,6 +26,8 @@ sign-in/game streaming needs Internet access.
 The Mac address is not the dog's address. **Mac connection** at the bottom of the
 tablet app lets you re-pair after changing networks. Stop robot reactions before
 switching servers or forgetting a connection. Pairing does not itself arm a robot.
+Player coaching history is available in the app; the developer Audit Studio is
+opened on the Mac, so its browser session does not need the tablet pairing key.
 
 HTTP pairing is intended for a trusted private LAN and does not encrypt traffic.
 The client also supports HTTPS backends with system-trusted certificates. The
