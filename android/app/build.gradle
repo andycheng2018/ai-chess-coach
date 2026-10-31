@@ -35,6 +35,8 @@ tasks.register('copyChessPython', Sync) {
     into layout.buildDirectory.dir('generated/chessPython')
     from('../../server') { into 'server'; include '**/*.py', '**/*.json', '**/*.tsv', '**/*.txt' }
     from('../../audit-dashboard') { into 'audit-dashboard'; include 'index.html' }
+    from('../../src') { into 'src'; include 'captureExercises.json' }
+    from('../../vbot-demo') { into 'vbot-demo'; include 'index.html' }
 }
 
 chaquopy {
