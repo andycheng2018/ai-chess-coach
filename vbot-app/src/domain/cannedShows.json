@@ -1,0 +1,197 @@
+[
+  {
+    "schemaVersion": 1,
+    "id": "canned-mood-swing",
+    "title": "Mood Swing",
+    "notes": "The six expressions confirmed on the dog on Nov 1. Screen only, with no head or body movement.",
+    "origin": "canned",
+    "revision": 1,
+    "repeat": 1,
+    "createdAt": 1793491200000,
+    "updatedAt": 1793491200000,
+    "cues": [
+      {
+        "id": "ff-01",
+        "type": "face",
+        "assetId": 86,
+        "durationMs": 4500,
+        "caption": "A quiet think"
+      },
+      {
+        "id": "ff-02",
+        "type": "face",
+        "assetId": 76,
+        "durationMs": 4500,
+        "caption": "Getting nervous"
+      },
+      {
+        "id": "ff-03",
+        "type": "face",
+        "assetId": 79,
+        "durationMs": 4500,
+        "caption": "Oh!"
+      },
+      {
+        "id": "ff-04",
+        "type": "face",
+        "assetId": 71,
+        "durationMs": 4500,
+        "caption": "Proud of that"
+      },
+      {
+        "id": "ff-05",
+        "type": "face",
+        "assetId": 70,
+        "durationMs": 4500,
+        "caption": "Excited now"
+      },
+      {
+        "id": "ff-06",
+        "type": "face",
+        "assetId": 81,
+        "durationMs": 4500,
+        "caption": "Cheer!"
+      }
+    ]
+  },
+  {
+    "schemaVersion": 1,
+    "id": "canned-midnight-mischief",
+    "title": "Midnight Mischief",
+    "notes": "Curious entrance, a happy bounce, playful gestures, then Rock You. Physical motion: needs a measured rehearsal on this dog before it can run.",
+    "origin": "canned",
+    "revision": 1,
+    "repeat": 1,
+    "createdAt": 1793491200000,
+    "updatedAt": 1793491200000,
+    "cues": [
+      {
+        "id": "mm-01",
+        "type": "body",
+        "preset": "actions/WAVE.json",
+        "caption": "Hello, Halloween crowd."
+      },
+      {
+        "id": "mm-02",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-03",
+        "type": "head",
+        "preset": "atom/look_left.json",
+        "caption": "Did something move over there?"
+      },
+      {
+        "id": "mm-04",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-05",
+        "type": "head",
+        "preset": "atom/look_right.json",
+        "caption": "And over here?"
+      },
+      {
+        "id": "mm-06",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-07",
+        "type": "head",
+        "preset": "atom/look_up.json",
+        "caption": "I am definitely a very brave dog."
+      },
+      {
+        "id": "mm-08",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-09",
+        "type": "body",
+        "preset": "actions/HAPPY_LITTLE_JUMP.json",
+        "caption": "A little burst of Halloween excitement."
+      },
+      {
+        "id": "mm-10",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-11",
+        "type": "head",
+        "preset": "atom/look_forward.json",
+        "caption": "Okay. Let’s play."
+      },
+      {
+        "id": "mm-12",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-13",
+        "type": "body",
+        "preset": "actions/SAYYES.json",
+        "caption": "Yes. We are going to be friends."
+      },
+      {
+        "id": "mm-14",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-15",
+        "type": "body",
+        "preset": "actions/HAPPY_LITTLE_JUMP.json",
+        "caption": "A little happy bounce."
+      },
+      {
+        "id": "mm-16",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-17",
+        "type": "body",
+        "preset": "actions/HIGH_FIVE_R.json",
+        "caption": "High-five, from a comfortable distance."
+      },
+      {
+        "id": "mm-18",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-19",
+        "type": "body",
+        "preset": "actions/ROCKYOU.json",
+        "caption": "Time for the dance floor."
+      },
+      {
+        "id": "mm-20",
+        "type": "wait",
+        "durationMs": 2000
+      },
+      {
+        "id": "mm-21",
+        "type": "body",
+        "preset": "actions/WAVE.json",
+        "caption": "Thank you. You have been a wonderful crowd."
+      },
+      {
+        "id": "mm-22",
+        "type": "wait",
+        "durationMs": 150
+      },
+      {
+        "id": "mm-23",
+        "type": "head",
+        "preset": "atom/look_forward.json",
+        "caption": "And… scene."
+      }
+    ]
+  }
+]

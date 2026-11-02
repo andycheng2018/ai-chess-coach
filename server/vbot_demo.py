@@ -14,12 +14,12 @@ import time
 import uuid
 
 from vbot_networks import NetworkBook, normalize_target
+from vbot_ssh import REMOTE_ROOT, known_host_fingerprints, ssh_argv
 from capture_practice import PRACTICE_ID, exercise as capture_exercise, assess_capture
 from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES, MAX_SMALL_DURATION_MS, JUMP_PRESETS
 from vbot_performance import performance_plan
 
 PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET)
-REMOTE_ROOT = "/userdata/vbot/chess-demo"
 SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"
 PROFILE_PATH = Path(os.environ.get('CHESS_DATA_HOME', Path(__file__).resolve().parents[1])) / "vbot-demo" / "device-verification.local.json"
 
@@ -57,21 +57,6 @@ def load_verification(path=PROFILE_PATH) -> dict | None:
         return None
 
 
-def known_host_fingerprints(target: str) -> set[str]:
-    if os.environ.get('CHESS_ANDROID') == '1':
-        from android_backend import trusted_fingerprints
-        return trusted_fingerprints(target)
-    host = target.removeprefix("vbot@")
-    found = subprocess.run(["ssh-keygen", "-F", host], capture_output=True, text=True, timeout=3, check=False)
-    keys = "\n".join(line for line in found.stdout.splitlines() if line and not line.startswith("#"))
-    if found.returncode != 0 or not keys:
-        return set()
-    result = subprocess.run(["ssh-keygen", "-lf", "-"], input=keys + "\n", capture_output=True,
-                            text=True, timeout=3, check=False)
-    return {line.split()[1] for line in result.stdout.splitlines()
-            if len(line.split()) > 1 and line.split()[1].startswith("SHA256:")}
-
-
 def ssh_command(target: str, preset: str, request_id: str, *, host_key_alias=None) -> list[str]:
     if not re.fullmatch(r"(?:vbot@)?[A-Za-z0-9][A-Za-z0-9_.-]{0,252}", target):
         raise ValueError("Use an SSH alias or vbot@hostname/IP, without spaces or options.")
@@ -83,11 +68,7 @@ def ssh_command(target: str, preset: str, request_id: str, *, host_key_alias=Non
         REMOTE_ROOT + "/.venv/bin/python", "-I", REMOTE_ROOT + "/robot_action.py",
         "--execute", "--confirm-motion", "--request-id", request_id, "--preset", preset,
     ])
-    return ["ssh", "-T", "-l", "vbot", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-            "-o", "ConnectTimeout=5", "-o", "ConnectionAttempts=1",
-            "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
-            "-o", "ControlPath=none", "-o", "ForwardAgent=no",
-            *(["-o", "HostKeyAlias="+host_key_alias] if host_key_alias else []), target, remote]
+    return ssh_argv(target, remote, host_key_alias=host_key_alias)
 
 
 def send_dance(target: str, preset: str, request_id: str, *, host_key_alias=None) -> dict:

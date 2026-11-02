@@ -1,0 +1,25 @@
+{
+  "_comment": "Both the app's parseScore and the controller's validate_score must agree on these.",
+  "accepted": [
+    { "schemaVersion": 1, "id": "ok-face", "title": "Faces", "notes": "", "origin": "custom", "revision": 1, "repeat": 2, "createdAt": 1, "updatedAt": 2,
+      "cues": [ { "id": "a", "type": "face", "assetId": 86, "durationMs": 4500, "caption": "Hmm" }, { "id": "b", "type": "wait", "durationMs": 100 } ] },
+    { "schemaVersion": 1, "id": "ok-bounds", "title": "Bounds", "notes": "", "origin": "canned", "revision": 3, "repeat": 1, "createdAt": 1, "updatedAt": 2,
+      "cues": [ { "id": "a", "type": "face", "assetId": 0, "durationMs": 500 }, { "id": "b", "type": "face", "assetId": 70, "durationMs": 30000 }, { "id": "c", "type": "wait", "durationMs": 60000 } ] }
+  ],
+  "rejected": [
+    { "why": "future schema", "score": { "schemaVersion": 2, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [] } },
+    { "why": "unknown top-level field", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [], "run": true } },
+    { "why": "empty title", "score": { "schemaVersion": 1, "id": "x", "title": "  ", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [] } },
+    { "why": "repeat too high", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 6, "createdAt": 1, "updatedAt": 1, "cues": [] } },
+    { "why": "repeat zero", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 0, "createdAt": 1, "updatedAt": 1, "cues": [] } },
+    { "why": "boolean duration", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "wait", "durationMs": true } ] } },
+    { "why": "face too long", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "face", "assetId": 86, "durationMs": 30001 } ] } },
+    { "why": "wait too short", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "wait", "durationMs": 99 } ] } },
+    { "why": "restricted charging face", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "face", "assetId": 66, "durationMs": 4500 } ] } },
+    { "why": "asset out of range", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "face", "assetId": 256, "durationMs": 4500 } ] } },
+    { "why": "raw SDK payload field", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "face", "assetId": 86, "durationMs": 4500, "dag": {} } ] } },
+    { "why": "scripted cue type", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "python", "code": "import os" } ] } },
+    { "why": "duplicate cue IDs", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 1, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "wait", "durationMs": 100 }, { "id": "a", "type": "wait", "durationMs": 100 } ] } },
+    { "why": "over total duration", "score": { "schemaVersion": 1, "id": "x", "title": "T", "notes": "", "origin": "custom", "revision": 1, "repeat": 5, "createdAt": 1, "updatedAt": 1, "cues": [ { "id": "a", "type": "wait", "durationMs": 60000 }, { "id": "b", "type": "wait", "durationMs": 60000 }, { "id": "c", "type": "wait", "durationMs": 60000 }, { "id": "d", "type": "wait", "durationMs": 60000 } ] } }
+  ]
+}

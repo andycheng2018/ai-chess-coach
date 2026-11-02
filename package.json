@@ -8,7 +8,11 @@
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "node --test tests/*.test.mjs && .venv/bin/python -m unittest discover -s tests",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "vbot:dev": "vite --config vbot-app/vite.config.ts",
+    "vbot:typecheck": "tsc --noEmit -p vbot-app/tsconfig.json",
+    "vbot:build": "npm run vbot:typecheck && vite build --config vbot-app/vite.config.ts",
+    "vbot:controller": ".venv/bin/python server/vbot_app_server.py"
   },
   "dependencies": {
     "@capacitor/android": "8.5.0",
