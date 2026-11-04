@@ -8,7 +8,7 @@ stage view. It has no chess, Stockfish or Lichess dependency.
 | Piece | State |
 | --- | --- |
 | App with simulated dog (all five screens, saved shows, fault rehearsal) | Works in a browser |
-| Live face control: app → local controller → `robot_face.py` | Tested against stubs and the real SDK schema. **Not yet run on the dog.** The helper isn't deployed. |
+| Live face control: app → local controller → `robot_face.py` | Mood Swing ran on the dog on 2026-11-03, from a Mac, and the operator saw the faces on its screen. Only those six faces have been played. Stop, lost connections and recovery are only tested against stubs. |
 | Head, body and navigation control | Deliberately absent from the live path |
 | Speech | Placeholder. No verified backend. |
 | Cloud | Placeholder. Needs the backend API, auth and pairing contract. |

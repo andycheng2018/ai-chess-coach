@@ -148,6 +148,17 @@ class HealthWatch:
         with self.lock:
             self.battery_at, self.battery_ok = self.clock(), alarm == 0
 
+    def wait_for_first_state(self, timeout, *, pause=time.sleep):
+        """True once both topics have reported. Each face still checks their freshness and content."""
+        deadline = self.clock() + timeout
+        while True:
+            with self.lock:
+                if self.system_at is not None and self.battery_at is not None:
+                    return True
+            if self.clock() >= deadline:
+                return False
+            pause(0.05)
+
     def problem(self):
         now = self.clock()
         with self.lock:
@@ -330,6 +341,9 @@ def run_session(args, directory):
         resources.enter_context(node.create_subscriber("/bms_state", on_battery, options=options))
         names = supported_faces(node, sdk)
         supported = asset_ids(names)
+        # These topics publish about once a second. Ready means a first face can be judged.
+        if not health.wait_for_first_state(HEALTH_MAX_AGE_SECONDS):
+            return refuse("backend_unavailable", "The dog isn't reporting its system and battery state yet. Try connecting again.")
         core = FaceCore(ledger=ledger, display=Display(node, sdk, play_schema, PlayEmotionResponse), health=health,
                         session_id=args.session_id, lease=args.lease, supported=supported)
         emit(event="session_ready", requestId=args.session_id, protocol=PROTOCOL, faceOnly=True,

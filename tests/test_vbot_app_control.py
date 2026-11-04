@@ -709,6 +709,31 @@ class FaceHelperTests(unittest.TestCase):
         clock[0] = face.HEALTH_MAX_AGE_SECONDS + 1
         self.assertIn("aren't arriving", watch.problem())
 
+    def test_ready_waits_for_first_state_and_refuses_without_it(self):
+        clock = [0.0]
+
+        def advance(seconds):
+            clock[0] += seconds
+        watch = face.HealthWatch(clock=lambda: clock[0])
+        self.assertFalse(watch.wait_for_first_state(1, pause=advance))
+        self.assertGreaterEqual(clock[0], 1)
+        watch.on_system(0)
+        self.assertFalse(watch.wait_for_first_state(1, pause=advance))
+        calls = []
+
+        def arrives(seconds):
+            calls.append(seconds)
+            watch.on_battery(0)
+        self.assertTrue(watch.wait_for_first_state(1, pause=arrives))
+        self.assertEqual(len(calls), 1)
+        # Reporting a warning still counts as reporting. The per-face check handles it.
+        watch.on_system(2)
+        self.assertTrue(watch.wait_for_first_state(1, pause=advance))
+        self.assertIn('warning', watch.problem())
+        source = (ROOT / 'vbot-demo' / 'robot_face.py').read_text()
+        body = source[source.index('def run_session'):]
+        self.assertLess(body.index('health.wait_for_first_state'), body.index('event="session_ready"'))
+
     def test_session_loop_ends_on_close_eof_and_unknown(self):
         def run(text, result=None):
             core = self.make_core()
