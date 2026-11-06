@@ -61,7 +61,7 @@ is excluded when an alternative is available. Moves arriving during an action or
 are skipped permanently, never queued or caught up later.
 
 Each exact target/preset needs an operator-confirmed successful rehearsal and a measured
-terminal duration greater than zero and at most 10 seconds before entering live normal
+terminal duration greater than zero and at most 15 seconds before entering live normal
 reactions. A documented name alone establishes neither duration nor installed availability.
 Unrehearsed or longer presets stay out of the live pool; the companion's **Good-move gestures**
 list shows readiness. Fast/low/unknown clocks select only the head presets. The helper

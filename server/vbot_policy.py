@@ -14,7 +14,7 @@ JUMP_PRESETS = ('actions/HAPPY_LITTLE_JUMP.json', 'actions/HAPPY_JUMP.json', 'ac
 SMALL_PRESETS = ("actions/WAVE.json", *HEAD_PRESETS, "actions/SHAKEHAND.json",
                  "actions/SHAKEHAND_L.json", "actions/HIGH_FIVE_R.json",
                  "actions/HIGH_FIVE_L.json", "actions/SAYYES.json", *JUMP_PRESETS)
-MAX_SMALL_DURATION_MS = 10000
+MAX_SMALL_DURATION_MS = 15000
 SAD_PRESET = "actions/GRIEVANCE.json"
 RULES = {"materialGainCp": 200, "singleSwingCp": 200, "trendGainCp": 150,
          "baselineMoves": 5, "recentMoves": 3, "minimumDepth": 12,

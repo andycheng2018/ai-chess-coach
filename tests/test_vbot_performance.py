@@ -144,7 +144,7 @@ class PerformanceTests(unittest.TestCase):
         self.assertIn('15-minute', self.demo.performance['stopReason'])
 
     def test_long_or_unmeasured_short_gestures_cannot_enter_the_live_score(self):
-        for duration in (None, True, 0, 10001):
+        for duration in (None, True, 0, 15001):
             plan = performance_plan({}, lambda preset: {'durationMs': duration if preset == 'actions/WAVE.json' else 1000})
             self.assertFalse(plan['allRehearsed'])
             self.assertIn('actions/WAVE.json', plan['missingPresets'])

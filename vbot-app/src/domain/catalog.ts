@@ -63,12 +63,12 @@ const MOTION_PRESETS: readonly (readonly [string, CapabilityKind, string, string
   ['actions/SHAKEHAND_L.json', 'body', 'Left handshake', 'Gestures', 8864],
   ['actions/HIGH_FIVE_R.json', 'body', 'Right high-five', 'Gestures', 8529],
   ['actions/HIGH_FIVE_L.json', 'body', 'Left high-five', 'Gestures', 8102],
-  ['actions/GRIEVANCE.json', 'body', 'Sad reaction', 'Gestures', 11070],
+  ['actions/GRIEVANCE.json', 'body', 'Sad reaction', 'Reactions', 11070],
   ['actions/HAPPY_LITTLE_JUMP.json', 'body', 'Small happy jump', 'Jumps', 5765],
   ['actions/HAPPY_JUMP.json', 'body', 'Happy jump', 'Jumps', 7326],
   ['actions/JUMP_IN_PLACE.json', 'body', 'Jump in place', 'Jumps', 7324],
   ['actions/ROCKYOU.json', 'body', 'Rock You dance', 'Dances', 40451],
-  ['actions/CHEER_R.json', 'body', 'Cheer', 'Dances', null],
+  ['actions/CHEER_R.json', 'body', 'Cheer', 'Reactions', null],
 ];
 
 export const MOTION_PRESET_NAMES: ReadonlySet<string> = new Set(MOTION_PRESETS.map(row => row[0]));
