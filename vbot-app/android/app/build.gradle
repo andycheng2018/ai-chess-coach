@@ -1,0 +1,73 @@
+apply plugin: 'com.android.application'
+apply plugin: 'com.chaquo.python'
+
+def buildNumber = (System.getenv('ANDROID_VERSION_CODE') ?: '1').toInteger()
+
+android {
+    namespace = "com.andy.vbotstudio"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.andy.vbotstudio"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode buildNumber
+        versionName "0.1.${buildNumber}"
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+// The same controller the computer runs. This list is the app's whole Python surface.
+tasks.register('copyStudioPython', Sync) {
+    into layout.buildDirectory.dir('generated/studioPython')
+    from('../../../server') { include 'vbot_app_control.py', 'vbot_networks.py', 'vbot_ssh.py' }
+}
+
+chaquopy {
+    defaultConfig { version '3.13' }
+    sourceSets {
+        main { srcDirs = ['src/main/python', "$buildDir/generated/studioPython"] }
+    }
+}
+tasks.configureEach { if (name != 'copyStudioPython' && name.toLowerCase().contains('python')) dependsOn 'copyStudioPython' }
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation 'com.github.mwiede:jsch:0.2.24'
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

@@ -6,6 +6,8 @@ import { admitScore, cueFromEntry, makeScore, parseScore, type Score } from './d
 import { CloudTransport } from './transport/cloud';
 import { FakeTransport, type FakeFault } from './transport/fake';
 import { LocalFaceTransport } from './transport/localFace';
+import { isNativeApp, studioBackend } from './transport/native';
+import { NATIVE_CONTROLLER_DOWN, nativeFetcher } from './transport/nativeFetch';
 import { emptySnapshot, type DeviceTransport, type TransportKind } from './transport/types';
 
 const SETTINGS_KEY = 'vbot-studio.settings.v1';
@@ -28,7 +30,11 @@ function readSettings(store: KeyValueStore): { kind: TransportKind; target: stri
 }
 
 function createTransport(kind: TransportKind, store: KeyValueStore): DeviceTransport {
-  if (kind === 'local-face') return new LocalFaceTransport();
+  if (kind === 'local-face') {
+    return isNativeApp
+      ? new LocalFaceTransport({ fetcher: nativeFetcher(request => studioBackend.call(request)), downMessage: NATIVE_CONTROLLER_DOWN })
+      : new LocalFaceTransport();
+  }
   if (kind === 'cloud') return new CloudTransport();
   return new FakeTransport({ store });
 }

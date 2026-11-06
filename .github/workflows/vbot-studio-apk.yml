@@ -1,0 +1,77 @@
+name: VBOT Studio Android APK
+# Separate from Chess Buddy's pipeline. It uses no secrets, publishes nothing and
+# only uploads a test build. The debug signature changes between runs.
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/vbot-app-scaffold]
+    paths:
+      - 'vbot-app/**'
+      - 'server/vbot_app_control.py'
+      - 'server/vbot_networks.py'
+      - 'server/vbot_ssh.py'
+      - 'tests/vbot_app_*'
+      - 'tests/vbotAppLoader.mjs'
+      - 'tests/test_vbot_app_*'
+      - 'tests/fixtures/vbot_app_scores.json'
+      - '.github/workflows/vbot-studio-apk.yml'
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: npm ci
+      - name: Run the app's tests
+        run: |
+          python -m pip install -r requirements.txt
+          node --test tests/vbot_app_*.test.mjs
+          python -m unittest tests/test_vbot_app_control.py tests/test_vbot_app_android.py
+      - run: npm run vbot:build
+      - name: Copy the built app into the Android project
+        working-directory: vbot-app
+        run: npx cap sync android
+      - name: Build the test APK
+        working-directory: vbot-app/android
+        run: ./gradlew assembleDebug --no-daemon
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+      - name: Package
+        run: |
+          mkdir -p apk
+          cp vbot-app/android/app/build/outputs/apk/debug/app-debug.apk apk/VBOT-Studio-debug.apk
+          sha256sum apk/VBOT-Studio-debug.apk > apk/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VBOT-Studio-debug
+          path: apk/
+          retention-days: 30
+      - name: Allow this runner to use its emulator accelerator
+        run: sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+      - name: Check the embedded controller on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: cd vbot-app/android && ./gradlew connectedDebugAndroidTest --no-daemon
+      - name: Save the emulator results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VBOT-Studio-emulator-results
+          path: vbot-app/android/app/build/outputs/androidTest-results/

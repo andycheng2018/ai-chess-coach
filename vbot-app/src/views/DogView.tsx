@@ -1,14 +1,18 @@
 import { KIND_LABEL, type CapabilityKind } from '../domain/catalog';
 import { CLOUD_MISSING } from '../transport/cloud';
 import { FAKE_FAULTS, type FakeFault } from '../transport/fake';
+import { isNativeApp } from '../transport/native';
 import type { TransportKind } from '../transport/types';
 import type { Studio } from '../useStudio';
 import { FacePreview } from '../components/FacePreview';
+import { PairingCard } from '../components/PairingCard';
 import { ViewHeader } from '../components/bits';
 
 const SOURCES: readonly { id: TransportKind; title: string; body: string }[] = [
   { id: 'fake', title: 'Simulated dog', body: 'Rehearse the whole app here. Nothing reaches a robot.' },
-  { id: 'local-face', title: 'Real dog, through this computer', body: 'Face control only, over the local controller and pinned SSH.' },
+  isNativeApp
+    ? { id: 'local-face', title: 'Real dog, from this device', body: 'Face control only, over pinned SSH on the same Wi-Fi. No computer needed.' }
+    : { id: 'local-face', title: 'Real dog, through this computer', body: 'Face control only, over the local controller and pinned SSH.' },
   { id: 'cloud', title: 'Cloud', body: 'Not built yet. It needs the backend contract.' },
 ];
 
@@ -62,6 +66,8 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
           )}
           {settings.kind === 'cloud' && <p className="notice">{CLOUD_MISSING}</p>}
         </section>
+
+        {isNativeApp && settings.kind === 'local-face' && <PairingCard target={settings.target} locked={connected || running || studio.connecting} />}
 
         <section className="card">
           <h2>What it can do now</h2>

@@ -19,12 +19,14 @@ export class LocalFaceTransport implements DeviceTransport {
   private readonly listeners = new Set<(snapshot: DeviceSnapshot) => void>();
   private readonly fetcher: FetchLike;
   private readonly base: string;
+  private readonly downMessage: string;
   private timer: ReturnType<typeof setInterval> | null = null;
   private last: DeviceSnapshot = emptySnapshot();
 
-  constructor(options: { fetcher?: FetchLike; base?: string } = {}) {
+  constructor(options: { fetcher?: FetchLike; base?: string; downMessage?: string } = {}) {
     this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
     this.base = options.base ?? '/api/app';
+    this.downMessage = options.downMessage ?? CONTROLLER_DOWN;
   }
 
   private async post(path: string, body: object): Promise<Response> {
@@ -41,7 +43,7 @@ export class LocalFaceTransport implements DeviceTransport {
   }
 
   private unreachable(): DeviceSnapshot {
-    const detail = CONTROLLER_DOWN;
+    const detail = this.downMessage;
     return this.accept({ ...this.last, connection: 'unavailable', detail, capabilities: noCapabilities(detail) });
   }
 

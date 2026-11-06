@@ -90,6 +90,9 @@ button:disabled { cursor: not-allowed; }
 .empty { color: var(--muted); padding: 22px; text-align: center; }
 .field { display: grid; gap: 5px; font-size: 14px; font-weight: 600; }
 .field small { font-weight: 400; }
+.pair-fields { display: grid; gap: 12px; margin-top: 12px; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 20px; height: 20px; flex: none; }
 :where(input:not([type=radio]):not([type=checkbox]), select) { min-height: 46px; width: 100%; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: #15121d; }
 
 /* Face */

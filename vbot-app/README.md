@@ -8,11 +8,11 @@ stage view. It has no chess, Stockfish or Lichess dependency.
 | Piece | State |
 | --- | --- |
 | App with simulated dog (all five screens, saved shows, fault rehearsal) | Works in a browser |
-| Live face control: app → local controller → `robot_face.py` | Mood Swing ran on the dog on 2026-11-03, from a Mac, and the operator saw the faces on its screen. Only those six faces have been played. Stop, lost connections and recovery are only tested against stubs. |
+| Live face control: app → local controller → `robot_face.py` | Ran on the dog on 2026-11-03, from a Mac: Mood Swing played and the operator saw the faces. **Stop future cues** also worked: the next cue never started and the dog confirmed the screen release. Only those six faces have been played. Lost connections and recovery are only tested against stubs. |
 | Head, body and navigation control | Deliberately absent from the live path |
 | Speech | Placeholder. No verified backend. |
 | Cloud | Placeholder. Needs the backend API, auth and pairing contract. |
-| Android app | App ID reserved (`com.andy.vbotstudio`). **Native project not generated.** |
+| Android app | Project in `vbot-app/android` (`com.andy.vbotstudio`). The controller and pairing are tested against fakes. **Not yet compiled or run on a device.** Test builds use a debug signature. |
 | Player tracking | Types and a staged screen. No real perception feed, and no 3D. |
 
 ## Run it
@@ -42,8 +42,12 @@ Screens
       ├ FakeTransport        simulated dog, no network
       ├ LocalFaceTransport   server/vbot_app_server.py → vbot_app_control.py
       │                        → SSH with pinned host key → vbot-demo/robot_face.py → display service
+      │   On Android, the same adapter and controller run inside the APK: StudioPlugin
+      │   → studio_backend.py → vbot_app_control.py → StudioHost's pinned SSH → robot_face.py
       └ CloudTransport       explains what's missing
 ```
+
+On Android there's no local network listener, so other apps on the device have nothing to connect to.
 
 - **Preview isn't on the transport.** It renders the pure `buildTimeline`, so a preview can't reach a device.
 - **Each face cue is limited to the display.** `robot_face.py` contains only display routes and read-only
@@ -87,13 +91,43 @@ computer. Host-key checks are never bypassed.
 | Connect says the helper may be missing | Check power, Wi-Fi and SSH trust, then that `robot_face.py` is deployed. |
 | Controller not running | Run `npm run vbot:controller`. Saved shows are in the browser and aren't affected. |
 
-Live control currently needs a computer running the controller. **There's no recovery path without one**
-until the Android app exists. Saved shows live in that browser's storage, so export any you want to keep.
+Until the Android app has run on a device, live control needs a computer running the controller. Saved shows
+live in that browser or app's storage, so export any you want to keep.
+
+## Android app
+
+It installs next to Chess Buddy and can't replace it or touch its data. The APK carries the controller and face
+protocol, and doesn't carry the chess or motion code.
+
+**Building.** GitHub Actions builds it with `.github/workflows/vbot-studio-apk.yml`, which uses no secrets and
+publishes nothing. Pushing to `codex/vbot-app-scaffold` starts a build, which then runs on an emulator. Download
+`VBOT-Studio-debug` from the run. To build locally you need JDK 21, the Android SDK and Python 3.13:
+
+```sh
+npm run vbot:android:sync
+cd vbot-app/android && ./gradlew assembleDebug
+```
+
+**Updating.** Each CI build has a different debug signature, so installing a newer one means uninstalling the old
+one, which erases saved shows and the pairing. Export shows first. A permanent signing key would fix this.
+
+**Pairing, once per dog:**
+
+1. Put the device and the dog on the same Wi-Fi.
+2. On a computer that already trusts the dog, run `ssh-keygen -lF <dog address>`. It lists one fingerprint per key type.
+3. In the app, choose **Real dog, from this device**, then enter the address, a fingerprint and the dog's SSH password.
+4. If the app says the dog presented a different key type, compare that fingerprint to the list and use it if it matches.
+   If it isn't on the list, stop and inspect the dog.
+
+The password is used once and never saved. Pairing adds this app's public key to the dog's `authorized_keys`.
+`robot_face.py` must already be on the dog, because the app doesn't deploy it.
+
+**Limits.** Keep the app open during a show. There's no background service, so Android may pause a backgrounded
+app. If that drops the connection, the show stops and the dog's helper hands back the screen. If the connection
+stays up, the helper does that after 3 idle minutes.
 
 ## Adding later
 
-- **Android:** run `npx cap add android` from `vbot-app/`, then bring over the native SSH and pinned-key
-  approach from `android/app/src/main/java/com/andy/chessbuddy/StandaloneHost.java` behind `DeviceTransport`.
 - **Motion:** this needs its own authorization, per-dog rehearsal data and a verified stopping procedure. It
   should reuse `robot_action.py` through the same admission rules rather than add a second scheduler.
 - **Cloud:** implement `DeviceTransport` against the real contract. The dog connects outbound. Never put

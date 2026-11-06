@@ -20,7 +20,6 @@ import time
 import uuid
 
 from vbot_networks import normalize_target
-from vbot_session import ProcessStream
 from vbot_ssh import REMOTE_ROOT, known_host_fingerprints, ssh_argv
 
 ROOT = Path(os.environ.get('CHESS_DATA_HOME', Path(__file__).resolve().parents[1]))
@@ -33,6 +32,7 @@ MAX_TTL_MS, CUE_TTL_MS = 120000, 30000
 READY_TIMEOUT, ACK_TIMEOUT = 25, 8
 IDLE_CLOSE_SECONDS = 150
 COMMAND_MEMORY = 4096
+MAX_BODY = 256 * 1024
 
 LIMITS = dict(maxCues=64, maxExpanded=128, maxRepeat=5, maxTotalMs=15 * 60 * 1000,
               faceMin=500, faceMax=30000, waitMin=100, waitMax=60000, title=80, notes=500, caption=140, idLength=64)
@@ -57,6 +57,22 @@ class Rejected(Exception):
 
 class OutcomeUnknown(RuntimeError):
     """The dog may or may not have acted. Report it and never retry."""
+
+
+def route(controller, path, payload):
+    """The one command dispatch, shared by the HTTP surface and the Android plugin."""
+    try:
+        if path == 'connect':
+            return 200, controller.connect(payload)
+        if path == 'disconnect':
+            return 200, controller.disconnect()
+        if path == 'submit':
+            return 200, controller.submit(payload)
+        if path == 'cancel':
+            return 200, controller.cancel_future(payload)
+    except Rejected as error:
+        return 400, {'state': 'rejected', 'duplicate': False, 'code': error.code, 'reason': error.reason}
+    return 404, {'message': 'Unknown route.'}
 
 
 def is_int(value):
@@ -154,7 +170,11 @@ class FaceSession:
         remote = shlex.join([REMOTE_ROOT + '/.venv/bin/python', '-I', REMOTE_ROOT + '/robot_face.py',
                              '--serve', '--session-id', session_id, '--lease', str(lease)])
         command = ssh_argv(target, remote, host_key_alias=anchor)
-        self.stream = (stream_factory or ProcessStream)(command)
+        if stream_factory is None:
+            # A computer's ssh process. The APK passes its own stream and doesn't carry this module.
+            from vbot_session import ProcessStream
+            stream_factory = ProcessStream
+        self.stream = stream_factory(command)
         try:
             ready = self._receive('requestId', session_id, {'session_ready', 'session_refused'}, READY_TIMEOUT)
             if ready['event'] == 'session_refused':

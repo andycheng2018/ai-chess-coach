@@ -10,11 +10,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from vbot_app_control import AppController, Rejected  # noqa: E402
+from vbot_app_control import AppController, MAX_BODY, route  # noqa: E402
 
 PORT = int(os.environ.get('VBOT_APP_PORT', '8791'))
 DIST = Path(__file__).resolve().parents[1] / 'vbot-app' / 'dist'
-MAX_BODY = 256 * 1024
 DEV_ORIGINS = {'http://localhost:5180', 'http://127.0.0.1:5180'}
 
 
@@ -75,19 +74,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError
         except ValueError:
             return self._json(400, {'message': 'Invalid JSON.'})
-        controller = self.controller
-        try:
-            if self.path == '/api/app/connect':
-                return self._json(200, controller.connect(payload))
-            if self.path == '/api/app/disconnect':
-                return self._json(200, controller.disconnect())
-            if self.path == '/api/app/submit':
-                return self._json(200, controller.submit(payload))
-            if self.path == '/api/app/cancel':
-                return self._json(200, controller.cancel_future(payload))
-        except Rejected as error:
-            return self._json(400, {'state': 'rejected', 'duplicate': False, 'code': error.code, 'reason': error.reason})
-        return self._json(404, {'message': 'Unknown route.'})
+        path = self.path.removeprefix('/api/app/') if self.path.startswith('/api/app/') else ''
+        return self._json(*route(self.controller, path, payload))
 
 
 def make_server(controller, port=PORT):

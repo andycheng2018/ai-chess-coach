@@ -1,0 +1,5 @@
+{
+  "name": "vbot-studio",
+  "private": true,
+  "description": "Marks this folder as the Capacitor app root. Dependencies live in the repository's root package.json."
+}

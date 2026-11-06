@@ -12,7 +12,8 @@
     "vbot:dev": "vite --config vbot-app/vite.config.ts",
     "vbot:typecheck": "tsc --noEmit -p vbot-app/tsconfig.json",
     "vbot:build": "npm run vbot:typecheck && vite build --config vbot-app/vite.config.ts",
-    "vbot:controller": ".venv/bin/python server/vbot_app_server.py"
+    "vbot:controller": ".venv/bin/python server/vbot_app_server.py",
+    "vbot:android:sync": "npm run vbot:build && cd vbot-app && cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "8.5.0",
