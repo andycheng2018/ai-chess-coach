@@ -160,6 +160,11 @@ export type Capabilities = {
   supportedFaceIds: number[] | null;
   /** Presets with a measured rehearsal on this exact dog. */
   rehearsedPresets: string[];
+  /**
+   * Presets the operator enabled for this one connection after the onsite checks. This is
+   * permission to try them, not a rehearsal record, and it lapses with the connection.
+   */
+  armedPresets?: string[];
 };
 export type Blocker = { cueId: string; kind: CapabilityKind; reason: string };
 
@@ -179,8 +184,8 @@ export function admitScore(score: Pick<Score, 'cues'>, capabilities: Capabilitie
       if (capabilities.supportedFaceIds && !capabilities.supportedFaceIds.includes(cue.assetId)) {
         blockers.push({ cueId: cue.id, kind: 'face', reason: `This dog doesn't list face ${cue.assetId}.` });
       }
-    } else if (!capabilities.rehearsedPresets.includes(cue.preset)) {
-      blockers.push({ cueId: cue.id, kind: cue.type, reason: `${cueTitle(cue)} needs a measured rehearsal on this dog.` });
+    } else if (!capabilities.rehearsedPresets.includes(cue.preset) && !(capabilities.armedPresets ?? []).includes(cue.preset)) {
+      blockers.push({ cueId: cue.id, kind: cue.type, reason: `${cueTitle(cue)} needs a measured rehearsal on this dog, or motion enabled for this connection.` });
     }
   }
   return { ok: blockers.length === 0, blockers };

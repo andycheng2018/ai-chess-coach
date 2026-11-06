@@ -11,8 +11,8 @@ import { ViewHeader } from '../components/bits';
 const SOURCES: readonly { id: TransportKind; title: string; body: string }[] = [
   { id: 'fake', title: 'Simulated dog', body: 'Rehearse the whole app here. Nothing reaches a robot.' },
   isNativeApp
-    ? { id: 'local-face', title: 'Real dog, from this device', body: 'Face control only, over pinned SSH on the same Wi-Fi. No computer needed.' }
-    : { id: 'local-face', title: 'Real dog, through this computer', body: 'Face control only, over the local controller and pinned SSH.' },
+    ? { id: 'local-face', title: 'Real dog, from this device', body: 'Faces over pinned SSH on the same Wi-Fi, plus presets if you enable motion. No computer needed.' }
+    : { id: 'local-face', title: 'Real dog, through this computer', body: 'Faces over the local controller and pinned SSH, plus presets if you enable motion.' },
   { id: 'cloud', title: 'Cloud', body: 'Not built yet. It needs the backend contract.' },
 ];
 
@@ -41,7 +41,7 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
                   <button className="btn" disabled={running} onClick={() => void studio.disconnect()}>Disconnect</button>
                 </>
               : <button className="btn btn-primary" disabled={studio.connecting || needsTarget || settings.kind === 'cloud'} onClick={() => void studio.connect()}>
-                  {studio.connecting ? 'Connecting…' : snapshot.connection === 'lost' ? 'Reconnect and check status' : simulated ? 'Connect to simulated dog' : 'Connect'}
+                  {studio.connecting ? 'Connecting…' : snapshot.connection === 'lost' ? 'Reconnect and check status' : simulated ? 'Connect to simulated dog' : settings.kind === 'local-face' && studio.motionConfirm.onsite && studio.motionConfirm.standing && studio.motionConfirm.clear ? 'Connect with motion' : 'Connect'}
                 </button>}
           </div>
         </section>
@@ -66,6 +66,21 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
           )}
           {settings.kind === 'cloud' && <p className="notice">{CLOUD_MISSING}</p>}
         </section>
+
+        {settings.kind === 'local-face' && !connected && (
+          <section className="card">
+            <h2>Enable motion (optional)</h2>
+            <p className="fine">Head and body presets move a real robot. Tick each box only once it is true, then connect. This lasts for one connection of up to 15 minutes, and nothing about it is remembered.</p>
+            {(['onsite', 'standing', 'clear'] as const).map(key => (
+              <label key={key} className="check">
+                <input type="checkbox" checked={studio.motionConfirm[key]} disabled={running || studio.connecting}
+                  onChange={event => studio.setMotionConfirm({ ...studio.motionConfirm, [key]: event.target.checked })} />
+                <span>{{ onsite: 'I am with the dog and can stop it by hand.', standing: 'It is standing on level ground.', clear: 'The area around it is clear.' }[key]}</span>
+              </label>
+            ))}
+            <p className="fine">Presets never overlap a face: a face is released before each one starts. A preset in progress cannot be cancelled from here, so keep the dog’s handset Stop within reach.</p>
+          </section>
+        )}
 
         {isNativeApp && settings.kind === 'local-face' && <PairingCard target={settings.target} locked={connected || running || studio.connecting} />}
 

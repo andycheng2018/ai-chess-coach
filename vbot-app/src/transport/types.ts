@@ -8,7 +8,10 @@ import type { Capabilities, CapabilityState } from '../domain/score';
 
 export type TransportKind = 'fake' | 'local-face' | 'cloud';
 
-export type ConnectOptions = { target?: string };
+/** Every field must be true. The operator confirms these in person; they are never stored. */
+export type MotionConfirmation = { onsite: boolean; standing: boolean; clear: boolean };
+
+export type ConnectOptions = { target?: string; motion?: MotionConfirmation };
 
 export interface DeviceTransport {
   readonly kind: TransportKind;
@@ -30,14 +33,14 @@ const off = (reason: string): CapabilityState => ({ available: false, reason });
 
 export const SPEECH_MISSING = 'No speech backend has been verified on this dog.';
 export const NAVIGATION_MISSING = 'Navigation has no demonstrated live provider. The schema exists, but that does not prove it works.';
-export const MOTION_MISSING = 'This adapter is face-only. Motion needs its own authorization, a rehearsal on this dog and a verified stopping procedure.';
+export const MOTION_MISSING = 'Motion is off for this connection. Reconnect with motion enabled, after the onsite checks.';
 export const NOT_CONNECTED = 'Connect to a dog first.';
 
 export function noCapabilities(reason = NOT_CONNECTED): Capabilities {
   return {
     face: off(reason), head: off(reason), body: off(reason),
     speech: off(SPEECH_MISSING), navigation: off(NAVIGATION_MISSING),
-    supportedFaceIds: null, rehearsedPresets: [],
+    supportedFaceIds: null, rehearsedPresets: [], armedPresets: [],
   };
 }
 

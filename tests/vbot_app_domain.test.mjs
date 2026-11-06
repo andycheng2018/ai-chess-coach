@@ -267,3 +267,12 @@ test('frontend sources contain no credentials or a hardcoded dog address', () =>
     assert.doesNotMatch(source, /192\.168\.0\.170|172\.20\.10\.5|2c:f8:ec|BEGIN .*PRIVATE KEY|api[_-]?key\s*[:=]/i, path);
   }
 });
+
+test('admission: motion enabled for this connection admits an approved preset without claiming a rehearsal', () => {
+  const show = validScore({ cues: [{ id: 'b', type: 'body', preset: 'actions/WAVE.json' }] });
+  const on = { available: true, reason: null };
+  assert.equal(score.admitScore(show, caps({ body: on, armedPresets: ['actions/WAVE.json'] })).ok, true);
+  assert.equal(score.admitScore(show, caps({ body: on, armedPresets: ['actions/SAYYES.json'] })).ok, false);
+  assert.equal(score.admitScore(show, caps({ body: { available: false, reason: 'off' }, armedPresets: ['actions/WAVE.json'] })).ok, false);
+  assert.deepEqual(plain(caps({ body: on, armedPresets: [] }).rehearsedPresets), []);
+});

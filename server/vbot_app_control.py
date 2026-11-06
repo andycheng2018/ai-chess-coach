@@ -1,10 +1,13 @@
-"""Local controller for the independent VBOT app: face cues and waits only.
+"""Local controller for the independent VBOT app: face cues, waits and, when armed, presets.
 
-Motion is rejected here and has no route on the dog-side helper. Commands are
-single-use and journaled before they act. A restart turns any in-flight command
-into `unknown` and never resumes it. Nothing here imports chess, Lichess or the
-motion dispatcher. Exclusive ownership across products comes from the dog-side
-controller lock that robot_face.py and robot_action.py share.
+A connection is face-only unless the operator confirms the onsite checks when
+connecting. Only then does it run robot_studio.py, whose guarded motion path is
+robot_action.py's. Motion is serial with faces and time-limited to that one
+connection. Commands are single-use and journaled before they act. A restart turns
+any in-flight command into `unknown` and never resumes it. Nothing here imports
+chess, Lichess or the motion dispatcher. Exclusive ownership across products comes
+from the dog-side controller lock that robot_face.py, robot_studio.py and
+robot_action.py share.
 """
 from __future__ import annotations
 
@@ -30,21 +33,36 @@ TERMINAL = {'completed', 'rejected', 'cancelled', 'unknown'}
 COMMAND_ID = re.compile(r'[a-f0-9]{32}')
 MAX_TTL_MS, CUE_TTL_MS = 120000, 30000
 READY_TIMEOUT, ACK_TIMEOUT = 25, 8
+# A preset blocks until its terminal result and post-action checks, so it gets a long window.
+MOTION_REPLY_TIMEOUT = 150
+# The dog ends a session after 15 minutes, so motion enabled at connect lapses with it.
+MOTION_SESSION_MS = 15 * 60 * 1000
 IDLE_CLOSE_SECONDS = 150
 COMMAND_MEMORY = 4096
 MAX_BODY = 256 * 1024
 
 LIMITS = dict(maxCues=64, maxExpanded=128, maxRepeat=5, maxTotalMs=15 * 60 * 1000,
-              faceMin=500, faceMax=30000, waitMin=100, waitMax=60000, title=80, notes=500, caption=140, idLength=64)
+              faceMin=500, faceMax=30000, waitMin=100, waitMax=60000, motionBoundMs=60000, title=80, notes=500, caption=140, idLength=64)
 SCORE_KEYS = {'schemaVersion', 'id', 'title', 'notes', 'origin', 'revision', 'repeat', 'createdAt', 'updatedAt', 'cues'}
-CUE_KEYS = {'face': {'id', 'type', 'assetId', 'durationMs', 'caption'}, 'wait': {'id', 'type', 'durationMs', 'caption'}}
+CUE_KEYS = {'face': {'id', 'type', 'assetId', 'durationMs', 'caption'}, 'wait': {'id', 'type', 'durationMs', 'caption'},
+            'head': {'id', 'type', 'preset', 'caption'}, 'body': {'id', 'type', 'preset', 'caption'}}
+# Mirrors robot_action.PRESETS (a test keeps them equal). The controller never imports dog-side code.
+MOTION_PRESETS = ('actions/ROCKYOU.json', 'actions/CHEER_R.json', 'actions/WAVE.json', 'atom/look_left.json', 'atom/look_right.json',
+                  'atom/look_forward.json', 'atom/look_up.json', 'atom/look_down.json', 'actions/SHAKEHAND.json',
+                  'actions/SHAKEHAND_L.json', 'actions/HIGH_FIVE_R.json', 'actions/HIGH_FIVE_L.json', 'actions/SAYYES.json',
+                  'actions/GRIEVANCE.json', 'actions/HAPPY_LITTLE_JUMP.json', 'actions/HAPPY_JUMP.json', 'actions/JUMP_IN_PLACE.json')
+MOTION_CONFIRMATIONS = ('onsite', 'standing', 'clear')
+FACE_EVENTS = {'started', 'released', 'rejected', 'unknown', 'duplicate'}
+MOTION_EVENTS = {'completed', 'rejected', 'unknown', 'failed', 'duplicate'}
 ENVELOPE_KEYS = {'v', 'commandId', 'deviceId', 'sessionId', 'leaseGeneration', 'issuedAt', 'expiresAt', 'kind', 'score'}
 RESTRICTED_FACES = {66, 67, 80, 89, 90, 91, 92, 93, 95}
 SAFE_ID = re.compile(r'[A-Za-z0-9_-]+')
 
 SPEECH_MISSING = 'No speech backend has been verified on this dog.'
 NAVIGATION_MISSING = 'Navigation has no demonstrated live provider. The schema exists, but that does not prove it works.'
-MOTION_MISSING = 'This adapter is face-only. Motion needs its own authorization, a rehearsal on this dog and a verified stopping procedure.'
+MOTION_MISSING = 'Motion is off for this connection. Reconnect with motion enabled, after the onsite checks.'
+MOTION_EXPIRED = 'Motion enabled for this connection has lapsed. Reconnect after the onsite checks.'
+CONFIRM_MISSING = 'Motion needs every onsite confirmation: someone is with the dog, it is standing, and the area is clear.'
 NOT_CONNECTED = 'Connect to a dog first.'
 SESSION_FAILED = "Couldn't start the face session. Check the dog's power and Wi-Fi, its SSH trust, and that robot_face.py is deployed."
 
@@ -79,7 +97,7 @@ def is_int(value):
     return type(value) is int
 
 
-def validate_score(score):
+def validate_score(score, motion=False):
     """Trust-boundary copy of the app's score schema, kept in sync by shared fixtures."""
     def bad(reason):
         raise Rejected('invalid_score', reason)
@@ -106,7 +124,7 @@ def validate_score(score):
         if not isinstance(cue, dict):
             bad('Invalid cue.')
         kind = cue.get('type')
-        if kind in {'head', 'body'}:
+        if kind in {'head', 'body'} and not motion:
             raise Rejected('capability_unavailable', MOTION_MISSING)
         if kind not in CUE_KEYS or set(cue) - CUE_KEYS[kind]:
             bad('Unsupported cue type or fields.')
@@ -117,6 +135,14 @@ def validate_score(score):
         caption = cue.get('caption')
         if caption is not None and (not isinstance(caption, str) or len(caption) > LIMITS['caption']):
             bad('Invalid cue caption.')
+        if kind in {'head', 'body'}:
+            preset = cue.get('preset')
+            if not isinstance(preset, str) or preset not in MOTION_PRESETS:
+                bad('That preset is not approved.')
+            if kind != ('head' if preset.startswith('atom/') else 'body'):
+                bad('That preset is the other kind of motion.')
+            total += LIMITS['motionBoundMs']
+            continue
         duration = cue.get('durationMs')
         low, high = (LIMITS['faceMin'], LIMITS['faceMax']) if kind == 'face' else (LIMITS['waitMin'], LIMITS['waitMax'])
         if not is_int(duration) or not low <= duration <= high:
@@ -163,12 +189,15 @@ def read_identity(target, *, profile_path=PROFILE_PATH, fingerprints=known_host_
 class FaceSession:
     """Line protocol to vbot-demo/robot_face.py. It never reconnects or replays."""
 
-    def __init__(self, target, session_id, lease, anchor, stream_factory=None, wall_ms=None):
+    def __init__(self, target, session_id, lease, anchor, stream_factory=None, wall_ms=None, motion=False):
         self.session_id, self.lease = session_id, lease
         self.wall_ms = wall_ms or (lambda: int(time.time() * 1000))
         self.closed = False
-        remote = shlex.join([REMOTE_ROOT + '/.venv/bin/python', '-I', REMOTE_ROOT + '/robot_face.py',
-                             '--serve', '--session-id', session_id, '--lease', str(lease)])
+        self.motion = bool(motion)
+        # A motion connection runs the combined helper, and only after explicit confirmation.
+        helper = ['robot_studio.py', '--serve', '--motion', '--confirm-motion'] if motion else ['robot_face.py', '--serve']
+        remote = shlex.join([REMOTE_ROOT + '/.venv/bin/python', '-I', REMOTE_ROOT + '/' + helper[0], *helper[1:],
+                             '--session-id', session_id, '--lease', str(lease)])
         command = ssh_argv(target, remote, host_key_alias=anchor)
         if stream_factory is None:
             # A computer's ssh process. The APK passes its own stream and doesn't carry this module.
@@ -179,7 +208,10 @@ class FaceSession:
             ready = self._receive('requestId', session_id, {'session_ready', 'session_refused'}, READY_TIMEOUT)
             if ready['event'] == 'session_refused':
                 raise Rejected(ready.get('code') or 'not_connected', ready.get('reason') or SESSION_FAILED)
-            if ready.get('protocol') != 1 or ready.get('faceOnly') is not True:
+            if motion:
+                if ready.get('protocol') != 2 or ready.get('motion') is not True or ready.get('faceOnly') is not False:
+                    raise Rejected('backend_unavailable', "The dog's helper doesn't support motion sessions. Deploy robot_studio.py.")
+            elif ready.get('protocol') != 1 or ready.get('faceOnly') is not True:
                 raise Rejected('backend_unavailable', "The dog's helper doesn't support this face protocol.")
             names = ready.get('supportedFaces')
             self.supported = [name for name in names if isinstance(name, str)][:512] if isinstance(names, list) else []
@@ -201,18 +233,22 @@ class FaceSession:
                 return item
         raise TimeoutError('No answer from the dog.')
 
-    def _command(self, op, **fields):
+    def _command(self, op, events=FACE_EVENTS, timeout=ACK_TIMEOUT, **fields):
         command_id = uuid.uuid4().hex
         frame = {'op': op, 'commandId': command_id, 'sessionId': self.session_id, 'leaseGeneration': self.lease,
                  'expiresAtMs': self.wall_ms() + CUE_TTL_MS, **fields}
         try:
             self.stream.writeLine(json.dumps(frame))
-            return self._receive('commandId', command_id, {'started', 'released', 'rejected', 'unknown', 'duplicate'}, ACK_TIMEOUT)
+            return self._receive('commandId', command_id, events, timeout)
         except Exception as error:
             raise OutcomeUnknown('The dog stopped answering during this cue.') from error
 
     def play(self, asset_id, duration_ms):
         return self._command('face', assetId=asset_id, durationMs=duration_ms)
+
+    def play_motion(self, preset):
+        """Blocks until the dog reports the preset's terminal result. Never retried."""
+        return self._command('motion', MOTION_EVENTS, MOTION_REPLY_TIMEOUT, preset=preset)
 
     def release(self):
         return self._command('face_release')
@@ -239,6 +275,7 @@ class AppController:
         self.connection, self.detail = 'disconnected', None
         self.device, self.session, self.session_id = None, None, None
         self.lease = 0
+        self.motion_until = 0
         self.target = ''
         self.run, self.cancel, self.thread = None, None, None
         self.last_activity = mono()
@@ -290,14 +327,17 @@ class AppController:
         connected = self.connection == 'connected'
         reason = None if connected else (self.detail if self.connection == 'lost' and self.detail else NOT_CONNECTED)
         face = {'available': connected, 'reason': reason}
-        motion = {'available': False, 'reason': MOTION_MISSING if connected else reason}
+        armed = connected and getattr(self.session, 'motion', False) and self.wall_ms() < self.motion_until
+        lapsed = connected and getattr(self.session, 'motion', False) and not armed
+        motion = {'available': armed, 'reason': None if armed else (MOTION_EXPIRED if lapsed else MOTION_MISSING if connected else reason)}
         ids = None
         if connected and self.session is not None:
             ids = sorted({int(name[:3]) for name in self.session.supported if re.match(r'\d{3}_', name)})
         return {'face': face, 'head': motion, 'body': motion,
                 'speech': {'available': False, 'reason': SPEECH_MISSING},
                 'navigation': {'available': False, 'reason': NAVIGATION_MISSING},
-                'supportedFaceIds': ids, 'rehearsedPresets': []}
+                'supportedFaceIds': ids, 'rehearsedPresets': [],
+                'armedPresets': list(MOTION_PRESETS) if armed else []}
 
     def status(self):
         with self.lock:
@@ -323,7 +363,18 @@ class AppController:
                 pass
 
     # --- connection ------------------------------------------------------
+    @staticmethod
+    def _motion_requested(payload):
+        """Motion is armed only by every onsite confirmation being exactly true."""
+        asked = payload.get('motion')
+        if asked is None or asked is False:
+            return False
+        if not isinstance(asked, dict) or any(asked.get(key) is not True for key in MOTION_CONFIRMATIONS):
+            raise Rejected('motion_not_confirmed', CONFIRM_MISSING)
+        return True
+
     def connect(self, payload):
+        motion = self._motion_requested(payload)
         with self.lock:
             if self.run is not None and self.run['state'] not in TERMINAL:
                 self.detail = 'Stop the current show before reconnecting.'
@@ -340,7 +391,8 @@ class AppController:
         try:
             target = normalize_target(payload.get('target'))
             identity = self.identity_reader(target)
-            session = self.session_factory(target, session_id, lease, identity['anchor'])
+            session = (self.session_factory(target, session_id, lease, identity['anchor'], motion=True) if motion
+                       else self.session_factory(target, session_id, lease, identity['anchor']))
         except Rejected as error:
             return self._connect_failed(error.reason)
         except ValueError as error:
@@ -354,9 +406,11 @@ class AppController:
                 return self.status()
             self.session, self.session_id, self.target = session, session_id, target
             self.device = {'id': identity['deviceId'], 'label': 'VBOT'}
-            self.connection, self.detail = 'connected', 'Face control only. Motion stays off.'
+            self.connection = 'connected'
+            self.detail = 'Faces and approved presets, one at a time. Motion lapses with this connection.' if motion else 'Face control only. Motion stays off.'
+            self.motion_until = self.wall_ms() + MOTION_SESSION_MS if motion else 0
             self.last_activity = self.mono()
-            self._event('Connected. Face control only.')
+            self._event('Connected. Faces and motion, after the onsite confirmations.' if motion else 'Connected. Face control only.')
             return self.status()
 
     def _connect_failed(self, reason):
@@ -400,7 +454,7 @@ class AppController:
             try:
                 validate_envelope(envelope)
                 self._admit(envelope)
-                validate_score(envelope['score'])
+                validate_score(envelope['score'], motion=self._motion_enabled())
                 self._check_supported(envelope['score'])
             except Rejected as error:
                 self._record(command_id, 'rejected', fingerprint=fingerprint, scoreId=score_id, code=error.code, reason=error.reason)
@@ -433,9 +487,14 @@ class AppController:
         if self.run is not None and self.run['state'] not in TERMINAL:
             raise Rejected('busy', 'The controller is busy with another show.')
 
+    def _motion_enabled(self):
+        return bool(getattr(self.session, 'motion', False)) and self.wall_ms() < self.motion_until
+
     def _check_supported(self, score):
         supported = {int(name[:3]) for name in self.session.supported if re.match(r'\d{3}_', name)}
         for cue in score['cues']:
+            if cue['type'] in {'head', 'body'} and not self._motion_enabled():
+                raise Rejected('capability_unavailable', MOTION_EXPIRED if getattr(self.session, 'motion', False) else MOTION_MISSING)
             if cue['type'] == 'face' and cue['assetId'] not in supported:
                 raise Rejected('capability_unavailable', f"This dog doesn't list face {cue['assetId']}.")
 
@@ -452,7 +511,6 @@ class AppController:
                 if cancel.is_set():
                     state, reason = 'cancelled', 'Future cues cancelled.'
                     break
-                seconds = cue['durationMs'] / 1000
                 if cue['type'] == 'face':
                     self._update(command_id, cueIndex=index, cueAck='sent', cueEndsAt=None)
                     result = session.play(cue['assetId'], cue['durationMs'])
@@ -466,9 +524,23 @@ class AppController:
                         break
                     started_face = True
                     self._update(command_id, cueAck='started', cueEndsAt=self.wall_ms() + cue['durationMs'])
+                elif cue['type'] in {'head', 'body'}:
+                    # The dog answers when the preset has finished and settled, so there is no timer to wait out.
+                    self._update(command_id, cueIndex=index, cueAck='sent', cueEndsAt=None)
+                    result = session.play_motion(cue['preset'])
+                    outcome = result.get('outcome') if result['event'] == 'duplicate' else result['event']
+                    if outcome == 'rejected':
+                        state, reason = 'rejected', result.get('reason') or 'The dog did not start this preset.'
+                        break
+                    if outcome != 'completed':
+                        session_lost = True
+                        state, reason = 'unknown', result.get('reason') or "This preset didn't finish cleanly. Inspect the dog. It won't be retried."
+                        break
+                    self._update(command_id, completedCues=index + 1, cueAck='finished', cueEndsAt=None)
+                    continue
                 else:
                     self._update(command_id, cueIndex=index, cueAck='waiting', cueEndsAt=self.wall_ms() + cue['durationMs'])
-                if self.waiter(cancel, seconds):
+                if self.waiter(cancel, cue['durationMs'] / 1000):
                     state, reason = 'cancelled', 'Future cues cancelled.'
                     break
                 self._update(command_id, completedCues=index + 1, cueAck='finished', cueEndsAt=None)

@@ -308,3 +308,23 @@ test('cloud adapter refuses honestly and never claims success', async () => {
   assert.equal(receipt.code, 'backend_unavailable');
   assert.equal((await transport.status()).capabilities.face.available, false);
 });
+
+test('local connect: motion is sent only when every confirmation is exactly true', async () => {
+  const bodies = [];
+  const transport = new LocalFaceTransport({ fetcher: async (_url, init) => { bodies.push(JSON.parse(init.body)); return reply({ connection: 'connected', capabilities: {} }); } });
+  await transport.connect({ target: 'vbot@x' });
+  await transport.connect({ target: 'vbot@x', motion: { onsite: true, standing: true, clear: false } });
+  await transport.connect({ target: 'vbot@x', motion: { onsite: true, standing: 'yes', clear: true } });
+  await transport.connect({ target: 'vbot@x', motion: { onsite: true, standing: true, clear: true } });
+  assert.deepEqual(bodies.map(body => 'motion' in body), [false, false, false, true]);
+  assert.deepEqual(bodies[3].motion, { onsite: true, standing: true, clear: true });
+});
+
+test('local connect: the controller’s own refusal reason is shown, not "controller down"', async () => {
+  const transport = new LocalFaceTransport({ fetcher: async () => ({ ok: false, status: 400, json: async () => ({ state: 'rejected', code: 'motion_not_confirmed', reason: 'Motion needs every onsite confirmation.' }) }) });
+  const snapshot = await transport.connect({ target: 'vbot@x' });
+  assert.equal(snapshot.connection, 'unavailable');
+  assert.equal(snapshot.detail, 'Motion needs every onsite confirmation.');
+  const down = new LocalFaceTransport({ fetcher: async () => ({ ok: false, status: 500, json: async () => ({}) }) });
+  assert.match((await down.connect({})).detail, /vbot:controller/);
+});

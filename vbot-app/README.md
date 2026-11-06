@@ -9,7 +9,8 @@ stage view. It has no chess, Stockfish or Lichess dependency.
 | --- | --- |
 | App with simulated dog (all five screens, saved shows, fault rehearsal) | Works in a browser |
 | Live face control: app → local controller → `robot_face.py` | Ran on the dog on 2026-11-03, from a Mac: Mood Swing played and the operator saw the faces. **Stop future cues** also worked: the next cue never started and the dog confirmed the screen release. Only those six faces have been played. Lost connections and recovery are only tested against stubs. |
-| Head, body and navigation control | Deliberately absent from the live path |
+| Head and body presets (`robot_studio.py`) | **Built and tested against fakes only. Not deployed to or run on a dog.** Off unless the operator ticks all three onsite confirmations when connecting. No preset is marked rehearsed or confirmed because of it. See [Motion](#motion-optional-untested-on-the-dog). |
+| Navigation | Deliberately absent from the live path |
 | Speech | Placeholder. No verified backend. |
 | Cloud | Placeholder. Needs the backend API, auth and pairing contract. |
 | Android app | Project in `vbot-app/android` (`com.andy.vbotstudio`). The controller and pairing are tested against fakes. **Not yet compiled or run on a device.** Test builds use a debug signature. |
@@ -50,9 +51,9 @@ Screens
 On Android there's no local network listener, so other apps on the device have nothing to connect to.
 
 - **Preview isn't on the transport.** It renders the pure `buildTimeline`, so a preview can't reach a device.
-- **Each face cue is limited to the display.** `robot_face.py` contains only display routes and read-only
+- **A face-only connection is limited to the display.** `robot_face.py` contains only display routes and read-only
   health subscriptions. It has no action client, publisher, or motion route, and a test enforces that.
-- **One owner at a time.** `robot_face.py` takes the same `controller.lock` as `robot_action.py` and honors
+- **One owner at a time.** `robot_face.py` and `robot_studio.py` take the same `controller.lock` as `robot_action.py` and honors
   `unresolved-action.json`. While a face session is open, a chess reaction or show is refused, and the reverse
   is also true. An idle session closes after 150 seconds to free the lock.
 - **Commands are single-use.** IDs are recorded before acting, on the controller (`.local/vbot-app/commands.jsonl`)
@@ -80,6 +81,42 @@ Open `http://127.0.0.1:8791`, choose **Real dog, through this computer**, enter 
 Then run **Mood Swing** from Stage. Connection refuses a dog whose SSH key isn't already trusted on this
 computer. Host-key checks are never bypassed.
 
+## Motion (optional, untested on the dog)
+
+Faces alone are the default. Motion exists so a show can mix faces with the head and body presets
+`robot_action.py` already supports. It is **not** a rehearsal record of anything.
+
+- **Arming.** On a real-dog connection, tick all three boxes (someone is with the dog, it is standing, the
+  area is clear) and press **Connect with motion**. The controller then runs `robot_studio.py --serve --motion
+  --confirm-motion`; anything short of three exact `true`s is refused before the dog is contacted. The
+  confirmations are never stored. Motion lasts for that one connection and lapses with the dog's 15-minute
+  session. Reconnect to re-arm.
+- **One session, one lock.** `robot_studio.py` serves faces and presets from a single process, so there is no
+  hand-off between helpers. It reuses `robot_action.py`'s guarded path as is: fresh readiness before every cue,
+  the static probe, durable request records, the unresolved-action lock, terminal-result and postflight checks.
+  It adds no scheduler and none of the gates are loosened.
+- **Faces never overlap a preset.** Presets drive the display themselves (their own expression, lights and
+  sound), and the vendor guide says not to mix control owners. Before a preset starts, any face this session
+  put up is released, and a failed release refuses the preset. You can't choose the face during a preset.
+- **Only approved presets.** The same 17 as `robot_action.py`; a test keeps the lists equal. Head presets are
+  `atom/look_*`; everything else is a body preset.
+- **A clean finish is the only way to continue.** A refused preset (for example, the dog isn't standing)
+  stops the show and keeps the connection. A preset that doesn't finish cleanly, or whose outcome is
+  unknown, stops the show, closes the session and shows **Outcome unknown**. It is never retried.
+- **Stop.** **Stop future cues** works between presets. It does not stop a preset already running; use the
+  handset Stop.
+- **Not yet possible.** Choosing a face *during* a head preset would need a custom graph, and the head
+  parameters of `atom/look_*` aren't documented, so inventing them would be an unrehearsed motion request.
+  That needs the preset files read from the dog first.
+
+Deploy once, with the dog in front of you (this writes one file and moves nothing):
+
+```sh
+scp vbot-demo/robot_studio.py "$VBOT_TARGET:/userdata/vbot/chess-demo/"
+```
+
+`robot_studio.py` imports `robot_action.py` and `robot_face.py` from the same directory, so both must already be there.
+
 ## Recovery
 
 | What you see | What to do |
@@ -88,7 +125,7 @@ computer. Host-key checks are never bypassed.
 | “Screen release not confirmed” | Look at the dog's screen. The helper also releases it when its session ends. |
 | Connect says another controller owns the dog | Stop the chess reactions or show first, or wait for the idle close. |
 | Connect says an unresolved action needs inspection | Inspect the dog and the saved request before doing anything else. |
-| Connect says the helper may be missing | Check power, Wi-Fi and SSH trust, then that `robot_face.py` is deployed. |
+| Connect says the helper may be missing | Check power, Wi-Fi and SSH trust, then that `robot_face.py` (and, for motion, `robot_studio.py`) is deployed. |
 | Controller not running | Run `npm run vbot:controller`. Saved shows are in the browser and aren't affected. |
 
 Until the Android app has run on a device, live control needs a computer running the controller. Saved shows
@@ -97,7 +134,7 @@ live in that browser or app's storage, so export any you want to keep.
 ## Android app
 
 It installs next to Chess Buddy and can't replace it or touch its data. The APK carries the controller and face
-protocol, and doesn't carry the chess or motion code.
+protocol, and doesn't carry the chess code or any dog-side helper.
 
 **Building.** GitHub Actions builds it with `.github/workflows/vbot-studio-apk.yml`, which uses no secrets and
 publishes nothing. Pushing to `codex/vbot-app-scaffold` starts a build, which then runs on an emulator. Download
@@ -128,7 +165,7 @@ stays up, the helper does that after 3 idle minutes.
 
 ## Adding later
 
-- **Motion:** this needs its own authorization, per-dog rehearsal data and a verified stopping procedure. It
-  should reuse `robot_action.py` through the same admission rules rather than add a second scheduler.
+- **Rehearsal records for Studio:** motion is enabled per connection, not by measured rehearsal. Reading
+  `device-verification.local.json` so rehearsed presets show their measured durations is still open.
 - **Cloud:** implement `DeviceTransport` against the real contract. The dog connects outbound. Never put
   device or admin secrets in the frontend or APK.

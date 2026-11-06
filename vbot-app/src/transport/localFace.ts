@@ -57,10 +57,25 @@ export class LocalFaceTransport implements DeviceTransport {
 
   async connect(options: ConnectOptions): Promise<DeviceSnapshot> {
     try {
-      const response = await this.post('connect', { target: options.target ?? '' });
-      if (!response.ok) return this.unreachable();
+      // Motion is sent only when every confirmation is exactly true, and only on this one request.
+      const motion = options.motion && options.motion.onsite === true && options.motion.standing === true && options.motion.clear === true
+        ? { onsite: true, standing: true, clear: true } : undefined;
+      const response = await this.post('connect', { target: options.target ?? '', ...(motion ? { motion } : {}) });
+      if (!response.ok) return await this.refused(response);
       return this.accept(await response.json());
     } catch { return this.unreachable(); }
+  }
+
+  /** A 400 from the controller carries its own reason. Anything else means it couldn't be reached. */
+  private async refused(response: Response): Promise<DeviceSnapshot> {
+    try {
+      const body = await response.json() as { reason?: unknown };
+      if (response.status === 400 && typeof body?.reason === 'string' && body.reason) {
+        const detail = body.reason;
+        return this.accept({ ...this.last, connection: 'unavailable', detail, capabilities: noCapabilities(detail) });
+      }
+    } catch { /* fall through */ }
+    return this.unreachable();
   }
 
   async disconnect(): Promise<DeviceSnapshot> {

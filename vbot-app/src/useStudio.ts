@@ -8,7 +8,9 @@ import { FakeTransport, type FakeFault } from './transport/fake';
 import { LocalFaceTransport } from './transport/localFace';
 import { isNativeApp, studioBackend } from './transport/native';
 import { NATIVE_CONTROLLER_DOWN, nativeFetcher } from './transport/nativeFetch';
-import { emptySnapshot, type DeviceTransport, type TransportKind } from './transport/types';
+import { emptySnapshot, type DeviceTransport, type MotionConfirmation, type TransportKind } from './transport/types';
+
+const NO_CONFIRMATION: MotionConfirmation = { onsite: false, standing: false, clear: false };
 
 const SETTINGS_KEY = 'vbot-studio.settings.v1';
 
@@ -46,6 +48,8 @@ export function useStudio() {
   const [snapshot, setSnapshot] = useState<DeviceSnapshot>(() => emptySnapshot());
   const [receipt, setReceipt] = useState<CommandReceipt | null>(null);
   const [connecting, setConnecting] = useState(false);
+  // Held in memory only: a stored confirmation could outlive the onsite checks it stands for.
+  const [motionConfirm, setMotionConfirm] = useState<MotionConfirmation>(NO_CONFIRMATION);
   const [sending, setSending] = useState(false);
   const [fault, setFaultState] = useState<FakeFault>('none');
   const [storageOk, setStorageOk] = useState(true);
@@ -73,11 +77,13 @@ export function useStudio() {
   const connect = useCallback(async () => {
     if (!transport.current) return;
     setConnecting(true);
-    try { setSnapshot(await transport.current.connect({ target: settings.target })); }
-    finally { setConnecting(false); }
-  }, [settings.target]);
+    const motion = motionConfirm.onsite && motionConfirm.standing && motionConfirm.clear ? motionConfirm : undefined;
+    try { setSnapshot(await transport.current.connect({ target: settings.target, ...(motion ? { motion } : {}) })); }
+    finally { setConnecting(false); setMotionConfirm(NO_CONFIRMATION); }
+  }, [settings.target, motionConfirm]);
 
   const disconnect = useCallback(async () => {
+    setMotionConfirm(NO_CONFIRMATION);
     if (transport.current) setSnapshot(await transport.current.disconnect());
   }, []);
 
@@ -172,7 +178,7 @@ export function useStudio() {
   const setTarget = useCallback((target: string) => setSettings(state => ({ ...state, target })), []);
 
   return {
-    library, selected, settings, snapshot, receipt, catalog, connecting, sending, running, fault, storageOk,
+    library, selected, settings, snapshot, receipt, catalog, connecting, sending, running, fault, storageOk, motionConfirm, setMotionConfirm,
     simulated: settings.kind === 'fake',
     connect, disconnect, startShow, tryEntry, stopFuture, setFault, setKind, setTarget,
     select, createShow, editShow, saveAs, removeShow, importText, toggleFavorite,

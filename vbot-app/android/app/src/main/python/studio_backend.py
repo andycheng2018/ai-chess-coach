@@ -38,8 +38,8 @@ def open_stream(command):
         raise
 
 
-def open_session(target, session_id, lease, anchor):
-    return FaceSession(target, session_id, lease, anchor, stream_factory=open_stream)
+def open_session(target, session_id, lease, anchor, motion=False):
+    return FaceSession(target, session_id, lease, anchor, stream_factory=open_stream, motion=motion)
 
 
 def start(data_home):
