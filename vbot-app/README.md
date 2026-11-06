@@ -100,9 +100,11 @@ Faces alone are the default. Motion exists so a show can mix faces with the head
   put up is released, and a failed release refuses the preset. You can't choose the face during a preset.
 - **Only approved presets.** The same 17 as `robot_action.py`; a test keeps the lists equal. Head presets are
   `atom/look_*`; everything else is a body preset.
-- **A clean finish is the only way to continue.** A refused preset (for example, the dog isn't standing)
-  stops the show and keeps the connection. A preset that doesn't finish cleanly, or whose outcome is
-  unknown, stops the show, closes the session and shows **Outcome unknown**. It is never retried.
+- **A clean finish is the only way to continue.** A preset the dog refuses for readiness (for example, it isn't
+  standing) stops the show and ends the motion session, as `robot_action.py`'s own session does: inspect the dog
+  and reconnect with the confirmations. A preset that doesn't finish cleanly, or whose outcome is unknown, also
+  stops the show and shows **Outcome unknown**. Neither is retried. Plain protocol refusals (a stale or expired
+  command, an unapproved preset) stop the show but keep the connection.
 - **Stop.** **Stop future cues** works between presets. It does not stop a preset already running; use the
   handset Stop.
 - **Not yet possible.** Choosing a face *during* a head preset would need a custom graph, and the head
@@ -112,10 +114,11 @@ Faces alone are the default. Motion exists so a show can mix faces with the head
 Deploy once, with the dog in front of you (this writes one file and moves nothing):
 
 ```sh
-scp vbot-demo/robot_studio.py "$VBOT_TARGET:/userdata/vbot/chess-demo/"
+scp vbot-demo/robot_studio.py vbot-demo/robot_action.py vbot-demo/robot_face.py "$VBOT_TARGET:/userdata/vbot/chess-demo/"
 ```
 
-`robot_studio.py` imports `robot_action.py` and `robot_face.py` from the same directory, so both must already be there.
+`robot_studio.py` imports functions from the other two, so deploy all three from the same commit. Check what is
+on the dog first: copying `robot_action.py` over a deployed one replaces it.
 
 ## Recovery
 

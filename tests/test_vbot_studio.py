@@ -156,15 +156,19 @@ class MotionCoreTests(Harness):
         self.assertEqual((frame['event'], frame['outcome']), ('duplicate', 'unknown'))
         self.assertEqual(self.log, [])
 
-    def test_not_ready_rejects_and_keeps_the_session(self):
+    def test_a_readiness_refusal_rejects_and_ends_the_session_like_robot_action(self):
         self.result = {'event': 'not_ready', 'code': 'posture', 'reason': 'Stand it first.'}
         frame, keep_going = self.cue(self.motion())
-        self.assertEqual((frame['event'], frame['code'], keep_going), ('rejected', 'posture', True))
+        self.assertEqual((frame['event'], frame['code'], frame['sessionEnded'], keep_going), ('rejected', 'posture', True, False))
+
+    def test_protocol_refusals_keep_the_session(self):
+        frame, keep_going = self.cue(self.motion(preset='safety/is_robot_static'))
+        self.assertEqual((frame['event'], keep_going, 'sessionEnded' in frame), ('rejected', True, False))
 
     def test_a_dirty_terminal_result_ends_the_session(self):
         self.result = {'event': 'terminal', 'status': 'ABORTED', 'errorCategory': 2, 'readyForNext': False}
         frame, keep_going = self.cue(self.motion())
-        self.assertEqual((frame['event'], keep_going), ('failed', False))
+        self.assertEqual((frame['event'], frame['sessionEnded'], keep_going), ('failed', True, False))
 
     def test_an_exception_is_unknown_and_ends_the_session(self):
         self.result = RuntimeError('provider gone')
@@ -201,6 +205,20 @@ class ServeTests(Harness):
         code, frames = self.serve([self.motion(), self.face_cue()])
         self.assertEqual((code, [frame['event'] for frame in frames]), (1, ['failed']))
         self.assertEqual([entry[0] for entry in self.log], ['motion'])
+
+    def test_an_uncertain_display_result_ends_the_session_before_any_motion(self):
+        def broken(*_args):
+            raise RuntimeError('display gone')
+        self.display.play = broken
+        code, frames = self.serve([self.face_cue(), self.motion()])
+        self.assertEqual((code, [frame['event'] for frame in frames]), (1, ['unknown']))
+        self.assertNotIn('motion', [entry[0] for entry in self.log])
+
+    def test_a_readiness_refusal_ends_the_session_so_a_later_cue_cannot_run(self):
+        self.result = {'event': 'not_ready', 'code': 'posture', 'reason': 'Stand it first.'}
+        code, frames = self.serve([self.motion(), self.face_cue()])
+        self.assertEqual((code, [frame['event'] for frame in frames]), (1, ['rejected']))
+        self.assertNotIn('face', [entry[0] for entry in self.log])
 
     def test_eof_returns_cleanly(self):
         self.assertEqual(self.serve([])[0], 0)

@@ -505,7 +505,7 @@ class AppController:
 
     def _perform(self, command_id, score, cancel, session, fingerprint, score_id):
         items = [cue for _ in range(score['repeat']) for cue in score['cues']]
-        state, reason, started_face, session_lost = 'completed', None, False, False
+        state, reason, started_face, session_lost, session_ended = 'completed', None, False, False, False
         try:
             for index, cue in enumerate(items):
                 if cancel.is_set():
@@ -531,6 +531,8 @@ class AppController:
                     outcome = result.get('outcome') if result['event'] == 'duplicate' else result['event']
                     if outcome == 'rejected':
                         state, reason = 'rejected', result.get('reason') or 'The dog did not start this preset.'
+                        # A readiness refusal ends the dog's session, as robot_action.py's does. Re-arm to continue.
+                        session_ended = result.get('sessionEnded') is True
                         break
                     if outcome != 'completed':
                         session_lost = True
@@ -548,7 +550,11 @@ class AppController:
             session_lost, state, reason = True, 'unknown', f"{error} This cue's outcome is unknown and it won't be retried."
         except Exception:
             session_lost, state, reason = True, 'unknown', "The show stopped unexpectedly. The last cue's outcome is unknown."
-        cleanup = 'not-needed' if not (started_face or session_lost) else self._cleanup(session, session_lost)
+        if session_ended:
+            # The dog released any face before it refused, but this controller never sees that confirmed.
+            cleanup = 'failed' if started_face else 'not-needed'
+        else:
+            cleanup = 'not-needed' if not (started_face or session_lost) else self._cleanup(session, session_lost)
         with self.lock:
             self._update(command_id, state=state, reason=reason, cleanup=cleanup, cueEndsAt=None, finishedAt=self.wall_ms())
             self._record(command_id, state, fingerprint=fingerprint, scoreId=score_id, reason=reason)
@@ -556,6 +562,11 @@ class AppController:
             if cleanup == 'failed':
                 self._event("The display release wasn't confirmed. Check the dog's screen.", commandId=command_id)
             self.last_activity = self.mono()
+            if session_ended:
+                self._close_session()
+                self.connection, self.motion_until = 'disconnected', 0
+                self.detail = 'The dog ended its motion session after refusing a preset. Inspect it, then reconnect with the onsite confirmations.'
+                self.device, self.session_id = None, None
             if session_lost:
                 # Reconnect means a new lease and a status check. Nothing is drained.
                 self._close_session()

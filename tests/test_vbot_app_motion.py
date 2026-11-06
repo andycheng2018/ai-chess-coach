@@ -147,14 +147,27 @@ class RunTests(MotionCase):
         self.assertEqual(self.session.calls, [('motion', 'actions/WAVE.json')])
         self.assertEqual(self.controller.status()['run']['cleanup'], 'not-needed')
 
-    def test_a_refused_preset_stops_the_show_but_keeps_the_connection(self):
+    def test_a_readiness_refusal_ends_the_show_and_disarms_the_connection(self):
         self.arm()
-        self.session.motion_results = [{'event': 'rejected', 'code': 'posture', 'reason': 'Stand it first.'}]
+        self.session.motion_results = [{'event': 'rejected', 'code': 'posture', 'reason': 'Stand it first.', 'sessionEnded': True}]
         self.controller.submit(self.show(WAVE, FACE))
         self.finish()
-        run = self.controller.status()
-        self.assertEqual((run['run']['state'], run['run']['reason'], run['connection']), ('rejected', 'Stand it first.', 'connected'))
+        status = self.controller.status()
+        self.assertEqual((status['run']['state'], status['run']['reason'], status['connection']), ('rejected', 'Stand it first.', 'disconnected'))
+        self.assertIn('reconnect with the onsite confirmations', status['detail'])
+        self.assertFalse(status['capabilities']['body']['available'])
+        self.assertEqual(self.controller.motion_until, 0)
+        self.assertTrue(self.session.closed)
         self.assertEqual(self.session.calls, [('motion', 'actions/WAVE.json')])
+
+    def test_a_protocol_refusal_stops_the_show_but_keeps_the_connection(self):
+        self.arm()
+        self.session.motion_results = [{'event': 'rejected', 'code': 'expired', 'reason': 'Too late.'}]
+        self.controller.submit(self.show(WAVE, FACE))
+        self.finish()
+        status = self.controller.status()
+        self.assertEqual((status['run']['state'], status['connection']), ('rejected', 'connected'))
+        self.assertFalse(self.session.closed)
 
     def test_an_unclean_preset_ends_the_show_and_loses_the_connection(self):
         for result in [{'event': 'failed', 'reason': 'Aborted.'}, {'event': 'unknown'}, OutcomeUnknown('gone'), RuntimeError('boom')]:
@@ -268,6 +281,14 @@ class MotionSessionWireTests(unittest.TestCase):
                 session.play_motion('actions/WAVE.json')
         finally:
             control.MOTION_REPLY_TIMEOUT = original
+
+    def test_the_reply_window_covers_the_dog_side_worst_case_with_margin(self):
+        import inspect
+        import robot_studio
+        execute = inspect.signature(robot_action.execute_preset).parameters['action_timeout'].default
+        settle = inspect.signature(robot_action.settle_postflight).parameters['timeout'].default
+        worst = robot_studio.RESCAN_SECONDS + 8 + execute + settle
+        self.assertGreaterEqual(control.MOTION_REPLY_TIMEOUT, worst + 5)
 
     def test_the_module_still_imports_no_dog_side_code(self):
         source = (ROOT / 'server' / 'vbot_app_control.py').read_text()

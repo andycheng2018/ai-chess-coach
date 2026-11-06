@@ -116,7 +116,9 @@ class MotionCore:
                     "reason": "The motion path failed mid-cue. The outcome is unknown and won't be retried."}, False
         event, extra = classify(result)
         self.ledger.finish(command_id, {**fields, "outcome": event, **{k: v for k, v in extra.items() if v is not None}})
-        return {"event": event, "commandId": command_id, **extra}, event in {"completed", "rejected"}
+        # Like robot_action.py's session, a readiness refusal disarms: the operator must inspect and re-arm.
+        keep_going = event == "completed"
+        return {"event": event, "commandId": command_id, **extra, **({} if keep_going else {"sessionEnded": True})}, keep_going
 
 
 def serve(face_core, motion_core, stdin=sys.stdin, *, wait=select.select, clock=time.monotonic):
@@ -163,7 +165,10 @@ def serve(face_core, motion_core, stdin=sys.stdin, *, wait=select.select, clock=
             if not keep_going:
                 return 1
             continue
-        emit(**face_core.handle(command))
+        result = face_core.handle(command)
+        emit(**result)
+        if result["event"] == "unknown":
+            return 1  # robot_face.py ends the session on an uncertain display result, and so does this.
     return 0
 
 
