@@ -3,7 +3,7 @@
  * even when they share a name: `068_ROCKYOU` is a screen animation and
  * `actions/ROCKYOU.json` is a dance. Nothing here contacts a robot.
  */
-export type CapabilityKind = 'face' | 'head' | 'body' | 'wait' | 'speech' | 'navigation';
+export type CapabilityKind = 'face' | 'head' | 'body' | 'move' | 'wait' | 'speech' | 'navigation';
 
 /**
  * - exercised: played on the real dog and confirmed onsite (Nov 1 2026, display only).
@@ -27,6 +27,8 @@ export type CatalogEntry = {
   durationBasis: 'requested' | 'measured-rehearsal' | 'unknown';
   assetId?: number;
   preset?: string;
+  /** A bounded basic move by name; the dog owns the actual distance or angle. */
+  move?: string;
   note?: string;
 };
 
@@ -73,6 +75,38 @@ const MOTION_PRESETS: readonly (readonly [string, CapabilityKind, string, string
 
 export const MOTION_PRESET_NAMES: ReadonlySet<string> = new Set(MOTION_PRESETS.map(row => row[0]));
 
+/**
+ * Bounded basic moves. Names mirror vbot-demo/robot_studio.py MOVES, and the dog owns the amounts
+ * (they are our own small bounds, not vendor limits). A move can carry a face for its duration.
+ */
+const MOVE_ROWS: readonly (readonly [string, string, string])[] = [
+  ['step_forward', 'Step forward', 'About 25 cm.'],
+  ['step_back', 'Step back', 'About 25 cm.'],
+  ['step_left', 'Step left', 'About 20 cm.'],
+  ['step_right', 'Step right', 'About 20 cm.'],
+  ['turn_left_30', 'Turn left 30°', 'Left is counterclockwise.'],
+  ['turn_right_30', 'Turn right 30°', 'Right uses the opposite sign.'],
+  ['turn_left_90', 'Turn left 90°', 'Left is counterclockwise.'],
+  ['turn_right_90', 'Turn right 90°', 'Right uses the opposite sign.'],
+  ['turn_left_10', 'Nudge left 10°', 'A small turn that the move pad repeats while a button is held.'],
+  ['turn_right_10', 'Nudge right 10°', 'A small turn that the move pad repeats while a button is held.'],
+];
+
+/**
+ * Nov 5 2026, one dog. Turns: the dog reported a clean finish and the onsite operator watched them turn, left being
+ * counterclockwise. Steps: sent as a plain typed command, the dog reported a clean finish four times while NOT moving,
+ * so a "clean finish" report alone proves nothing for a step. Steps now go through the vendor's own template and are
+ * not marked working until someone has watched one move.
+ */
+const MOVES_WATCHED: ReadonlySet<string> = new Set(['turn_left_30', 'turn_right_30', 'turn_left_90', 'turn_right_90']);
+
+const STEP_NOTE = 'Did not move the dog when sent as a plain command (the dog still reported success). Now retried through the vendor’s own step preset; not confirmed yet. A step can’t show a face.';
+
+export const MOVE_NAMES: readonly string[] = MOVE_ROWS.map(row => row[0]);
+/** Steps run the vendor's own preset, which controls the screen, so they can't carry a face. Mirrors robot_studio.FACELESS_MOVES. */
+export const FACELESS_MOVE_NAMES: ReadonlySet<string> = new Set(['step_forward', 'step_back', 'step_left', 'step_right']);
+export const MOVE_NAME_SET: ReadonlySet<string> = new Set(MOVE_NAMES);
+
 const SMALL_WORDS = /_(\d+s|\d+f.*|v\d+)$/i;
 
 export function faceLabel(resource: string): string {
@@ -108,8 +142,14 @@ function buildCatalog(): CatalogEntry[] {
       ? 'No measured rehearsal on record.'
       : 'Physical motion. Duration comes from an earlier rehearsal and must be re-verified on this dog.',
   }));
+  const moves = MOVE_ROWS.map(([move, label, detail]): CatalogEntry => ({
+    id: `move:${move}`, kind: 'move', label, resource: move, category: 'Moves', move, durationMs: null,
+    verification: MOVES_WATCHED.has(move) ? 'exercised' : 'documented', durationBasis: 'unknown',
+    note: FACELESS_MOVE_NAMES.has(move) ? `${detail} ${STEP_NOTE}`
+      : `${detail} ${MOVES_WATCHED.has(move) ? 'Watched turning on this dog.' : 'Not run on a dog yet.'} Takes about 2 seconds; the length isn't measured.`,
+  }));
   return [
-    ...faces, ...motions,
+    ...faces, ...motions, ...moves,
     { id: 'wait', kind: 'wait', label: 'Wait', resource: 'wait', category: 'Timing', verification: 'exercised',
       durationMs: 1000, durationBasis: 'requested', note: 'A pause in the controller. Sends nothing to the dog.' },
     { id: 'speech', kind: 'speech', label: 'Speak', resource: 'speech', category: 'Speech', verification: 'unavailable',
@@ -149,5 +189,5 @@ export const VERIFICATION_LABEL: Record<Verification, string> = {
 };
 
 export const KIND_LABEL: Record<CapabilityKind, string> = {
-  face: 'Face', head: 'Head', body: 'Body', wait: 'Wait', speech: 'Speech', navigation: 'Navigation',
+  face: 'Face', head: 'Head', body: 'Body', move: 'Move', wait: 'Wait', speech: 'Speech', navigation: 'Navigation',
 };

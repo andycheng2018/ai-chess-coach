@@ -4,8 +4,10 @@ import { admitScore, cueFromEntry, formatDuration, makeScore } from '../domain/s
 import type { Studio } from '../useStudio';
 import { KindChip, VerificationTag, ViewHeader } from '../components/bits';
 import { FacePreview } from '../components/FacePreview';
+import { DrivePad } from '../components/DrivePad';
+import { MovePad } from '../components/MovePad';
 
-const FILTERS: readonly (CapabilityKind | 'all' | 'favorites')[] = ['all', 'favorites', 'face', 'head', 'body', 'speech', 'navigation'];
+const FILTERS: readonly (CapabilityKind | 'all' | 'favorites')[] = ['all', 'favorites', 'face', 'head', 'body', 'move', 'speech', 'navigation'];
 const filterLabel = (id: (typeof FILTERS)[number]) => id === 'all' ? 'All' : id === 'favorites' ? 'Favorites' : KIND_LABEL[id];
 
 export function matchesSearch(entry: CatalogEntry, query: string): boolean {
@@ -13,7 +15,7 @@ export function matchesSearch(entry: CatalogEntry, query: string): boolean {
   return !needle || [entry.label, entry.resource, entry.category, KIND_LABEL[entry.kind]].some(text => text.toLowerCase().includes(needle));
 }
 
-export function ActionsView({ studio, onStage }: { studio: Studio; onStage: () => void }) {
+export function ActionsView({ studio }: { studio: Studio }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('all');
   const { library, snapshot, selected, catalog } = studio;
@@ -42,7 +44,9 @@ export function ActionsView({ studio, onStage }: { studio: Studio; onStage: () =
 
   return (
     <div className="view">
-      <ViewHeader title="Expressions & actions" subtitle="Faces only change the screen. Head and body actions physically move the dog, even when they share a name." />
+      <ViewHeader title="Expressions & actions" subtitle="Faces only change the screen. Head, body and move actions physically move the dog, even when they share a name." />
+      <DrivePad studio={studio} />
+      <MovePad studio={studio} />
       <div className="toolbar">
         <input className="search" type="search" value={query} placeholder="Search actions" aria-label="Search actions" onChange={event => setQuery(event.target.value)} />
         <div className="filter-row" role="group" aria-label="Filter by type">
@@ -62,7 +66,7 @@ export function ActionsView({ studio, onStage }: { studio: Studio; onStage: () =
               return (
                 <article key={entry.id} className={`tile tile-${entry.kind}`}>
                   <button className={`star ${favorite ? 'is-on' : ''}`} aria-pressed={favorite} aria-label={`${favorite ? 'Remove' : 'Add'} ${entry.label} ${favorite ? 'from' : 'to'} favorites`} onClick={() => studio.toggleFavorite(entry.id)}>{favorite ? '★' : '☆'}</button>
-                  {entry.kind === 'face' ? <FacePreview label={entry.label} playing={false} size="small" /> : <div className="tile-glyph" aria-hidden="true">{entry.kind === 'head' ? '↻' : entry.kind === 'body' ? '⇅' : '…'}</div>}
+                  {entry.kind === 'face' ? <FacePreview label={entry.label} playing={false} size="small" /> : <div className="tile-glyph" aria-hidden="true">{entry.kind === 'head' ? '↻' : entry.kind === 'body' ? '⇅' : entry.kind === 'move' ? '⇄' : '…'}</div>}
                   <h3>{entry.label}</h3>
                   <p className="mono tile-res">{entry.resource}</p>
                   <div className="tile-meta">
@@ -73,7 +77,7 @@ export function ActionsView({ studio, onStage }: { studio: Studio; onStage: () =
                   {reason && <p className="tile-reason">{reason}</p>}
                   <div className="tile-actions">
                     <button className="btn btn-small" disabled={Boolean(reason) || studio.running || studio.sending || !cue}
-                      onClick={() => void studio.tryEntry(entry).then(result => { if (result) onStage(); })}>Try</button>
+                      onClick={() => void studio.tryEntry(entry)}>Try</button>
                     <button className="btn btn-small" disabled={!editable || !cue}
                       onClick={() => { if (editable && cue) studio.editShow(editable, { cues: [...editable.cues, cue] }); }}>+ Show</button>
                   </div>

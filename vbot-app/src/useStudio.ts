@@ -55,6 +55,8 @@ export function useStudio() {
   const [storageOk, setStorageOk] = useState(true);
   const transport = useRef<DeviceTransport | null>(null);
   const sendLock = useRef(false);
+  // The newest snapshot, readable from async loops without waiting for a re-render.
+  const latest = useRef<DeviceSnapshot>(emptySnapshot());
 
   useEffect(() => { setStorageOk(saveLibrary(store, library)); }, [library, store]);
   useEffect(() => { store.setItem(SETTINGS_KEY, JSON.stringify(settings)); }, [settings, store]);
@@ -70,6 +72,8 @@ export function useStudio() {
     void next.status().then(current => { if (transport.current === next) setSnapshot(current); });
     return () => { unsubscribe(); next.dispose(); transport.current = null; };
   }, [settings.kind, store]);
+
+  latest.current = snapshot;
 
   const catalog: CatalogEntry[] = useMemo(() => mergeDeviceFaces(CATALOG, snapshot.supportedFaces), [snapshot.supportedFaces]);
   const running = snapshot.run !== null && !isTerminal(snapshot.run.state);
@@ -108,6 +112,26 @@ export function useStudio() {
       setSending(false);
     }
   }, []);
+
+  /** Resolves with one command's final state. Reads status only; it never sends anything. */
+  const waitForRun = useCallback(async (commandId: string, timeoutMs = 3 * 60 * 1000): Promise<string> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = latest.current.run;
+      if (run && run.commandId === commandId && isTerminal(run.state)) return run.state;
+      if (!run || run.commandId !== commandId) {
+        // Another command replaced it, or the connection was lost: that outcome is unknown, not success.
+        if (latest.current.connection !== 'connected') return 'unknown';
+      }
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
+    return 'unknown';
+  }, []);
+
+  /** The adapter's drive control, or null when this adapter can't stream one. */
+  const driver = useCallback(() => transport.current?.drive ?? null, []);
+
+  const clearReceipt = useCallback(() => setReceipt(null), []);
 
   const tryEntry = useCallback((entry: CatalogEntry) => {
     const cue = cueFromEntry(entry);
@@ -180,7 +204,7 @@ export function useStudio() {
   return {
     library, selected, settings, snapshot, receipt, catalog, connecting, sending, running, fault, storageOk, motionConfirm, setMotionConfirm,
     simulated: settings.kind === 'fake',
-    connect, disconnect, startShow, tryEntry, stopFuture, setFault, setKind, setTarget,
+    connect, disconnect, startShow, waitForRun, clearReceipt, driver, tryEntry, stopFuture, setFault, setKind, setTarget,
     select, createShow, editShow, saveAs, removeShow, importText, toggleFavorite,
     admission: (score: Pick<Score, 'cues'>) => admitScore(score, snapshot.capabilities),
   };

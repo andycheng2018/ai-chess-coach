@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { loadApp, memoryStore, validScore } from './vbotAppLoader.mjs';
+import { loadApp, memoryStore, plain, validScore } from './vbotAppLoader.mjs';
 
 const { FakeTransport } = loadApp('transport/fake.ts');
 const { LocalFaceTransport } = loadApp('transport/localFace.ts');
@@ -327,4 +327,62 @@ test('local connect: the controller’s own refusal reason is shown, not "contro
   assert.equal(snapshot.detail, 'Motion needs every onsite confirmation.');
   const down = new LocalFaceTransport({ fetcher: async () => ({ ok: false, status: 500, json: async () => ({}) }) });
   assert.match((await down.connect({})).detail, /vbot:controller/);
+});
+
+test('the simulated dog arms every move and accepts a move show', async () => {
+  const { MOVE_NAMES } = loadApp('domain/catalog.ts');
+  const h = await connected();
+  assert.deepEqual([...h.snapshot.capabilities.armedMoves], [...MOVE_NAMES]);
+  assert.equal(h.snapshot.capabilities.move.available, true);
+  const show = validScore({ cues: [{ id: 'm', type: 'move', move: 'turn_left_30', faceId: 86 }] });
+  const receipt = await h.transport.submit(h.envelope(show));
+  assert.equal(receipt.state, 'accepted');
+  h.advance(100);
+  assert.equal((await h.transport.status()).run.state, 'completed');
+});
+
+test('a simulated dog without motion refuses a move show', async () => {
+  const h = await connected();
+  h.transport.setFault('no-motion');
+  h.snapshot = await h.transport.status();
+  const receipt = await h.transport.submit(h.envelope(validScore({ cues: [{ id: 'm', type: 'move', move: 'step_back' }] }), h.snapshot));
+  assert.equal(receipt.state, 'rejected');
+});
+
+test('local drive: each call is exactly one POST to the drive route and nothing is retried', async () => {
+  const calls = [];
+  const transport = new LocalFaceTransport({ fetcher: async (url, init) => { calls.push({ url, body: JSON.parse(init.body) }); return reply({ state: 'started' }); } });
+  assert.deepEqual(plain(await transport.drive.start()), { ok: true });
+  assert.equal(await transport.drive.frame({ seq: 4, vx: 0.1, vy: 0, wz: -0.2 }), true);
+  assert.equal((await transport.drive.stop()).ok, true);
+  assert.deepEqual(calls.map(call => [call.url, call.body.action]), [['/api/app/drive', 'start'], ['/api/app/drive', 'frame'], ['/api/app/drive', 'stop']]);
+  assert.deepEqual({ ...calls[1].body }, { action: 'frame', seq: 4, vx: 0.1, vy: 0, wz: -0.2 });
+});
+
+test('local drive: a refusal carries the controller’s reason, and a failed frame or start never throws', async () => {
+  const refused = new LocalFaceTransport({ fetcher: async () => reply({ reason: 'Stand it first.' }, false) });
+  assert.deepEqual(plain(await refused.drive.start()), { ok: false, reason: 'Stand it first.' });
+  assert.equal(await refused.drive.frame({ seq: 1, vx: 0, vy: 0, wz: 0 }), false);
+  const down = new LocalFaceTransport({ fetcher: async () => { throw new Error('network'); } });
+  assert.equal((await down.drive.start()).ok, false);
+  assert.equal(await down.drive.frame({ seq: 1, vx: 0, vy: 0, wz: 0 }), false);
+  const stop = await down.drive.stop();
+  assert.equal(stop.ok, false);
+  assert.match(stop.reason, /stops by itself/);
+});
+
+test('local drive: a controller without driving reports it as unavailable, not as a crash', async () => {
+  const { noCapabilities } = loadApp('transport/types.ts');
+  const caps = noCapabilities();
+  assert.equal(caps.drive.available, false);
+  assert.equal(caps.driveLimits, null);
+});
+
+test('the simulated dog can rehearse a drive without any robot', async () => {
+  const h = await connected();
+  assert.equal(h.snapshot.capabilities.drive.available, true);
+  await h.transport.drive.start();
+  await h.transport.drive.frame({ seq: 1, vx: 0, vy: 0, wz: 0.1 });
+  await h.transport.drive.stop();
+  assert.deepEqual([...h.transport.driveLog], ['start', 'frame', 'stop']);
 });

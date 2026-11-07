@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { vbotEventText, vbotReactionLabel, type ReactionProfile } from '../vbotDemo';
+import { DEFAULT_REACTION_PROFILE, vbotEventText, vbotReactionLabel, type ReactionProfile } from '../vbotDemo';
 import type { VbotCompanionControl } from '../useVbotCompanion';
 
 type Props = { control: VbotCompanionControl; gameId: string | null; canArm: boolean; ended: boolean; blockedReason?: string; practice?: boolean; demoOpponent?: boolean };
@@ -9,7 +9,7 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
   const [target, setTarget] = useState(status?.target || '');
   const [networkLabel, setNetworkLabel] = useState('');
   const networkSeen = useRef<string | null>(null);
-  const [reactionProfile, setReactionProfile] = useState<ReactionProfile>('balanced');
+  const [reactionProfile, setReactionProfile] = useState<ReactionProfile>(DEFAULT_REACTION_PROFILE);
   const [watchUntil, setWatchUntil] = useState(0);
   const watchProbe = useRef(false);
   const checkRef = useRef(control.check);
@@ -56,7 +56,7 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
   return <section id="vbot-companion" className="vbot-companion" aria-label="VBOT companion">
     <div className="vbot-header"><div><span className="vbot-kicker">ROBOT COMPANION</span><h3>VBOT reacts with you</h3></div>
       <span className={`vbot-badge ${linked ? 'on' : ''}`} role="status">{badge}</span></div>
-    <p className="vbot-copy">{practice ? 'Correct queen and rook captures earn the full Rock You dance when rewards are live and VBOT is ready.' : 'Good moves earn a random brief gesture. Major gains and a confirmed win can earn Rock You. Blunders get a sad reaction.'}</p>
+    <p className="vbot-copy">{practice ? 'Correct queen and rook captures earn the full Rock You dance when rewards are live and VBOT is ready.' : (linked ? status?.reactionProfile === 'demo' : reactionProfile === 'demo') ? 'Demo mode: VBOT dances Rock You on every second move you play, whatever the coach says.' : 'Good moves earn a random brief gesture. Major gains and a confirmed win can earn Rock You. Blunders get a sad reaction.'}</p>
     <details className="vbot-settings"><summary>Demo preflight & connection health</summary>
       <ul className="vbot-preflight">
         {(offline || !nativeAvailable) && <li>Local robot controller is unavailable.</li>}
@@ -85,6 +85,7 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
       : status?.finishPending && !status?.busy ? 'Confirming the final Lichess result. No new move reactions will start.'
       : status?.busy ? 'A reaction is in progress, including its readiness checks. New moves are not queued.'
       : (status?.cooldownRemaining || 0) > 0 ? `Resting for ${Math.ceil(status?.cooldownRemaining || 0)}s before another reaction.`
+      : status?.reactionProfile === 'demo' ? 'Demo mode: Rock You on every second move you play. A move made while VBOT is dancing moves the dance to your next move.'
       : 'Listening for the next eligible coach verdict. Earlier moves are not replayed.'}</p>}
     {!linked && attention && <p className="vbot-notice" role="status">Paused: {attention.reason || attention.message} Inspect VBOT, then check again before enabling reactions.</p>}
     {status?.network && <div className="vbot-network-summary" role="status">
@@ -119,11 +120,12 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
           </>}
         </details>
         <label className="vbot-profile">Reaction style
-          <select value={reactionProfile} disabled={locked} onChange={e => setReactionProfile(e.target.value as ReactionProfile)}>
+          <select value={practice && reactionProfile === 'demo' ? 'balanced' : reactionProfile} disabled={locked} onChange={e => setReactionProfile(e.target.value as ReactionProfile)}>
+            {!practice && <option value="demo">Demo · Rock You every second move</option>}
             <option value="quiet">Quiet · head gestures</option><option value="balanced">Balanced · varied gestures</option><option value="showmanship">Showmanship · shorter brief-gesture rest</option>
           </select>
         </label>
-        <p className="vbot-footnote">Showmanship uses a 3-second brief-gesture rest instead of 5. Dance intervals, clock restrictions, rehearsals and robot safety checks remain in force. Wins and capture lessons retain their full celebration.</p>
+        <p className="vbot-footnote">Demo skips the coach verdicts, the three-minute dance interval and the fast-clock limit, so VBOT dances a lot: keep the space clear. Showmanship uses a 3-second brief-gesture rest instead of 5. Dance intervals, clock restrictions, rehearsals and robot safety checks remain in force. Wins and capture lessons retain their full celebration.</p>
         <div className="vbot-actions"><button className="ghost" disabled={locked || !target.trim()} onClick={() => void control.check(target.trim())}>{pending ? 'Checking…' : 'Check robot'}</button>
           <button className="ghost" disabled={locked || !canArm} onClick={() => void control.connect('rehearsal', target.trim(), false, reactionProfile)}>Preview without motion</button></div>
         {status?.readiness?.target === target.trim() && <p className={`vbot-readiness ${ready ? 'ready' : ''}`} role="status">{ready ? 'Robot passed readiness. Enabling live reactions includes a fresh check.'

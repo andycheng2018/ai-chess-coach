@@ -4,7 +4,8 @@
  * resent: the controller and the dog keep their own deduplication records.
  */
 import type { CommandEnvelope, CommandReceipt, DeviceSnapshot } from '../domain/commands';
-import { emptySnapshot, noCapabilities, type ConnectOptions, type DeviceTransport } from './types';
+import type { DriveFrame } from '../domain/drive';
+import { emptySnapshot, noCapabilities, type ConnectOptions, type DeviceTransport, type DriveControl } from './types';
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -12,6 +13,7 @@ const CONTROLLER_DOWN = 'The local controller isn’t running. Start it with `np
 const CONTROL_TIMEOUT_MS = 30000;
 const STATUS_TIMEOUT_MS = 4000;
 const POLL_MS = 1200;
+const FRAME_TIMEOUT_MS = 1500;
 
 export class LocalFaceTransport implements DeviceTransport {
   readonly kind = 'local-face' as const;
@@ -29,12 +31,36 @@ export class LocalFaceTransport implements DeviceTransport {
     this.downMessage = options.downMessage ?? CONTROLLER_DOWN;
   }
 
-  private async post(path: string, body: object): Promise<Response> {
+  private async post(path: string, body: object, timeoutMs = CONTROL_TIMEOUT_MS): Promise<Response> {
     return this.fetcher(`${this.base}/${path}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   }
+
+  private async driveCall(body: object, timeoutMs?: number): Promise<{ ok: boolean; status: string | null; reason: string | null }> {
+    const response = await this.post('drive', body, timeoutMs);
+    let reply: { state?: string; reason?: string } | null = null;
+    try { reply = await response.json(); } catch { /* unreadable */ }
+    return { ok: response.ok, status: reply?.state ?? null, reason: reply?.reason ?? null };
+  }
+
+  /** Each call is one POST and none is ever retried. A frame has no reply the dog depends on. */
+  readonly drive: DriveControl = {
+    start: async () => {
+      try {
+        const reply = await this.driveCall({ action: 'start' });
+        return reply.ok && reply.status === 'started' ? { ok: true as const } : { ok: false as const, reason: reply.reason ?? 'The dog did not start a drive.' };
+      } catch { return { ok: false as const, reason: 'The controller didn’t answer, so no drive was started.' }; }
+    },
+    frame: async (frame: DriveFrame) => {
+      try { return (await this.driveCall({ action: 'frame', ...frame }, FRAME_TIMEOUT_MS)).ok; } catch { return false; }
+    },
+    stop: async () => {
+      try { const reply = await this.driveCall({ action: 'stop' }); return { ok: reply.ok, reason: reply.reason }; }
+      catch { return { ok: false, reason: 'The stop request didn’t reach the controller. The dog stops by itself when frames stop.' }; }
+    },
+  };
 
   private accept(snapshot: DeviceSnapshot): DeviceSnapshot {
     this.last = snapshot;

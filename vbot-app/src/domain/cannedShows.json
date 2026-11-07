@@ -193,5 +193,24 @@
         "caption": "And… scene."
       }
     ]
+  },
+  {
+    "schemaVersion": 1,
+    "id": "canned-rock-you",
+    "title": "Rock You",
+    "notes": "The Rock You dance on its own, about 40 seconds. Physical motion: needs motion enabled for this connection, or a measured rehearsal on this dog. Give the dog plenty of clear space.",
+    "origin": "canned",
+    "revision": 1,
+    "repeat": 1,
+    "createdAt": 1793491200000,
+    "updatedAt": 1793491200000,
+    "cues": [
+      {
+        "id": "ry-01",
+        "type": "body",
+        "preset": "actions/ROCKYOU.json",
+        "caption": "Rock You."
+      }
+    ]
   }
 ]

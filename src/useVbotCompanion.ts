@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { connectVbotWithReadiness, type VbotConnectPayload, vbotNeedsDetach, vbotManagedSession, vbotRequest, type VbotStatus, type ReactionProfile } from './vbotDemo';
+import { connectVbotWithReadiness, type VbotConnectPayload, vbotNeedsDetach, vbotManagedSession, vbotRequest, type VbotStatus, type ReactionProfile, DEFAULT_REACTION_PROFILE } from './vbotDemo';
 
 export type CompanionContext = {
   gameId: string | null; playerColor: 'white' | 'black';
@@ -93,7 +93,7 @@ export function useVbotCompanion(context: CompanionContext) {
     check: (target: string) => perform('check', { target }),
     remember: (target: string, label: string, networkId: string) => perform('networks/remember', { target, label, networkId }),
     startPerformance: (payload: { target: string; dances: number; pace: string; requestId: string; confirmSafeWorkspace: boolean; confirmHandsetStop: boolean }) => perform('performance/start', payload),
-    connect: (mode: 'live' | 'rehearsal', target: string, confirmed: boolean, reactionProfile: ReactionProfile = 'balanced') => {
+    connect: (mode: 'live' | 'rehearsal', target: string, confirmed: boolean, reactionProfile: ReactionProfile = DEFAULT_REACTION_PROFILE) => {
       const c = current.current;
       if (!c.canArm || !c.gameId) return Promise.resolve();
       return perform('connect', { gameId: c.gameId, playerColor: c.playerColor, mode, target,

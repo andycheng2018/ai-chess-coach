@@ -20,6 +20,12 @@ from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRES
 from vbot_performance import performance_plan
 
 PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET)
+# Demo (the chess app's default choice) dances Rock You on every second human
+# move, whatever the coach says. A request that names no style stays Balanced.
+REACTION_PROFILES = ("demo", "quiet", "balanced", "showmanship")
+DEFAULT_REACTION_PROFILE = "balanced"
+DEMO_REST_SECONDS = 3
+DEMO_REASON = "Demo mode: Rock You every second move."
 SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"
 PROFILE_PATH = Path(os.environ.get('CHESS_DATA_HOME', Path(__file__).resolve().parents[1])) / "vbot-demo" / "device-verification.local.json"
 
@@ -164,7 +170,8 @@ class VbotDemo:
         self.readiness_at = float("-inf")
         self.probe_generation = 0
         self.policy = CelebrationPolicy()
-        self.reaction_profile = "balanced"
+        self.reaction_profile = DEFAULT_REACTION_PROFILE
+        self.demo_next_ply = None
         self.stream_line = ()
         self.last_small_preset = None
         self.last_dance_finished = float("-inf")
@@ -248,7 +255,7 @@ class VbotDemo:
         with self.lock:
             return {"sessionKind": self.session_kind, "performance": self.performance, "performanceApiVersion": 1,
                     "companionApiVersion": 1, "generation": self.generation,
-                    "reactionProfile": self.reaction_profile,
+                    "reactionProfile": self.reaction_profile, "demoNextPly": self.demo_next_ply,
                     "network": self.network_book.snapshot() if self.network_book is not None else None,
                     "readiness": self.readiness,
                     "readinessFresh": self.readiness is not None and self.clock() - self.readiness_at <= 30,
@@ -514,9 +521,9 @@ class VbotDemo:
     def arm(self, payload: dict) -> dict:
         self._sync_network(force=True)
         mode = payload.get("mode", "rehearsal")
-        reaction_profile = payload.get("reactionProfile", "balanced")
-        if reaction_profile not in {"quiet", "balanced", "showmanship"}:
-            raise ValueError("Choose Quiet, Balanced, or Showmanship reactions.")
+        reaction_profile = payload.get("reactionProfile", DEFAULT_REACTION_PROFILE)
+        if reaction_profile not in REACTION_PROFILES:
+            raise ValueError("Choose Demo, Quiet, Balanced, or Showmanship reactions.")
         game_id = str(payload.get("gameId", "")).strip()
         preset = payload.get("preset", PRESETS[0])
         target = str(payload.get("target", self.target)).strip()
@@ -549,6 +556,10 @@ class VbotDemo:
             self.reaction_profile = reaction_profile
             self.mode, self.game_id, self.target, self.preset = mode, game_id, target, preset
             self.session_kind = "capture-practice" if payload.get("practice") is True and game_id == PRACTICE_ID else "game"
+            if self.session_kind != "game" and reaction_profile == "demo":
+                # Capture Practice keeps its own capture rewards.
+                self.reaction_profile = "balanced"
+            self.demo_next_ply = None
             self.compatibility = compatibility
             self.player_color = payload.get("playerColor")
             self.finish_pending = self.victory_pending = False
@@ -782,6 +793,7 @@ class VbotDemo:
             common = min(len(current_line), len(self.stream_line))
             if self.stream_line and (len(current_line) < len(self.stream_line) or current_line[:common] != self.stream_line[:common]):
                 self.policy = CelebrationPolicy()
+                self.demo_next_ply = None  # A takeback or new line restarts the two-move count.
             self.stream_line = current_line
             # Classify only stream-confirmed records, once per human ply. Out-of-order or
             # replayed positions cannot contaminate a later baseline.
@@ -790,8 +802,43 @@ class VbotDemo:
                 return self._event("skipped", reason="This ply was already handled.", gameId=record["gameId"], ply=record["ply"])
             if self.policy.identity == (record["gameId"], record["playerColor"]) and self.policy.last_ply is not None and record["ply"] <= self.policy.last_ply:
                 return self._event("skipped", reason="Out-of-order analysis cannot update the celebration baseline.")
+            if self._demo_rhythm():
+                return self._submit(record, {"tier": "demo", "reason": DEMO_REASON, "briefOnly": False})
             decision = self.policy.observe(record, game)
             return self._submit(record, decision)
+
+    def _demo_rhythm(self):
+        return self.reaction_profile == "demo" and self.session_kind == "game"
+
+    def _submit_demo(self, record, fields):
+        """Demo mode: Rock You on every second human move, ignoring the coach verdict.
+
+        Counts by ply, so a skipped analysis still counts as a move. A move that
+        lands while the dog is busy or resting is not queued; the dance waits
+        for the next human move after that instead.
+        """
+        ply = record.get("ply")
+        if self.demo_next_ply is None:
+            self.demo_next_ply = ply + 2
+            return self._event("skipped", reason="Demo mode: Rock You on your next move.", tier="demo", **fields)
+        if ply < self.demo_next_ply:
+            return self._event("skipped", reason="Demo mode: Rock You on your next move.", tier="demo", **fields)
+        if self.busy or self.clock() - max(self.last_started, self.last_finished) < self.cooldown:
+            return self._event("skipped", reason="Demo mode: VBOT is still dancing or resting; Rock You on your next move.", tier="demo", **fields)
+        self.demo_next_ply = ply + 4
+        preset = PRESETS[0]
+        self.cooldown = DEMO_REST_SECONDS
+        self.last_started = self.clock()
+        context = {"tier": "demo", "reason": DEMO_REASON, "paceReason": None, "metrics": None, "preset": preset, **fields}
+        if self.mode == "rehearsal":
+            self.last_dance_finished = self.clock()
+            return self._event("rehearsed", message="Would request Rock You; no robot contacted.", **context)
+        self.busy = True
+        request_id = uuid.uuid4().hex
+        generation = self.generation
+        self._event("requested", requestId=request_id, **context)
+        threading.Thread(target=self._run, args=(self.target, preset, request_id, generation, "demo"), daemon=True).start()
+        return {"status": "requested", "requestId": request_id, "tier": "demo", "preset": preset}
 
     def rehearse(self, classification: str, scenario="ordinary") -> dict:
         if classification not in {"good", "inaccuracy", "mistake", "blunder"}:
@@ -815,7 +862,8 @@ class VbotDemo:
             return self._event("skipped", reason="Match is finishing; move reactions are closed.", **fields)
         if record["gameId"] != self.game_id:
             return self._event("skipped", reason="Another game is selected.", **fields)
-        if record["classification"] not in GOOD_LABELS | {"blunder"}:
+        demo = (decision or {}).get("tier") == "demo" and self._demo_rhythm() and isinstance(record.get("ply"), int)
+        if not demo and record["classification"] not in GOOD_LABELS | {"blunder"}:
             return self._event("skipped", reason="No reaction for this coach classification.", **fields)
         key = (record["gameId"], record["playerColor"], record["ply"])
         if key in self.seen:
@@ -824,6 +872,8 @@ class VbotDemo:
         self.seen[key] = True
         while len(self.seen) > 4096:
             self.seen.popitem(last=False)
+        if demo:
+            return self._submit_demo(record, fields)
         if self.busy or self.clock() - max(self.last_started, self.last_finished) < self.cooldown:
             return self._event("skipped", reason="Action busy or within cooldown; not queued.", **fields)
         decision = decision or {"tier":"small", "reason":"Ordinary good move.", "briefOnly":False}
@@ -916,7 +966,7 @@ class VbotDemo:
             with self.lock:
                 self.busy = False
                 self.last_finished = self.clock()
-                if tier in {"major", "sad"} or (tier == 'performance' and preset in {PRESETS[0], SAD_PRESET}):
+                if tier in {"major", "sad", "demo"} or (tier == 'performance' and preset in {PRESETS[0], SAD_PRESET}):
                     self.last_dance_finished = self.clock()
 
 

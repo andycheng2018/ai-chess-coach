@@ -45,6 +45,8 @@ export type DeviceSnapshot = {
   /** Names the connected dog reported, or null if it hasn't been asked. */
   supportedFaces: string[] | null;
   run: RunView | null; events: DeviceEvent[];
+  /** True while a hold-to-drive is open. Older controllers omit it. */
+  driving?: boolean;
 };
 
 export function makeEnvelope(score: Score, snapshot: DeviceSnapshot, now: number): CommandEnvelope {

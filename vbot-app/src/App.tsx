@@ -5,6 +5,7 @@ import { ActionsView } from './views/ActionsView';
 import { PerformancesView } from './views/PerformancesView';
 import { StageView } from './views/StageView';
 import { PlayerView } from './views/PlayerView';
+import { RunSheet } from './components/RunSheet';
 
 type Tab = 'dog' | 'actions' | 'shows' | 'stage' | 'player';
 
@@ -55,12 +56,13 @@ export function App() {
           {studio.library.warnings.map(warning => <p key={warning} className="notice notice-warn" role="alert">{warning}</p>)}
           {!studio.storageOk && <p className="notice notice-warn" role="alert">This browser isn’t saving changes. Export any show you want to keep.</p>}
           {tab === 'dog' && <DogView studio={studio} onBrowse={() => setTab('actions')} />}
-          {tab === 'actions' && <ActionsView studio={studio} onStage={() => setTab('stage')} />}
+          {tab === 'actions' && <ActionsView studio={studio} />}
           {tab === 'shows' && <PerformancesView studio={studio} onStage={() => setTab('stage')} />}
           {tab === 'stage' && <StageView studio={studio} onShows={() => setTab('shows')} />}
           {tab === 'player' && <PlayerView studio={studio} />}
         </main>
       </div>
+      {tab !== 'stage' && <RunSheet studio={studio} onOpenStage={() => setTab('stage')} />}
     </div>
   );
 }

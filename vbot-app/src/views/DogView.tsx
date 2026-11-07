@@ -16,7 +16,7 @@ const SOURCES: readonly { id: TransportKind; title: string; body: string }[] = [
   { id: 'cloud', title: 'Cloud', body: 'Not built yet. It needs the backend contract.' },
 ];
 
-const CAPABILITY_ROWS: readonly Exclude<CapabilityKind, 'wait'>[] = ['face', 'head', 'body', 'speech', 'navigation'];
+const CAPABILITY_ROWS: readonly Exclude<CapabilityKind, 'wait'>[] = ['face', 'head', 'body', 'move', 'speech', 'navigation'];
 
 export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => void }) {
   const { snapshot, settings, simulated, running } = studio;
@@ -67,20 +67,34 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
           {settings.kind === 'cloud' && <p className="notice">{CLOUD_MISSING}</p>}
         </section>
 
-        {settings.kind === 'local-face' && !connected && (
-          <section className="card">
-            <h2>Enable motion (optional)</h2>
-            <p className="fine">Head and body presets move a real robot. Tick each box only once it is true, then connect. This lasts for one connection of up to 15 minutes, and nothing about it is remembered.</p>
-            {(['onsite', 'standing', 'clear'] as const).map(key => (
-              <label key={key} className="check">
-                <input type="checkbox" checked={studio.motionConfirm[key]} disabled={running || studio.connecting}
-                  onChange={event => studio.setMotionConfirm({ ...studio.motionConfirm, [key]: event.target.checked })} />
-                <span>{{ onsite: 'I am with the dog and can stop it by hand.', standing: 'It is standing on level ground.', clear: 'The area around it is clear.' }[key]}</span>
-              </label>
-            ))}
-            <p className="fine">Presets never overlap a face: a face is released before each one starts. A preset in progress cannot be cancelled from here, so keep the dog’s handset Stop within reach.</p>
-          </section>
-        )}
+        {settings.kind === 'local-face' && (() => {
+          const armed = connected && Boolean(snapshot.capabilities.move?.available || snapshot.capabilities.body.available);
+          const ready = studio.motionConfirm.onsite && studio.motionConfirm.standing && studio.motionConfirm.clear;
+          return (
+            <section className="card">
+              <h2>{armed ? 'Motion is on' : 'Enable motion (optional)'}</h2>
+              {armed
+                ? <p className="fine">Motion is enabled for this connection, which lasts up to 15 minutes from when you connected. Disconnect or reconnect to turn it off.</p>
+                : <>
+                    <p className="fine">Head, body and move actions move a real robot. Tick each box only once it is true. This lasts for one connection of up to 15 minutes, and nothing about it is remembered.</p>
+                    {(['onsite', 'standing', 'clear'] as const).map(key => (
+                      <label key={key} className="check">
+                        <input type="checkbox" checked={studio.motionConfirm[key]} disabled={running || studio.connecting}
+                          onChange={event => studio.setMotionConfirm({ ...studio.motionConfirm, [key]: event.target.checked })} />
+                        <span>{{ onsite: 'I am with the dog and can stop it by hand.', standing: 'It is standing on level ground.', clear: 'The area around it is clear.' }[key]}</span>
+                      </label>
+                    ))}
+                    {connected && (
+                      <button className="btn btn-primary" disabled={!ready || running || studio.connecting} onClick={() => void studio.connect()}>
+                        {studio.connecting ? 'Reconnecting…' : 'Reconnect with motion'}
+                      </button>
+                    )}
+                    {connected && <p className="fine">This reconnects to the dog with motion on. Nothing is replayed, and a show can’t be running.</p>}
+                  </>}
+              <p className="fine">Presets never overlap a face: a face is released before each one starts. A preset or move in progress cannot be cancelled from here, so keep the dog’s handset Stop within reach.</p>
+            </section>
+          );
+        })()}
 
         {isNativeApp && settings.kind === 'local-face' && <PairingCard target={settings.target} locked={connected || running || studio.connecting} />}
 
@@ -88,7 +102,7 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
           <h2>What it can do now</h2>
           <ul className="capabilities">
             {CAPABILITY_ROWS.map(kind => {
-              const capability = snapshot.capabilities[kind];
+              const capability = snapshot.capabilities[kind] ?? { available: false, reason: 'This controller doesn’t report basic moves. Update it.' };
               return (
                 <li key={kind} className={capability.available ? 'is-on' : 'is-off'}>
                   <span className="cap-mark" aria-hidden="true">{capability.available ? '✓' : '–'}</span>

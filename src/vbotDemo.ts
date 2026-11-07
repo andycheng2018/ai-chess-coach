@@ -31,7 +31,9 @@ export type VbotNetwork = {
   addresses: { target: string; lastVerifiedAt?: number | null }[];
   profiles: { id: string; label: string; targets: string[] }[];
 };
-export type ReactionProfile = 'quiet' | 'balanced' | 'showmanship';
+export type ReactionProfile = 'demo' | 'quiet' | 'balanced' | 'showmanship';
+/** The chess app's default: Rock You on every second move. */
+export const DEFAULT_REACTION_PROFILE: ReactionProfile = 'demo';
 export type PerformancePlan = {
   title: string; dances: number; pace: string; target: string; allRehearsed: boolean;
   estimatedSeconds: number | null; missingPresets: string[]; note: string;

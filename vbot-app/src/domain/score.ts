@@ -4,7 +4,7 @@
  * unknown fields, so an import can't smuggle a payload through. Nothing here
  * contacts a robot.
  */
-import { CATALOG, FACE_DEFAULT_MS, isRestrictedFace, MOTION_PRESET_NAMES, type CatalogEntry, type CapabilityKind } from './catalog';
+import { CATALOG, FACE_DEFAULT_MS, FACELESS_MOVE_NAMES, isRestrictedFace, MOTION_PRESET_NAMES, MOVE_NAME_SET, type CatalogEntry, type CapabilityKind } from './catalog';
 
 export const SCORE_SCHEMA_VERSION = 1;
 export const LIMITS = {
@@ -16,7 +16,9 @@ export const LIMITS = {
 export type FaceCue = { id: string; type: 'face'; assetId: number; durationMs: number; caption?: string };
 export type MotionCue = { id: string; type: 'head' | 'body'; preset: string; caption?: string };
 export type WaitCue = { id: string; type: 'wait'; durationMs: number; caption?: string };
-export type Cue = FaceCue | MotionCue | WaitCue;
+/** One bounded basic move, optionally with a face shown for its duration. The dog owns the amounts. */
+export type MoveCue = { id: string; type: 'move'; move: string; faceId?: number; caption?: string };
+export type Cue = FaceCue | MotionCue | MoveCue | WaitCue;
 
 export type Score = {
   schemaVersion: 1; id: string; title: string; notes: string; origin: 'custom' | 'canned';
@@ -30,6 +32,7 @@ const CUE_KEYS: Record<Cue['type'], ReadonlySet<string>> = {
   face: new Set(['id', 'type', 'assetId', 'durationMs', 'caption']),
   head: new Set(['id', 'type', 'preset', 'caption']),
   body: new Set(['id', 'type', 'preset', 'caption']),
+  move: new Set(['id', 'type', 'move', 'faceId', 'caption']),
   wait: new Set(['id', 'type', 'durationMs', 'caption']),
 };
 const ID = /^[A-Za-z0-9_-]+$/;
@@ -44,7 +47,7 @@ function parseCue(raw: unknown, index: number, errors: string[]): Cue | null {
   const where = `Cue ${index + 1}`;
   if (!isRecord(raw)) { errors.push(`${where} is not an object.`); return null; }
   const type = raw.type;
-  if (type !== 'face' && type !== 'head' && type !== 'body' && type !== 'wait') {
+  if (type !== 'face' && type !== 'head' && type !== 'body' && type !== 'move' && type !== 'wait') {
     errors.push(`${where}: "${String(type)}" isn't a supported cue type in v1.`);
     return null;
   }
@@ -72,6 +75,16 @@ function parseCue(raw: unknown, index: number, errors: string[]): Cue | null {
       errors.push(`${where}: wait must be ${LIMITS.waitMinMs}–${LIMITS.waitMaxMs} ms.`); return null;
     }
     return { id: raw.id, type, durationMs: raw.durationMs, ...extra };
+  }
+  if (type === 'move') {
+    if (typeof raw.move !== 'string' || !MOVE_NAME_SET.has(raw.move)) {
+      errors.push(`${where}: "${String(raw.move)}" isn't an approved move.`); return null;
+    }
+    if (raw.faceId === undefined) return { id: raw.id, type, move: raw.move, ...extra };
+    if (FACELESS_MOVE_NAMES.has(raw.move)) { errors.push(`${where}: a step runs the vendor preset, which controls the screen, so it can't carry a face.`); return null; }
+    if (!inRange(raw.faceId, 0, 255)) { errors.push(`${where} needs a face asset ID from 0 to 255.`); return null; }
+    if (isRestrictedFace(raw.faceId)) { errors.push(`${where}: face ${raw.faceId} is a charging or diagnostic indicator and can't be used in a show.`); return null; }
+    return { id: raw.id, type, move: raw.move, faceId: raw.faceId, ...extra };
   }
   if (typeof raw.preset !== 'string' || !MOTION_PRESET_NAMES.has(raw.preset)) {
     errors.push(`${where}: "${String(raw.preset)}" isn't an approved preset.`); return null;
@@ -125,12 +138,14 @@ const BY_ID = new Map(CATALOG.map(entry => [entry.id, entry]));
 export function entryForCue(cue: Cue): CatalogEntry | null {
   if (cue.type === 'face') return BY_ID.get(`face:${cue.assetId}`) ?? null;
   if (cue.type === 'wait') return BY_ID.get('wait') ?? null;
+  if (cue.type === 'move') return BY_ID.get(`move:${cue.move}`) ?? null;
   return BY_ID.get(`${cue.type}:${cue.preset}`) ?? null;
 }
 
 export function cueTitle(cue: Cue): string {
   if (cue.type === 'face') return entryForCue(cue)?.label ?? `Face ${cue.assetId}`;
   if (cue.type === 'wait') return 'Wait';
+  if (cue.type === 'move') return entryForCue(cue)?.label ?? cue.move;
   return entryForCue(cue)?.label ?? cue.preset;
 }
 
@@ -155,6 +170,12 @@ export function buildTimeline(score: Pick<Score, 'cues' | 'repeat'>): { items: T
 export type CapabilityState = { available: boolean; reason: string | null };
 export type Capabilities = {
   face: CapabilityState; head: CapabilityState; body: CapabilityState;
+  /** Basic moves. Absent from an older controller, which means unavailable. */
+  move?: CapabilityState;
+  /** Hold-to-drive. Absent from an older controller, which means unavailable. */
+  drive?: CapabilityState;
+  /** The dog's velocity caps (m/s, m/s, rad/s are assumed, not documented). Null when driving is off. */
+  driveLimits?: { vx: number; vy: number; wz: number } | null;
   speech: CapabilityState; navigation: CapabilityState;
   /** Asset IDs this dog reports; null means it hasn't been asked. */
   supportedFaceIds: number[] | null;
@@ -165,6 +186,8 @@ export type Capabilities = {
    * permission to try them, not a rehearsal record, and it lapses with the connection.
    */
   armedPresets?: string[];
+  /** Moves enabled for this one connection. A move has no rehearsal record, so only this admits it. */
+  armedMoves?: string[];
 };
 export type Blocker = { cueId: string; kind: CapabilityKind; reason: string };
 
@@ -177,12 +200,20 @@ export function admitScore(score: Pick<Score, 'cues'>, capabilities: Capabilitie
   const blockers: Blocker[] = [];
   for (const cue of score.cues) {
     if (cue.type === 'wait') continue;
-    const capability = capabilities[cue.type];
+    const capability = cue.type === 'move'
+      ? capabilities.move ?? { available: false, reason: 'This controller doesn’t support basic moves. Update it.' }
+      : capabilities[cue.type];
     if (!capability.available) {
       blockers.push({ cueId: cue.id, kind: cue.type, reason: capability.reason ?? `${cue.type} isn't available.` });
     } else if (cue.type === 'face') {
       if (capabilities.supportedFaceIds && !capabilities.supportedFaceIds.includes(cue.assetId)) {
         blockers.push({ cueId: cue.id, kind: 'face', reason: `This dog doesn't list face ${cue.assetId}.` });
+      }
+    } else if (cue.type === 'move') {
+      if (!(capabilities.armedMoves ?? []).includes(cue.move)) {
+        blockers.push({ cueId: cue.id, kind: 'move', reason: `${cueTitle(cue)} needs motion enabled for this connection. Moves have no rehearsal record.` });
+      } else if (cue.faceId !== undefined && capabilities.supportedFaceIds && !capabilities.supportedFaceIds.includes(cue.faceId)) {
+        blockers.push({ cueId: cue.id, kind: 'face', reason: `This dog doesn't list face ${cue.faceId}.` });
       }
     } else if (!capabilities.rehearsedPresets.includes(cue.preset) && !(capabilities.armedPresets ?? []).includes(cue.preset)) {
       blockers.push({ cueId: cue.id, kind: cue.type, reason: `${cueTitle(cue)} needs a measured rehearsal on this dog, or motion enabled for this connection.` });
@@ -221,8 +252,15 @@ export function cueFromEntry(entry: CatalogEntry): Cue | null {
   const id = newId();
   if (entry.kind === 'face' && entry.assetId !== undefined) return { id, type: 'face', assetId: entry.assetId, durationMs: entry.durationMs ?? FACE_DEFAULT_MS };
   if (entry.kind === 'wait') return { id, type: 'wait', durationMs: entry.durationMs ?? 1000 };
+  if (entry.kind === 'move' && entry.move) return { id, type: 'move', move: entry.move };
   if ((entry.kind === 'head' || entry.kind === 'body') && entry.preset) return { id, type: entry.kind, preset: entry.preset };
   return null;
+}
+
+/** The one place a move gains or loses its face. Null clears it. */
+export function withMoveFace(cue: MoveCue, faceId: number | null): MoveCue {
+  const { faceId: _dropped, ...rest } = cue;
+  return faceId === null || FACELESS_MOVE_NAMES.has(cue.move) ? rest : { ...rest, faceId };
 }
 
 export function clampDuration(cue: FaceCue | WaitCue, ms: number): number {

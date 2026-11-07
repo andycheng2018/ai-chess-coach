@@ -43,13 +43,23 @@ function capabilities(fault: FakeFault): Capabilities {
     ? { available: false, reason: 'Simulated fault: this dog reports head and body control unavailable.' }
     : { available: true, reason: null };
   return {
-    face: { available: true, reason: null }, head: motion, body: motion,
+    face: { available: true, reason: null }, head: motion, body: motion, move: motion, drive: motion,
+    driveLimits: motion.available ? { vx: 0.15, vy: 0.10, wz: 0.40 } : null,
     speech: { available: false, reason: SPEECH_MISSING }, navigation: { available: false, reason: NAVIGATION_MISSING },
     supportedFaceIds: null, rehearsedPresets: allPresets,
+    armedMoves: CATALOG.flatMap(entry => entry.move ? [entry.move] : []),
   };
 }
 
 export class FakeTransport implements DeviceTransport {
+  /** A simulated drive that only records what it was asked, so the UI can be rehearsed with no robot. */
+  readonly driveLog: string[] = [];
+  readonly drive = {
+    start: async () => { this.driveLog.push('start'); return { ok: true as const }; },
+    frame: async () => { this.driveLog.push('frame'); return true; },
+    stop: async () => { this.driveLog.push('stop'); return { ok: true, reason: 'stopped' }; },
+  };
+
   readonly kind = 'fake' as const;
   readonly simulated = true;
   fault: FakeFault = 'none';

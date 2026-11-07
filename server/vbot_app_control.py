@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import OrderedDict, deque
 import hashlib
+import math
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,13 @@ MAX_TTL_MS, CUE_TTL_MS = 120000, 30000
 READY_TIMEOUT, ACK_TIMEOUT = 25, 8
 # A preset blocks until its terminal result and post-action checks, so it gets a long window.
 MOTION_REPLY_TIMEOUT = 150
+# Hold-to-drive. The caps mirror robot_studio.DRIVE_MAX (a test keeps them equal); the dog enforces them and refuses,
+# never clamps. A drive start waits for the dog's readiness and publisher checks. The stop reply is quick.
+DRIVE_MAX = {'vx': 0.15, 'vy': 0.10, 'wz': 0.40}
+DRIVE_START_TIMEOUT, DRIVE_STOP_TIMEOUT = 20, 8
+DRIVE_START_EVENTS = {'drive_started', 'rejected', 'duplicate'}
+DRIVE_STOP_EVENTS = {'drive_stopped', 'drive_ended'}
+DRIVE_SESSION_ENDERS = {'violation', 'error', 'eof', 'interrupted'}
 # The dog ends a session after 15 minutes, so motion enabled at connect lapses with it.
 MOTION_SESSION_MS = 15 * 60 * 1000
 IDLE_CLOSE_SECONDS = 150
@@ -45,12 +53,18 @@ LIMITS = dict(maxCues=64, maxExpanded=128, maxRepeat=5, maxTotalMs=15 * 60 * 100
               faceMin=500, faceMax=30000, waitMin=100, waitMax=60000, motionBoundMs=60000, title=80, notes=500, caption=140, idLength=64)
 SCORE_KEYS = {'schemaVersion', 'id', 'title', 'notes', 'origin', 'revision', 'repeat', 'createdAt', 'updatedAt', 'cues'}
 CUE_KEYS = {'face': {'id', 'type', 'assetId', 'durationMs', 'caption'}, 'wait': {'id', 'type', 'durationMs', 'caption'},
-            'head': {'id', 'type', 'preset', 'caption'}, 'body': {'id', 'type', 'preset', 'caption'}}
+            'head': {'id', 'type', 'preset', 'caption'}, 'body': {'id', 'type', 'preset', 'caption'},
+            'move': {'id', 'type', 'move', 'faceId', 'caption'}}
 # Mirrors robot_action.PRESETS (a test keeps them equal). The controller never imports dog-side code.
 MOTION_PRESETS = ('actions/ROCKYOU.json', 'actions/CHEER_R.json', 'actions/WAVE.json', 'atom/look_left.json', 'atom/look_right.json',
                   'atom/look_forward.json', 'atom/look_up.json', 'atom/look_down.json', 'actions/SHAKEHAND.json',
                   'actions/SHAKEHAND_L.json', 'actions/HIGH_FIVE_R.json', 'actions/HIGH_FIVE_L.json', 'actions/SAYYES.json',
                   'actions/GRIEVANCE.json', 'actions/HAPPY_LITTLE_JUMP.json', 'actions/HAPPY_JUMP.json', 'actions/JUMP_IN_PLACE.json')
+# Bounded basic moves. The amounts live on the dog (robot_studio.MOVES); a test keeps these names equal.
+MOVES = ('step_forward', 'step_back', 'step_left', 'step_right', 'turn_left_30', 'turn_right_30', 'turn_left_90', 'turn_right_90',
+         'turn_left_10', 'turn_right_10')
+# Steps run the vendor's own preset, which controls the screen, so they can't carry a face. A test keeps this equal to the dog's.
+FACELESS_MOVES = ('step_forward', 'step_back', 'step_left', 'step_right')
 MOTION_CONFIRMATIONS = ('onsite', 'standing', 'clear')
 FACE_EVENTS = {'started', 'released', 'rejected', 'unknown', 'duplicate'}
 MOTION_EVENTS = {'completed', 'rejected', 'unknown', 'failed', 'duplicate'}
@@ -88,6 +102,8 @@ def route(controller, path, payload):
             return 200, controller.submit(payload)
         if path == 'cancel':
             return 200, controller.cancel_future(payload)
+        if path == 'drive':
+            return 200, controller.drive(payload)
     except Rejected as error:
         return 400, {'state': 'rejected', 'duplicate': False, 'code': error.code, 'reason': error.reason}
     return 404, {'message': 'Unknown route.'}
@@ -124,7 +140,7 @@ def validate_score(score, motion=False):
         if not isinstance(cue, dict):
             bad('Invalid cue.')
         kind = cue.get('type')
-        if kind in {'head', 'body'} and not motion:
+        if kind in {'head', 'body', 'move'} and not motion:
             raise Rejected('capability_unavailable', MOTION_MISSING)
         if kind not in CUE_KEYS or set(cue) - CUE_KEYS[kind]:
             bad('Unsupported cue type or fields.')
@@ -135,6 +151,16 @@ def validate_score(score, motion=False):
         caption = cue.get('caption')
         if caption is not None and (not isinstance(caption, str) or len(caption) > LIMITS['caption']):
             bad('Invalid cue caption.')
+        if kind == 'move':
+            if cue.get('move') not in MOVES:
+                bad('That move is not approved.')
+            face_id = cue.get('faceId')
+            if face_id is not None and cue['move'] in FACELESS_MOVES:
+                bad('A step runs the vendor preset, which controls the screen, so it cannot carry a face.')
+            if face_id is not None and (not is_int(face_id) or not 0 <= face_id <= 255 or face_id in RESTRICTED_FACES):
+                bad('That face asset is not allowed.')
+            total += LIMITS['motionBoundMs']
+            continue
         if kind in {'head', 'body'}:
             preset = cue.get('preset')
             if not isinstance(preset, str) or preset not in MOTION_PRESETS:
@@ -194,6 +220,7 @@ class FaceSession:
         self.wall_ms = wall_ms or (lambda: int(time.time() * 1000))
         self.closed = False
         self.motion = bool(motion)
+        self.drive_limits = None
         # A motion connection runs the combined helper, and only after explicit confirmation.
         helper = ['robot_studio.py', '--serve', '--motion', '--confirm-motion'] if motion else ['robot_face.py', '--serve']
         remote = shlex.join([REMOTE_ROOT + '/.venv/bin/python', '-I', REMOTE_ROOT + '/' + helper[0], *helper[1:],
@@ -209,8 +236,14 @@ class FaceSession:
             if ready['event'] == 'session_refused':
                 raise Rejected(ready.get('code') or 'not_connected', ready.get('reason') or SESSION_FAILED)
             if motion:
-                if ready.get('protocol') != 2 or ready.get('motion') is not True or ready.get('faceOnly') is not False:
+                if (ready.get('protocol') != 4 or ready.get('motion') is not True or ready.get('faceOnly') is not False
+                        or not set(MOVES) <= set(ready.get('moves') or [])):
                     raise Rejected('backend_unavailable', "The dog's helper doesn't support motion sessions. Deploy robot_studio.py.")
+                limits = ready.get('drive')
+                # The dog must enforce exactly the caps this controller validates against.
+                if not isinstance(limits, dict) or any(limits.get(axis) != cap for axis, cap in DRIVE_MAX.items()):
+                    raise Rejected('backend_unavailable', "The dog's helper has different driving limits. Deploy the matching robot_studio.py.")
+                self.drive_limits = {axis: limits[axis] for axis in DRIVE_MAX}
             elif ready.get('protocol') != 1 or ready.get('faceOnly') is not True:
                 raise Rejected('backend_unavailable', "The dog's helper doesn't support this face protocol.")
             names = ready.get('supportedFaces')
@@ -250,6 +283,25 @@ class FaceSession:
         """Blocks until the dog reports the preset's terminal result. Never retried."""
         return self._command('motion', MOTION_EVENTS, MOTION_REPLY_TIMEOUT, preset=preset)
 
+    def play_move(self, move, face_id=None):
+        """One bounded move, with an optional face held for its duration. Never retried."""
+        fields = {'move': move, **({'faceId': face_id} if face_id is not None else {})}
+        return self._command('move', MOTION_EVENTS, MOTION_REPLY_TIMEOUT, **fields)
+
+    def drive_start(self):
+        """Arms one hold-to-drive on the dog. It publishes nothing until frames arrive."""
+        return self._command('drive_start', DRIVE_START_EVENTS, DRIVE_START_TIMEOUT)
+
+    def drive_frame(self, seq, vx, vy, wz):
+        """One velocity frame. Fire-and-forget: the dog's watchdog, not a reply, is what keeps this safe."""
+        try:
+            self.stream.writeLine(json.dumps({'op': 'drive', 'seq': seq, 'vx': vx, 'vy': vy, 'wz': wz}))
+        except Exception as error:
+            raise OutcomeUnknown('The dog stopped answering during a drive.') from error
+
+    def drive_stop(self):
+        return self._command('drive_stop', DRIVE_STOP_EVENTS, DRIVE_STOP_TIMEOUT)
+
     def release(self):
         return self._command('face_release')
 
@@ -276,6 +328,8 @@ class AppController:
         self.device, self.session, self.session_id = None, None, None
         self.lease = 0
         self.motion_until = 0
+        self.drive_lock = threading.Lock()
+        self.drive_state, self.drive_seq = None, -1
         self.target = ''
         self.run, self.cancel, self.thread = None, None, None
         self.last_activity = mono()
@@ -333,16 +387,20 @@ class AppController:
         ids = None
         if connected and self.session is not None:
             ids = sorted({int(name[:3]) for name in self.session.supported if re.match(r'\d{3}_', name)})
-        return {'face': face, 'head': motion, 'body': motion,
+        can_drive = bool(armed and getattr(self.session, 'drive_limits', None))
+        drive = {'available': can_drive, 'reason': None if can_drive else (MOTION_EXPIRED if lapsed else MOTION_MISSING if connected else reason)}
+        return {'face': face, 'head': motion, 'body': motion, 'move': motion, 'drive': drive,
+                'driveLimits': dict(DRIVE_MAX) if can_drive else None,
                 'speech': {'available': False, 'reason': SPEECH_MISSING},
                 'navigation': {'available': False, 'reason': NAVIGATION_MISSING},
                 'supportedFaceIds': ids, 'rehearsedPresets': [],
-                'armedPresets': list(MOTION_PRESETS) if armed else []}
+                'armedPresets': list(MOTION_PRESETS) if armed else [],
+                'armedMoves': list(MOVES) if armed else []}
 
     def status(self):
         with self.lock:
             active = self.run is not None and self.run['state'] not in TERMINAL
-            if (self.connection == 'connected' and not active
+            if (self.connection == 'connected' and not active and self.drive_state is None
                     and self.mono() - self.last_activity > IDLE_CLOSE_SECONDS):
                 # An idle face session must not keep chess or a show locked out.
                 self._close_session()
@@ -352,9 +410,11 @@ class AppController:
             return {'connection': self.connection, 'detail': self.detail, 'device': self.device,
                     'sessionId': self.session_id, 'leaseGeneration': self.lease, 'capabilities': self._capabilities(),
                     'supportedFaces': list(self.session.supported) if self.session is not None and self.connection == 'connected' else None,
+                    'driving': self.drive_state is not None,
                     'run': dict(self.run) if self.run else None, 'events': list(self.events)}
 
     def _close_session(self):
+        self.drive_state = None  # closing the stream is EOF to the dog, which publishes zeros and ends any drive
         session, self.session = self.session, None
         if session is not None:
             try:
@@ -486,6 +546,113 @@ class AppController:
             raise Rejected('expired', 'This command expired before it was received.')
         if self.run is not None and self.run['state'] not in TERMINAL:
             raise Rejected('busy', 'The controller is busy with another show.')
+        if self.drive_state is not None:
+            raise Rejected('busy', 'A drive is in progress. Let go of the drive button first.')
+
+    # --- hold-to-drive ---------------------------------------------------
+    def drive(self, payload):
+        action = payload.get('action') if isinstance(payload, dict) else None
+        if action == 'start':
+            return self._drive_start()
+        if action == 'frame':
+            return self._drive_frame(payload)
+        if action == 'stop':
+            return self._drive_stop()
+        raise Rejected('invalid_drive', 'Unknown drive action.')
+
+    def _drive_lost(self, session, reason):
+        """The link or the dog stopped answering mid-drive. Closing the stream is EOF to the dog, which publishes zeros."""
+        with self.lock:
+            self.drive_state = None
+            if self.session is session:
+                self._close_session()
+                self.connection, self.detail = 'lost', reason
+                self.device, self.session_id = None, None
+                self._event(reason)
+
+    def _drive_start(self):
+        with self.lock:
+            if self.connection != 'connected' or self.session is None:
+                raise Rejected('not_connected', NOT_CONNECTED)
+            if not self._motion_enabled():
+                raise Rejected('capability_unavailable', MOTION_EXPIRED if getattr(self.session, 'motion', False) else MOTION_MISSING)
+            if not getattr(self.session, 'drive_limits', None):
+                raise Rejected('capability_unavailable', "This dog's helper doesn't support driving.")
+            if self.run is not None and self.run['state'] not in TERMINAL:
+                raise Rejected('busy', 'A show is running. Wait for it to finish before driving.')
+            if self.drive_state is not None:
+                raise Rejected('busy', 'A drive is already in progress.')
+            self.drive_state, self.drive_seq = 'starting', -1
+            session = self.session
+        try:
+            reply = session.drive_start()
+        except Exception:
+            self._drive_lost(session, 'The connection to the dog was lost while starting a drive. Reconnect to check status.')
+            raise Rejected('unknown', 'The dog stopped answering while starting a drive. The connection was closed, which stops any drive.')
+        with self.lock:
+            if reply.get('event') != 'drive_started':
+                self.drive_state = None
+                raise Rejected(reply.get('code') or 'rejected', reply.get('reason') or 'The dog did not start a drive.')
+            self.drive_state = 'on'
+            self.last_activity = self.mono()
+            self._event('Driving.')
+        return {'state': 'started', 'limits': dict(DRIVE_MAX)}
+
+    @staticmethod
+    def _drive_values(payload):
+        seq = payload.get('seq')
+        if type(seq) is not int or seq < 0:
+            raise Rejected('invalid_drive', 'A drive frame needs a sequence number.')
+        values = {}
+        for axis, cap in DRIVE_MAX.items():
+            value = payload.get(axis)
+            # bool is an int in Python, and NaN fails every comparison, so test both explicitly.
+            if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > cap:
+                raise Rejected('invalid_drive', f'{axis} must be a number within ±{cap}.')
+            values[axis] = float(value)
+        return seq, values
+
+    def _drive_frame(self, payload):
+        seq, values = self._drive_values(payload)
+        with self.drive_lock:
+            session = self.session
+            if self.drive_state != 'on' or session is None:
+                return {'state': 'ignored'}   # a frame that lost the race with a stop is dropped, never sent late
+            if seq <= self.drive_seq:
+                return {'state': 'ignored'}
+            self.drive_seq = seq
+            try:
+                session.drive_frame(seq, values['vx'], values['vy'], values['wz'])
+            except Exception:
+                failed = True
+            else:
+                failed = False
+        if failed:
+            self._drive_lost(session, 'The connection to the dog was lost during a drive. The dog stops by itself when frames stop.')
+            raise Rejected('unknown', 'The link to the dog dropped during a drive. The dog stops by itself when frames stop.')
+        self.last_activity = self.mono()
+        return {'state': 'sent'}
+
+    def _drive_stop(self):
+        with self.drive_lock:
+            if self.drive_state is None or self.session is None:
+                return {'state': 'stopped', 'reason': 'not-driving'}
+            self.drive_state = 'stopping'   # frames after this are dropped; the stop is written after every earlier frame
+            session = self.session
+        try:
+            reply = session.drive_stop()
+        except Exception:
+            self._drive_lost(session, 'The stop was not confirmed. The connection was closed, which stops the dog. Check the dog.')
+            raise Rejected('unknown', 'The stop was not confirmed. The connection was closed, which stops the dog. Check the dog.')
+        reason = reply.get('reason')
+        with self.lock:
+            self.drive_state = None
+            self.last_activity = self.mono()
+            unclean = reply.get('zeroed') is not True or reason in DRIVE_SESSION_ENDERS
+        if unclean:
+            self._drive_lost(session, f"The dog ended the drive abnormally ({reason}). Inspect it, then reconnect.")
+            raise Rejected('unknown', f"The dog ended the drive abnormally ({reason}). Inspect it, then reconnect.")
+        return {'state': 'stopped', 'reason': reason}
 
     def _motion_enabled(self):
         return bool(getattr(self.session, 'motion', False)) and self.wall_ms() < self.motion_until
@@ -493,10 +660,11 @@ class AppController:
     def _check_supported(self, score):
         supported = {int(name[:3]) for name in self.session.supported if re.match(r'\d{3}_', name)}
         for cue in score['cues']:
-            if cue['type'] in {'head', 'body'} and not self._motion_enabled():
+            if cue['type'] in {'head', 'body', 'move'} and not self._motion_enabled():
                 raise Rejected('capability_unavailable', MOTION_EXPIRED if getattr(self.session, 'motion', False) else MOTION_MISSING)
-            if cue['type'] == 'face' and cue['assetId'] not in supported:
-                raise Rejected('capability_unavailable', f"This dog doesn't list face {cue['assetId']}.")
+            face_id = cue['assetId'] if cue['type'] == 'face' else cue.get('faceId') if cue['type'] == 'move' else None
+            if face_id is not None and face_id not in supported:
+                raise Rejected('capability_unavailable', f"This dog doesn't list face {face_id}.")
 
     def _update(self, command_id, **change):
         with self.lock:
@@ -524,10 +692,11 @@ class AppController:
                         break
                     started_face = True
                     self._update(command_id, cueAck='started', cueEndsAt=self.wall_ms() + cue['durationMs'])
-                elif cue['type'] in {'head', 'body'}:
-                    # The dog answers when the preset has finished and settled, so there is no timer to wait out.
+                elif cue['type'] in {'head', 'body', 'move'}:
+                    # The dog answers when the preset or move has finished and settled, so there is no timer to wait out.
                     self._update(command_id, cueIndex=index, cueAck='sent', cueEndsAt=None)
-                    result = session.play_motion(cue['preset'])
+                    result = (session.play_move(cue['move'], cue.get('faceId')) if cue['type'] == 'move'
+                              else session.play_motion(cue['preset']))
                     outcome = result.get('outcome') if result['event'] == 'duplicate' else result['event']
                     if outcome == 'rejected':
                         state, reason = 'rejected', result.get('reason') or 'The dog did not start this preset.'

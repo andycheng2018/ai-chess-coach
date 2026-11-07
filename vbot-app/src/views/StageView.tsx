@@ -32,7 +32,7 @@ function NowPlaying({ studio }: { studio: Studio }) {
   const upcoming = active ? timeline.items.slice(run.cueIndex + 1, run.cueIndex + 6) : [];
   const percent = timeline.items.length ? Math.round((run.completedCues / timeline.items.length) * 100) : 0;
   const remaining = run.cueEndsAt ? Math.max(0, Math.ceil((run.cueEndsAt - now) / 1000)) : null;
-  const usesMotion = run.score.cues.some(cue => cue.type === 'head' || cue.type === 'body');
+  const usesMotion = run.score.cues.some(cue => cue.type === 'head' || cue.type === 'body' || cue.type === 'move');
 
   return (
     <div className="stage-grid">

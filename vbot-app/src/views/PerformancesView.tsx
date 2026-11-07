@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { KIND_LABEL, type CatalogEntry } from '../domain/catalog';
+import { CATALOG, EXERCISED_FACE_IDS, FACELESS_MOVE_NAMES, KIND_LABEL, type CatalogEntry } from '../domain/catalog';
 import { exportShow } from '../domain/library';
-import { buildTimeline, clampDuration, cueFromEntry, cueTitle, duplicateCue, formatDuration, LIMITS, moveCue, requiredKinds, type Cue, type Score } from '../domain/score';
+import { buildTimeline, clampDuration, cueFromEntry, cueTitle, duplicateCue, formatDuration, LIMITS, moveCue, requiredKinds, withMoveFace, type Cue, type Score } from '../domain/score';
 import type { Studio } from '../useStudio';
 import { KindChip, ViewHeader } from '../components/bits';
 import { PreviewPanel } from '../components/PreviewPanel';
@@ -15,6 +15,8 @@ function CommitInput({ value, onCommit, ...rest }: { value: string; onCommit: (v
     onBlur={() => { if (draft !== value) onCommit(draft); }}
     onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
 }
+
+const MOVE_FACES = CATALOG.filter(entry => entry.kind === 'face' && entry.assetId !== undefined && EXERCISED_FACE_IDS.includes(entry.assetId));
 
 function CueRow({ cue, index, count, readOnly, blocker, onChange, onMove, onDuplicate, onRemove }: {
   cue: Cue; index: number; count: number; readOnly: boolean; blocker?: string;
@@ -30,6 +32,16 @@ function CueRow({ cue, index, count, readOnly, blocker, onChange, onMove, onDupl
           ? <CommitInput className="cue-caption" value={cue.caption ?? ''} maxLength={LIMITS.captionLength} placeholder="Stage note" aria-label={`Stage note for cue ${index + 1}`}
               onCommit={text => { const { caption: _omit, ...rest } = cue; onChange(text.trim() ? { ...rest, caption: text } as Cue : rest as Cue); }} />
           : cue.caption && <p className="fine">{cue.caption}</p>}
+        {cue.type === 'move' && !FACELESS_MOVE_NAMES.has(cue.move) && (readOnly
+          ? cue.faceId !== undefined && <p className="fine">With face {cue.faceId}</p>
+          : <label className="fine">Face during the move{' '}
+              <select value={cue.faceId ?? ''} aria-label={`Face during cue ${index + 1}`}
+                onChange={event => onChange(withMoveFace(cue, event.target.value === '' ? null : Number(event.target.value)))}>
+                <option value="">None</option>
+                {cue.faceId !== undefined && !MOVE_FACES.some(entry => entry.assetId === cue.faceId) && <option value={cue.faceId}>Face {cue.faceId}</option>}
+                {MOVE_FACES.map(entry => <option key={entry.assetId} value={entry.assetId}>{entry.label}</option>)}
+              </select>
+            </label>)}
         {blocker && <p className="cue-blocker">{blocker}</p>}
       </div>
       <div className="cue-duration">
@@ -40,7 +52,7 @@ function CueRow({ cue, index, count, readOnly, blocker, onChange, onMove, onDupl
                 onCommit={text => onChange({ ...cue, durationMs: clampDuration(cue, Number(text) * 1000) })} />
               <span>s</span>
             </label>
-          : <span className="fine">{hasDuration ? formatDuration(cue.durationMs) : 'Preset length'}</span>}
+          : <span className="fine">{hasDuration ? formatDuration(cue.durationMs) : cue.type === 'move' ? 'Short move' : 'Preset length'}</span>}
       </div>
       {!readOnly && (
         <div className="cue-tools">

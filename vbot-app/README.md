@@ -9,7 +9,7 @@ stage view. It has no chess, Stockfish or Lichess dependency.
 | --- | --- |
 | App with simulated dog (all five screens, saved shows, fault rehearsal) | Works in a browser |
 | Live face control: app → local controller → `robot_face.py` | Ran on the dog on 2026-11-03, from a Mac: Mood Swing played and the operator saw the faces. **Stop future cues** also worked: the next cue never started and the dog confirmed the screen release. Only those six faces have been played. Lost connections and recovery are only tested against stubs. |
-| Head and body presets (`robot_studio.py`) | **Built and tested against fakes only. Not deployed to or run on a dog.** Off unless the operator ticks all three onsite confirmations when connecting. No preset is marked rehearsed or confirmed because of it. See [Motion](#motion-optional-untested-on-the-dog). |
+| Head and body presets, and bounded step/turn moves (`robot_studio.py`) | **Deployed to the dog. Presets are tested against fakes only. Turns were watched on one dog on Nov 5 2026; steps did not move it and are being retried (see [Basic moves](#basic-moves-run-on-one-dog)).** Off unless the operator ticks all three onsite confirmations when connecting. No preset is marked rehearsed or confirmed because of it. See [Motion](#motion-optional-untested-on-the-dog). |
 | Navigation | Deliberately absent from the live path |
 | Speech | Placeholder. No verified backend. |
 | Cloud | Placeholder. Needs the backend API, auth and pairing contract. |
@@ -109,7 +109,80 @@ Faces alone are the default. Motion exists so a show can mix faces with the head
   handset Stop.
 - **Not yet possible.** Choosing a face *during* a head preset would need a custom graph, and the head
   parameters of `atom/look_*` aren't documented, so inventing them would be an unrehearsed motion request.
-  That needs the preset files read from the dog first.
+  That needs the preset files read from the dog first. (Turns below do carry a face, because they use
+  a custom graph with explicit values rather than a preset.)
+
+### Basic moves (run on one dog)
+
+A move is one short, finite step or turn, sent as a single `BaseActionCommand` (`ROTATE`) inside a small custom graph, so a face can be on screen for its duration. (Steps are different, see below.) This is the vendor docs' own
+composition pattern: the face is a background (`DAEMON`) node, the move is one finite node with a timeout, and
+a `BARRIER` releases the face. Moves need the same three confirmations as presets.
+
+| Move | Amount | Notes |
+| --- | --- | --- |
+| Step forward / back | 0.25 m | Vendor `atom/move_param.json` template. **Unconfirmed: the plain-command version did not move the dog.** |
+| Step left / right | 0.20 m | In the dog's frame. |
+| Turn left / right 10° (nudge), 30° or 90° | ±0.5236 / ±1.5708 rad | Left is counterclockwise. The docs leave the sign to the provider, so this was checked onsite (Nov 5 2026): the left 30° turn went counterclockwise. Right uses the opposite sign and was not separately watched. |
+
+- **The amounts are ours.** The vendor docs publish no safe range for steps or turns, so these are small bounds
+  chosen here and enforced on the dog. The app and controller only send a move's *name*, never a number, so
+  neither can ask for a bigger one. A test checks the table stays small.
+- **Move pad.** Under **Actions**, a 3×3 pad of bounded moves. Hold **↺** or **↻** to keep turning in 10° turns, one
+  command at a time (about 2 s each), each sent only while the button is still held; letting go can overshoot by the
+  one turn already underway. Other buttons send one move per tap. This is the proven path: the turns were watched on
+  the dog. A test covers every way the chain stops (release, pointer-cancel, blur, hidden page, a non-clean result, a
+  12-turn cap).
+- **Drive pad (hold to move), new and not yet seen working.** Hold a button and the app streams velocity frames
+  (every 100 ms) to the dog; let go and it stops. This is real continuous velocity, published to
+  `/locomotion/velocity_command` as a `Twist` by `robot_studio.py` on the dog. The vendor docs say a direct
+  publisher doesn't inherit the ROS bridge's timeout and that no zero-on-dead-man is configured, so the dead-man is
+  built into the dog-side helper rather than trusted to the app or the network:
+  - The helper publishes the command **only while fresh frames keep arriving** (a command older than 0.5 s is stale),
+    from its own thread, so a half-delivered frame or a stalled read can't hold the stop up. A test proves the zeros go
+    out while the reader is still stuck.
+  - **Every way a drive ends publishes a burst of five zeros**: release, stale frames, the per-press cap (8 s on the
+    dog, 7 s in the app), a cap violation, a closed stream, SIGTERM, and a publisher error. If the zeros can't be
+    confirmed, `unresolved-action.json` stays in place, so nothing else runs until someone inspects the dog.
+  - **Caps refuse, they don't clamp**: |vx| ≤ 0.15, |vy| ≤ 0.10, |wz| ≤ 0.40. These are ours: the docs give no units
+    or limits for `Twist`, so **m/s and rad/s are assumed**. The app sends 40% (Slow) or 80% (Normal) of them.
+  - A drive is refused unless the dog is ready (standing, fresh telemetry) **and the velocity topic has a consumer**.
+    The helper never changes the run mode.
+  - Frames carry a sequence number; late or repeated ones are dropped on the controller and on the dog. A show
+    can't start during a drive and a drive can't start during a show.
+  - **What this can't cover:** a `kill -9` of the helper skips the zeros, and nothing documented says whether the dog
+    stops by itself when publishing just stops. The tests exercise every path the helper handles, not that one.
+  - **Not yet known:** whether the dog responds to `Twist` in its current mode (`RL_TROT`), which sign and scale it
+    expects, and how far one hold goes. First supervised test, in order: (1) hold with nothing moving to check the
+    publisher matched; (2) Slow, turn only, about a second, release; (3) close the tab mid-turn and separately drop
+    the Mac's Wi-Fi, and confirm the dog stops within about half a second; (4) only then, Slow forward.
+- **Bottom sheet.** Pressing an action, the pad or **Try** no longer switches tabs. A sheet at the bottom shows
+  what is running, with Stop, and then what the dog reported ("The dog reported it finished" is a report, not proof
+  that anything moved: see steps above). Whole shows still open the Stage.
+- **Arming motion.** The three confirmations stay available while connected: tick them and press
+  **Reconnect with motion** (disabled while a show runs). It reconnects with a new lease; nothing is replayed.
+- **Same gates as presets.** A move goes through `robot_action.py`'s readiness scan, durable request record and
+  unresolved-action lock, then the same terminal-result and postflight checks. The graph is built *before* any
+  record is written, so a construction error can't leave an unresolved-action lock behind. A dirty result ends
+  the session, like a preset.
+- **The face is always handed back.** The screen is treated as possibly held until the dog confirms a release
+  after the move. If that release fails the move is reported as failed and the session ends.
+- **What is verified.** The goal builds and survives flatbuffers serialization for every move, with and without
+  a face, using the vendor's own generated classes (`vbot-lab/.venv/bin/python -I tests/test_vbot_studio.py`).
+  Everything else is tested against fakes.
+  **Nov 5 2026, one dog, results so far:**
+  - **Turns work.** Left 30°, right 30°, left 90° and right 90° were sent and watched. Left is counterclockwise.
+    This proves a typed `BaseActionCommand.ROTATE` is accepted in the dog's current mode.
+  - **Steps did not.** A typed `MOVE_FORWARD`/`MOVE_LEFT` was sent four times and the dog reported `SUCCEEDED`
+    with a clean postflight each time, but did not move. The guarded path can't tell "moved" from "did nothing",
+    which is why the app showed success. A "clean finish" for a step therefore means nothing on its own.
+  - **Steps now use the vendor's own template**, `atom/move_param.json` with `base_action_task`, `distance_m` and
+    `tts`, exactly as the vendor docs list it. That preset controls the screen, so a step can't carry a face.
+    Not yet confirmed to move the dog. The vendor preset files can't be read from the dog (not visible to its
+    `vbot` user), so this is the documented argument list only.
+  - **Moves with a face (turns only) have not been run.**
+  - Step back and step right have not been run at all.
+- **Deploy.** The same three helper files (`robot_face.py`, `robot_action.py`, `robot_studio.py`) from one
+  commit. The helper now announces protocol 4, its move list and its driving limits; an older `robot_studio.py` is refused at connect.
 
 Deploy once, with the dog in front of you (this writes one file and moves nothing):
 
