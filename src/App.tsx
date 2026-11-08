@@ -4513,6 +4513,13 @@ export default function App() {
           </button>
 
           <div className="arena-header-meta">
+            {gameId && <button type="button" className="ghost" onClick={() => {
+              const mode = document.getElementById('vbot-reaction-style');
+              mode?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              mode?.focus({ preventScroll: true });
+            }}>🐾 Simple demo · {vbotCompanion.status?.armed && vbotCompanion.status.gameId === gameId
+              ? vbotCompanion.status.reactionProfile === 'demo' ? 'On · every 2 moves' : 'Choose reaction mode'
+              : 'Set up ROCKYOU every 2 moves'}</button>}
             <button type="button" className="ghost" disabled={scanningRoom || startingGame} onClick={() => setRoomLinkOpen(true)}>Lichess rooms & existing games</button>
             {gameId && <button type="button" className="ghost" disabled={gameStatus === 'recovering' || !account || players[myColor].name.toLowerCase() !== account.username.toLowerCase()} onClick={() => setQrGameId(gameId)}>Show game QR</button>}
             {gameId && (

@@ -62,6 +62,19 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
     <div className="vbot-header"><div><span className="vbot-kicker">ROBOT COMPANION</span><h3>VBOT reacts with you</h3></div>
       <span className={`vbot-badge ${linked ? 'on' : ''}`} role="status">{badge}</span></div>
     <p className="vbot-copy">{practice ? 'Correct queen and rook captures earn the full Rock You dance when rewards are live and VBOT is ready.' : (linked ? status?.reactionProfile === 'demo' : reactionProfile === 'demo') ? 'Demo mode: VBOT dances Rock You on every second move you play, whatever the coach says.' : 'Good moves earn a random brief gesture. Major gains and a confirmed win can earn Rock You. Blunders get a sad reaction.'}</p>
+    {!practice && <div className="vbot-demo-mode">
+      <label className="vbot-profile" htmlFor="vbot-reaction-style">VBOT reaction mode
+        <select id="vbot-reaction-style" value={linked ? status?.reactionProfile || reactionProfile : reactionProfile}
+          disabled={locked || Boolean(status?.armed)} onChange={e => setReactionProfile(e.target.value as ReactionProfile)}>
+          <option value="demo">Simple demo · ROCKYOU every 2 moves</option>
+          <option value="quiet">Quiet · head gestures</option>
+          <option value="balanced">Balanced · good-move reactions</option>
+          <option value="showmanship">Showmanship · varied reactions</option>
+        </select>
+      </label>
+      <p className="vbot-footnote">Simple demo counts your moves, without waiting for a good-move verdict. Robot readiness and dance/rest checks still apply; dances never overlap.</p>
+      {status?.armed && <p className="vbot-notice">To change reaction mode, turn reactions off below, choose a mode, then check and enable again. No movement starts from choosing a mode.</p>}
+    </div>}
     <label className="vbot-profile">Reaction connection
       <select value={route} disabled={pending || Boolean(status?.armed || status?.busy)} onChange={event => {
         const next = event.target.value as ReactionRoute;
@@ -138,13 +151,11 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
             {!!status.network.profiles.length && <ul>{status.network.profiles.map(p => <li key={p.id}>{p.label}: {p.targets.join(', ')}</li>)}</ul>}
           </>}
         </details>
-        <label className="vbot-profile">Reaction style
-          <select value={practice && reactionProfile === 'demo' ? 'balanced' : reactionProfile} disabled={locked} onChange={e => setReactionProfile(e.target.value as ReactionProfile)}>
-            {!practice && <option value="demo">Demo · A dance every second move</option>}
+        {practice && <label className="vbot-profile">Reaction style
+          <select value={reactionProfile === 'demo' ? 'balanced' : reactionProfile} disabled={locked} onChange={e => setReactionProfile(e.target.value as ReactionProfile)}>
             <option value="quiet">Quiet · head gestures</option><option value="balanced">Balanced · varied gestures</option><option value="showmanship">Showmanship · shorter brief-gesture rest</option>
           </select>
-        </label>
-        <p className="vbot-footnote">Demo skips the coach verdicts, the three-minute dance interval and the fast-clock limit, so VBOT dances a lot: keep the space clear. Showmanship uses a 3-second brief-gesture rest instead of 5. Dance intervals, clock restrictions, rehearsals and robot safety checks remain in force. Wins and capture lessons retain their full celebration.</p>
+        </label>}
         <div className="vbot-actions"><button className="ghost" disabled={locked || !target.trim()} onClick={() => void control.check(target.trim())}>{pending ? 'Checking…' : 'Check robot'}</button>
           <button className="ghost" disabled={locked || !canArm} onClick={() => void control.connect('rehearsal', target.trim(), false, reactionProfile)}>Preview without motion</button></div>
         {status?.readiness?.target === target.trim() && <p className={`vbot-readiness ${ready ? 'ready' : ''}`} role="status">{ready ? 'Robot passed readiness. Enabling live reactions includes a fresh check.'
