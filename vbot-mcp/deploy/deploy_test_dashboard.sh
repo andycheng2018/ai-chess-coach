@@ -41,7 +41,8 @@ EOF
 # Links VBOT Studio on this Mac to the cloud server. The key stays in .env (git-ignored).
 MAIN=$(git -C "$ROOT" worktree list --porcelain | sed -n '1s/^worktree //p')
 if ! grep -q '^CHESS_CLOUD_TOKEN=' "$MAIN/.env"; then
-  cp -p "$MAIN/.env" "$MAIN/.env.bak-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$MAIN/.local/backups"  # Git-ignored: this copy holds secrets.
+  cp -p "$MAIN/.env" "$MAIN/.local/backups/env.bak-$(date +%Y%m%d-%H%M%S)"
   KEY=$(ssh -o "$PX" "$MS" "sed -nE 's/^CHESS_TABLET_TOKEN=//p' ~/chess-coach/.env")
   [ -n "$KEY" ] && printf '\nCHESS_CLOUD_URL=https://chess-api.urbot.ai\nCHESS_CLOUD_TOKEN=%s\n' "$KEY" >> "$MAIN/.env"
   unset KEY
