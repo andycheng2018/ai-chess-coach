@@ -1,11 +1,16 @@
 apply plugin: 'com.android.application'
 apply plugin: 'com.chaquo.python'
 
+def releaseKeystore = System.getenv('ANDROID_KEYSTORE_PATH')
+def releasePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def releaseSigningReady = releaseKeystore && releasePassword
+
 def buildNumber = (System.getenv('ANDROID_VERSION_CODE') ?: '1').toInteger()
 
 android {
     namespace = "com.andy.vbotstudio"
     compileSdk = rootProject.ext.compileSdkVersion
+    testBuildType 'release'
     defaultConfig {
         applicationId "com.andy.vbotstudio"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -20,11 +25,29 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        persistent {
+            if (releaseSigningReady) {
+                storeFile file(releaseKeystore)
+                storeType 'PKCS12'
+                storePassword releasePassword
+                keyAlias 'chessbuddy'
+                keyPassword releasePassword
+            }
+        }
+    }
     buildTypes {
         release {
+            signingConfig signingConfigs.persistent
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+    }
+}
+
+tasks.configureEach {
+    if (name == 'preReleaseBuild') doFirst {
+        if (!releaseSigningReady) throw new GradleException('Release builds require the existing ANDROID_KEYSTORE_PATH and ANDROID_KEYSTORE_PASSWORD. Never generate a replacement key for updates.')
     }
 }
 

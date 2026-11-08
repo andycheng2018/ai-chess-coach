@@ -1,6 +1,6 @@
 name: VBOT Studio Android APK
-# Separate from Chess Buddy's pipeline. It uses no secrets, publishes nothing and
-# only uploads a test build. The debug signature changes between runs.
+# Separate package and release tags from Chess Buddy; same permanent signing identity.
+# Publication requires source tests, pinned-signature verification and emulator checks.
 on:
   workflow_dispatch:
   push:
@@ -10,6 +10,9 @@ on:
       - 'server/vbot_app_control.py'
       - 'server/vbot_networks.py'
       - 'server/vbot_ssh.py'
+      - 'scripts/android_signing.py'
+      - 'scripts/verify_android_signature.py'
+      - 'android/signing-certificate.sha256'
       - 'tests/vbot_app_*'
       - 'tests/vbotAppLoader.mjs'
       - 'tests/test_vbot_app_*'
@@ -34,6 +37,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Restore permanent signing identity and assign Studio version
+        env:
+          ANDROID_SIGNING_BUNDLE: ${{ secrets.ANDROID_SIGNING_BUNDLE }}
+        run: |
+          python scripts/android_signing.py restore
+          echo "ANDROID_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
       - run: npm ci
       - name: Run the app's tests
         run: |
@@ -44,19 +53,20 @@ jobs:
       - name: Copy the built app into the Android project
         working-directory: vbot-app
         run: npx cap sync android
-      - name: Build the test APK
+      - name: Build the signed Studio APK
         working-directory: vbot-app/android
-        run: ./gradlew assembleDebug --no-daemon
-        env:
-          ANDROID_VERSION_CODE: ${{ github.run_number }}
+        run: ./gradlew assembleRelease --no-daemon
       - name: Package
         run: |
           mkdir -p apk
-          cp vbot-app/android/app/build/outputs/apk/debug/app-debug.apk apk/VBOT-Studio-debug.apk
-          sha256sum apk/VBOT-Studio-debug.apk > apk/SHA256SUMS.txt
+          cp vbot-app/android/app/build/outputs/apk/release/app-release.apk apk/VBOT-Studio-Android.apk
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          "$signer" verify --verbose --print-certs apk/VBOT-Studio-Android.apk > apk/signature.txt
+          python scripts/verify_android_signature.py apk/signature.txt android/signing-certificate.sha256
+          sha256sum apk/VBOT-Studio-Android.apk > apk/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: VBOT-Studio-debug
+          name: VBOT-Studio-Android
           path: apk/
           retention-days: 30
       - name: Allow this runner to use its emulator accelerator
@@ -68,10 +78,47 @@ jobs:
           target: google_apis
           arch: x86_64
           disable-animations: true
-          script: cd vbot-app/android && ./gradlew :app:connectedDebugAndroidTest --no-daemon
+          script: cd vbot-app/android && ./gradlew :app:connectedReleaseAndroidTest --no-daemon
       - name: Save the emulator results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: VBOT-Studio-emulator-results
           path: vbot-app/android/app/build/outputs/androidTest-results/
+      - name: Remove temporary signing files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/chessbuddy-release.p12"
+  publish:
+    needs: apk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VBOT-Studio-Android
+          path: apk
+      - name: Publish the validated Studio app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          code=$((1000 + GITHUB_RUN_NUMBER))
+          tag="vbot-studio-v$code"
+          cat > notes.md <<EOF
+          VBOT Studio Android 0.1.$code. Separate app: com.andy.vbotstudio.
+
+          Includes the integrated action library, rehearsed dance catalog and performance editor.
+          Qwen voice/session controls in the web app require the computer-side Studio server;
+          the standalone Android controller does not provide that cloud voice service yet.
+
+          Signed with the permanent pinned release certificate. Source tests, APK signature
+          verification and Android emulator controller checks passed.
+          Source commit: $BUILD_SHA
+
+          If Android refuses to update an older debug-signed Studio app, export saved shows
+          before migrating. Do not uninstall until your data is backed up. Future permanently
+          signed Studio releases can update this version in place. Chess Buddy is unaffected.
+          EOF
+          gh release create "$tag" apk/* --repo "$GH_REPO" --target "$BUILD_SHA" --title "VBOT Studio Android 0.1.$code" --notes-file notes.md --latest=false

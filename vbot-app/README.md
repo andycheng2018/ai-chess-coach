@@ -13,7 +13,7 @@ stage view. It has no chess, Stockfish or Lichess dependency.
 | Navigation | Deliberately absent from the live path |
 | Speech | Placeholder. No verified backend. |
 | Cloud | Placeholder. Needs the backend API, auth and pairing contract. |
-| Android app | Project in `vbot-app/android` (`com.andy.vbotstudio`). The controller and pairing are tested against fakes. **Not yet compiled or run on a device.** Test builds use a debug signature. |
+| Android app | Project in `vbot-app/android` (`com.andy.vbotstudio`). The controller and pairing are tested against fakes. CI release builds verify the pinned permanent signature and run the embedded controller on an emulator; physical-device verification is separate. |
 | Player tracking | Types and a staged screen. No real perception feed, and no 3D. |
 
 ## Run it
@@ -212,17 +212,30 @@ live in that browser or app's storage, so export any you want to keep.
 It installs next to Chess Buddy and can't replace it or touch its data. The APK carries the controller and face
 protocol, and doesn't carry the chess code or any dog-side helper.
 
-**Building.** GitHub Actions builds it with `.github/workflows/vbot-studio-apk.yml`, which uses no secrets and
-publishes nothing. Pushing to `codex/vbot-app-scaffold` starts a build, which then runs on an emulator. Download
-`VBOT-Studio-debug` from the run. To build locally you need JDK 21, the Android SDK and Python 3.13:
+**Installing.** Download `VBOT-Studio-Android.apk` from the repository's
+`vbot-studio-v…` GitHub Release. These tags are separate from Chess Buddy's
+`android-v…` releases. Install it as `com.andy.vbotstudio` beside Chess Buddy.
 
-```sh
-npm run vbot:android:sync
-cd vbot-app/android && ./gradlew assembleDebug
-```
+**Building.** Pushing to `codex/vbot-app-scaffold` runs
+`.github/workflows/vbot-studio-apk.yml`. The workflow restores the existing
+`ANDROID_SIGNING_BUNDLE`, builds a release APK, checks its certificate against
+`android/signing-certificate.sha256`, and runs the embedded controller on an
+Android emulator. A separate publish job creates a release only after all checks
+pass. No robot connection or movement is part of the workflow.
 
-**Updating.** Each CI build has a different debug signature, so installing a newer one means uninstalling the old
-one, which erases saved shows and the pairing. Export shows first. A permanent signing key would fix this.
+Local debug builds remain available with `npm run vbot:android:sync`, then
+`cd vbot-app/android && ./gradlew assembleDebug`. Signed release builds require
+the existing signing environment documented in `ANDROID_UPDATES.md`.
+
+**Updating.** New permanently signed Studio versions can update one another in
+place. Earlier CI debug builds used different signatures and may require a
+one-time migration: export saved shows and record pairing information first.
+Do not uninstall without preserving your data. The Studio package is distinct
+from Chess Buddy and does not replace or erase Chess Buddy.
+
+The standalone Android controller handles local robot actions and performances.
+The Qwen voice/session panel currently needs the computer-side Studio server;
+including its UI in the APK does not provide that server on the tablet.
 
 **Pairing, once per dog:**
 

@@ -215,7 +215,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_the_identity_is_separate_from_chess_buddy(self):
         self.assertIn('applicationId "com.andy.vbotstudio"', GRADLE)
-        self.assertNotIn('chessbuddy', GRADLE)
+        self.assertNotIn('applicationId "com.andy.chessbuddy"', GRADLE)
         self.assertIn('applicationId "com.andy.chessbuddy"', (ROOT / 'android' / 'app' / 'build.gradle').read_text())
         self.assertNotIn('chessbuddy', (ROOT / 'vbot-app' / 'capacitor.config.ts').read_text().split('appId')[1].split('\n')[0])
 
@@ -251,13 +251,28 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(source.count('data.put("robotFingerprint"'), 1)
         self.assertLess(source.index('channel.getExitStatus() != 0'), source.index('data.put("robotFingerprint"'))
 
-    def test_no_signing_material_or_secret_in_the_workflow(self):
+    def test_release_requires_validated_build_and_scopes_publish_permissions(self):
+        import yaml
         workflow = (ROOT / '.github' / 'workflows' / 'vbot-studio-apk.yml').read_text()
-        self.assertNotIn('secrets.', workflow)
-        self.assertNotIn('gh release', workflow)
-        self.assertIn('contents: read', workflow)
-        self.assertNotIn('contents: write', workflow)
+        data = yaml.safe_load(workflow)
+        self.assertEqual(data['permissions'], {'contents': 'read'})
+        self.assertEqual(data['jobs']['publish']['needs'], 'apk')
+        self.assertEqual(data['jobs']['publish']['permissions'], {'contents': 'write'})
+        build = data['jobs']['apk']
+        self.assertNotIn('permissions', build)
+        self.assertIn('connectedReleaseAndroidTest', workflow)
+        self.assertIn('scripts/verify_android_signature.py apk/signature.txt android/signing-certificate.sha256', workflow)
+        self.assertEqual(set(re.findall(r'secrets\.(\w+)', workflow)), {'ANDROID_SIGNING_BUNDLE'})
+        self.assertIn('vbot-studio-v$code', workflow)
         self.assertNotIn('codex/android-standalone', workflow)
+        # Only the public installable artifacts are uploaded, not the restored key.
+        uploads = [step for step in build['steps'] if step.get('uses') == 'actions/upload-artifact@v4']
+        self.assertEqual(uploads[0]['with']['path'], 'apk/')
+        package = next(step['run'] for step in build['steps'] if step.get('name') == 'Package')
+        self.assertNotIn('ANDROID_KEYSTORE_PATH', package)
+        self.assertIn('signingConfig signingConfigs.persistent', GRADLE)
+        self.assertIn("testBuildType 'release'", GRADLE)
+        self.assertIn("if (!releaseSigningReady) throw new GradleException", GRADLE)
 
 
 if __name__ == '__main__':
