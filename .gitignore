@@ -40,3 +40,6 @@ vbot-demo/unresolved-action.json
 /.local/
 *.p12
 *.pfx
+
+# Local bot account registry and saved bot tokens (CHESS_DATA_HOME/bot-accounts).
+/bot-accounts/

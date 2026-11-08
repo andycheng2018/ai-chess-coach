@@ -13,14 +13,12 @@ from typing import Any
 import chess
 import chess.engine
 import requests
-import yaml
-
+from bot_accounts import AccountSource, BotAccount, BotAccountStore, is_placeholder, token_from_config
 from coach.stockfish_analyzer import configure_supported_options, find_stockfish
 from demo_opponent import choose_demo_move
 
 LICHESS_URL = "https://lichess.org"
 ROOT = Path(__file__).resolve().parent.parent
-BOT_CONFIG = ROOT / "bot" / "config.yml"
 ACTIVE_STATUSES = {"created", "started"}
 
 
@@ -47,26 +45,13 @@ BOT_LEVELS: dict[str, BotLevel] = {
 }
 
 
-def _token_from_config() -> tuple[str, str]:
-    env_token = os.getenv("LICHESS_BOT_TOKEN", "").strip()
-    env_username = os.getenv("LICHESS_BOT_USERNAME", "").strip()
-    if env_token:
-        return env_token, env_username
-
-    if not BOT_CONFIG.exists():
-        return "", env_username
-    try:
-        data = yaml.safe_load(BOT_CONFIG.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return "", env_username
-    if not isinstance(data, dict):
-        return "", env_username
-    return str(data.get("token", "")).strip(), str(data.get("username", env_username or "")).strip()
+# Kept as module names so older imports keep working.
+_token_from_config = token_from_config
+_is_placeholder = is_placeholder
 
 
-def _is_placeholder(token: str) -> bool:
-    upper = token.upper()
-    return not token or any(marker in upper for marker in ("PASTE_", "TOKEN_HERE", "YOUR_TOKEN", "XXX"))
+class BotAccountBusy(RuntimeError):
+    """The bot account cannot change while a game is being played with it."""
 
 
 class BotEngine:
@@ -243,14 +228,24 @@ class BotEngine:
         return move, elapsed_ms
 
 class LichessBotRuntime:
-    def __init__(self) -> None:
+    def __init__(self, accounts: AccountSource = None) -> None:
         self._lock = threading.RLock()
         self._start_lock = threading.Lock()
+        self._switch_lock = threading.Lock()
         self._stop = threading.Event()
         self._event_thread: threading.Thread | None = None
         self._game_threads: dict[str, threading.Thread] = {}
         self._engine = BotEngine()
         self._level_id = "developing"
+        # ``accounts`` may be a store, a factory opened on first use, or None for
+        # a private in-memory store seeded from the .env account.
+        self._account_source = accounts
+        self._account_store: BotAccountStore | None = None
+        # The account the running event stream was started with. Every request
+        # and stream of that session uses it, never a newer selection.
+        self._session_account: BotAccount | None = None
+        self._session = 0
+        self._game_accounts: dict[str, BotAccount] = {}
         self._username = os.getenv("LICHESS_BOT_USERNAME", "bot_2435").strip() or "bot_2435"
         self._connected = False
         self._running = False
@@ -277,11 +272,43 @@ class LichessBotRuntime:
             self._level_id = level_id
         return self.status(message=f"Difficulty set to {BOT_LEVELS[level_id].label}.")
 
+    # -- bot accounts ------------------------------------------------------
+    def accounts(self) -> BotAccountStore:
+        with self._lock:
+            if self._account_store is None:
+                source = self._account_source
+                self._account_store = source if isinstance(source, BotAccountStore) else (
+                    source() if callable(source) else BotAccountStore())
+            return self._account_store
+
+    @staticmethod
+    def _missing_token_message(account: BotAccount | None) -> str:
+        if account is None:
+            return "Add a Lichess BOT account before starting a game."
+        if account.id == "default":
+            return ("Add your Lichess BOT account token in Tablet settings." if os.environ.get('CHESS_ANDROID') == '1'
+                    else "Add the bot token to .env (LICHESS_BOT_TOKEN) or bot/config.yml.")
+        return (f"Bot account {account.label} has no token. Set its environment variable, "
+                "or remove the account and add it again.")
+
+    def _selected_account(self) -> BotAccount:
+        account = self.accounts().selected()
+        if account is None or is_placeholder(account.token):
+            raise RuntimeError(self._missing_token_message(account))
+        return account
+
+    def _current_account(self) -> BotAccount:
+        with self._lock:
+            account = self._session_account
+        return account or self._selected_account()
+
+    def _busy(self) -> bool:
+        with self._lock:
+            return any(thread.is_alive() for thread in self._game_threads.values())
+
     def _credentials(self) -> tuple[str, str]:
-        token, configured_username = _token_from_config()
-        if _is_placeholder(token):
-            raise RuntimeError("Add your Lichess BOT account token in Tablet settings." if os.environ.get('CHESS_ANDROID') == '1' else "Add the bot token to .env (LICHESS_BOT_TOKEN) or bot/config.yml.")
-        return token, configured_username
+        account = self._current_account()
+        return account.token, account.username
 
     @staticmethod
     def _headers(token: str) -> dict[str, str]:
@@ -318,10 +345,11 @@ class LichessBotRuntime:
         *,
         timeout: float | tuple[float, float] = 12,
         allow: tuple[int, ...] = (200,),
+        account: BotAccount | None = None,
     ) -> requests.Response:
         self._wait_for_api_cooldown()
 
-        token, _ = self._credentials()
+        token = account.token if account is not None else self._credentials()[0]
 
         response = requests.request(
             method,
@@ -359,61 +387,74 @@ class LichessBotRuntime:
 
         return response
 
-    def _validate_account(self) -> None:
-        profile = self._request("GET", "/api/account").json()
+    def _validate_account(self, account: BotAccount) -> BotAccount:
+        profile = self._request("GET", "/api/account", account=account).json()
         username = str(profile.get("username") or profile.get("id") or "").strip()
         title = str(profile.get("title") or "").upper()
         if not username:
             raise RuntimeError("The bot token did not return a Lichess username.")
         if title != "BOT":
             raise RuntimeError(f"{username} is not a Lichess BOT account.")
-        configured = _token_from_config()[1]
-        if configured and configured.lower() != username.lower():
-            raise RuntimeError(f"Bot token belongs to {username}, not configured bot {configured}.")
+        if account.strict_username and account.username.lower() != username.lower():
+            raise RuntimeError(f"Bot token belongs to {username}, not configured bot {account.username}.")
+        if username != account.username:
+            self.accounts().record_username(account.id, username)
+        return account.with_username(username)
+
+    def _session_alive(self) -> bool:
         with self._lock:
-            self._username = username
+            return bool(self._running and self._event_thread and self._event_thread.is_alive())
+
+    def _session_is_current(self, session: int) -> bool:
+        with self._lock:
+            return not self._stop.is_set() and self._session == session
 
     def start(self) -> dict[str, Any]:
         # Only one caller may initialize/start the runtime at a time.
         # This prevents Render bootstrap + frontend /api/bot/start from
         # creating duplicate Lichess event streams.
         with self._start_lock:
+            try:
+                selected = self._selected_account()
+            except Exception as exc:
+                if not self._session_alive():
+                    with self._lock:
+                        self._last_error = str(exc)
+                raise
 
             with self._lock:
-                if (
-                    self._running
-                    and self._event_thread
-                    and self._event_thread.is_alive()
-                ):
+                current = self._session_account
+                if self._session_alive() and current and current.id == selected.id:
+                    return self.status(message="Bot is already running.")
+                if self._session_alive() and self._busy():
+                    # Never move a live game to another token; the newly
+                    # selected account takes over once this game finishes.
                     return self.status(
-                        message="Bot is already running."
+                        message=f"Bot is finishing a game as {current.username if current else self._username}."
                     )
 
             try:
-                self._validate_account()
+                verified = self._validate_account(selected)
 
                 # Avoid first-move Stockfish startup lag.
                 self._engine.warmup()
 
             except Exception as exc:
-                with self._lock:
-                    self._last_error = str(exc)
-                    self._running = False
-                    self._connected = False
+                # A failed switch leaves a working session untouched.
+                if not self._session_alive():
+                    with self._lock:
+                        self._last_error = str(exc)
+                        self._running = False
+                        self._connected = False
                 raise
 
             with self._lock:
-                # Check again because another start may have completed
-                # before we obtained the start lock.
-                if (
-                    self._running
-                    and self._event_thread
-                    and self._event_thread.is_alive()
-                ):
-                    return self.status(
-                        message="Bot is already running."
-                    )
-
+                # Bumping the session retires any previous event stream: it
+                # stops handling events and exits on its next keepalive.
+                self._session += 1
+                session = self._session
+                self._session_account = verified
+                self._username = verified.username
                 self._stop.clear()
                 self._last_error = ""
                 self._running = True
@@ -421,6 +462,7 @@ class LichessBotRuntime:
 
                 thread = threading.Thread(
                     target=self._event_loop,
+                    args=(session, verified),
                     name="lichess-bot-events",
                     daemon=True,
                 )
@@ -434,6 +476,7 @@ class LichessBotRuntime:
                     self._request(
                         "GET",
                         "/api/account/playing",
+                        account=verified,
                     )
                     .json()
                     .get("nowPlaying", [])
@@ -473,28 +516,137 @@ class LichessBotRuntime:
                     "reconnecting to Lichess."
                 )
             )
-        
+
     def stop(self) -> dict[str, Any]:
         with self._lock:
             self._stop.set()
+            self._session += 1
+            self._session_account = None
             self._running = False
             self._connected = False
         self._engine.close()
         return self.status(message="Bot runtime stopped.")
 
+    def accounts_payload(self) -> dict[str, Any]:
+        """Everything the account picker needs. Contains no token values."""
+        store = self.accounts()
+        busy = self._busy()
+        with self._lock:
+            active = self._session_account.id if self._session_account and self._session_alive() else None
+        accounts = store.list_accounts()
+        for account in accounts:
+            account["active"] = account["id"] == active
+        return {
+            "accounts": accounts,
+            "selectedId": store.selected_id(),
+            "activeId": active,
+            "locked": busy,
+            "lockedReason": "Finish the current game before switching bot accounts." if busy else None,
+            "bot": self.status(),
+        }
+
+    def _guard_switch(self, account_id: str) -> None:
+        if not self._busy():
+            return
+        with self._lock:
+            in_use = {account.id for account in self._game_accounts.values()}
+            if self._session_account:
+                in_use.add(self._session_account.id)
+        if account_id in in_use or account_id == "*":
+            raise BotAccountBusy("Finish the current game before switching bot accounts.")
+
+    def select_account(self, account_id: str) -> dict[str, Any]:
+        """Select an account and start playing as it. Refused during a game."""
+        account_id = str(account_id or "").strip()
+        with self._switch_lock:
+            store = self.accounts()
+            target = store.resolve(account_id)
+            if target is None:
+                raise ValueError("Unknown bot account.")
+            self._guard_switch("*")
+            previous = store.selected_id()
+            store.select(account_id)
+            try:
+                status = self.start()
+            except Exception as exc:
+                # Keep the last good choice so the next game still has a bot.
+                if previous and previous != account_id:
+                    store.select(previous)
+                    if not self._session_alive():
+                        with self._lock:
+                            self._last_error = ""
+                raise RuntimeError(f"Could not switch to {target.label}: {exc}") from exc
+            with self._lock:
+                current = self._session_account
+            if current is None or current.id != account_id:
+                if previous and previous != account_id:
+                    store.select(previous)
+                raise BotAccountBusy("Finish the current game before switching bot accounts.")
+            payload = self.accounts_payload()
+            payload["message"] = f"Training games now use {current.username}."
+            return payload
+
+    def add_account(self, payload: dict[str, Any]) -> dict[str, Any]:
+        store = self.accounts()
+        created = store.add(
+            label=str(payload.get("label") or ""),
+            username=str(payload.get("username") or ""),
+            token=str(payload.get("token") or ""),
+            token_env=str(payload.get("tokenEnv") or ""),
+        )
+        if payload.get("select") is True:
+            try:
+                return self.select_account(created["id"])
+            except Exception as exc:
+                result = self.accounts_payload()
+                result["message"] = f"Added {created['label']}. {exc}"
+                return result
+        result = self.accounts_payload()
+        result["message"] = f"Added {created['label']}."
+        return result
+
+    def remove_account(self, account_id: str) -> dict[str, Any]:
+        account_id = str(account_id or "").strip()
+        with self._switch_lock:
+            store = self.accounts()
+            if store.resolve(account_id) is None:
+                raise ValueError("Unknown bot account.")
+            self._guard_switch(account_id)
+            with self._lock:
+                was_active = bool(self._session_account and self._session_account.id == account_id)
+            store.remove(account_id)
+            message = "Bot account removed."
+            if was_active:
+                # The removed token must not keep playing; move to the new selection.
+                self.stop()
+                try:
+                    self.start()
+                except Exception as exc:
+                    message = f"Bot account removed. {exc}"
+        result = self.accounts_payload()
+        result["message"] = message
+        return result
+
     def status(self, message: str | None = None) -> dict[str, Any]:
         level = self.level()
+        store = self.accounts()
+        selected = store.selected()
         with self._lock:
             event_alive = bool(self._event_thread and self._event_thread.is_alive() and self._running)
+            session = self._session_account if event_alive else None
+            account = session or selected
             error = self._last_error
-            if not event_alive and not error:
-                token, _ = _token_from_config()
-                if _is_placeholder(token):
-                    error = "Bot token is not configured."
+            if not event_alive and not error and (account is None or is_placeholder(account.token)):
+                error = "Bot token is not configured." if account is not None else "No bot account is selected."
             payload: dict[str, Any] = {
                 "running": event_alive,
                 "connected": bool(self._connected and event_alive),
-                "username": self._username,
+                "username": session.username if session else selected.username if selected else self._username,
+                "accountId": account.id if account else None,
+                "accountLabel": account.label if account else None,
+                "selectedAccountId": selected.id if selected else None,
+                # True when the next game should restart onto a new selection.
+                "accountPending": bool(event_alive and session and selected and session.id != selected.id),
                 "level": level.id,
                 "displayElo": level.display_elo,
                 "lastMoveMs": self._last_move_ms,
@@ -648,14 +800,29 @@ class LichessBotRuntime:
             "Lichess accepted the open challenge, but the bot did not receive gameStart within 8 seconds."
         )
 
-    def _event_loop(self) -> None:
+    def _event_loop(self, session: int | None = None, account: BotAccount | None = None) -> None:
         backoff = 1.0
+        if session is None:
+            with self._lock:
+                session = self._session
 
-        while not self._stop.is_set():
+        def live() -> bool:
+            return self._session_is_current(session)
+
+        def note(connected: bool, error: str) -> None:
+            # A retired stream must not overwrite the current session's state.
+            with self._lock:
+                if self._session == session:
+                    self._connected = connected
+                    self._last_error = error
+
+        while live():
             try:
-                token, _ = self._credentials()
+                token = account.token if account is not None else self._credentials()[0]
 
                 self._wait_for_api_cooldown()
+                if not live():
+                    return
                 with requests.get(
                     f"{LICHESS_URL}/api/stream/event",
                     headers={
@@ -669,12 +836,10 @@ class LichessBotRuntime:
                     if response.status_code == 429:
                         self._set_api_cooldown(65)
 
-                        with self._lock:
-                            self._connected = False
-                            self._last_error = (
-                                "Lichess rate limited the bot event stream. "
-                                "Pausing all bot API requests for 65 seconds."
-                            )
+                        note(False, (
+                            "Lichess rate limited the bot event stream. "
+                            "Pausing all bot API requests for 65 seconds."
+                        ))
 
                         continue
 
@@ -685,15 +850,13 @@ class LichessBotRuntime:
                             f"{response.text[:200]}"
                         )
 
-                    with self._lock:
-                        self._connected = True
-                        self._last_error = ""
+                    note(True, "")
 
                     # A successful connection resets the reconnect delay.
                     backoff = 1.0
 
                     for raw in response.iter_lines():
-                        if self._stop.is_set():
+                        if not live():
                             return
 
                         if not raw:
@@ -707,14 +870,12 @@ class LichessBotRuntime:
 
                 # A 200 stream ending is still a disconnect.
                 # Do NOT reconnect immediately.
-                with self._lock:
-                    self._connected = False
-                    self._last_error = (
-                        "Lichess bot event stream disconnected. "
-                        "Reconnecting shortly."
-                    )
+                note(False, (
+                    "Lichess bot event stream disconnected. "
+                    "Reconnecting shortly."
+                ))
 
-                if self._stop.wait(backoff):
+                if self._stop.wait(backoff) or not live():
                     return
 
                 backoff = min(
@@ -723,13 +884,9 @@ class LichessBotRuntime:
                 )
 
             except requests.RequestException as exc:
-                with self._lock:
-                    self._connected = False
-                    self._last_error = (
-                        f"Bot event stream network error: {exc}"
-                    )
+                note(False, f"Bot event stream network error: {exc}")
 
-                if self._stop.wait(backoff):
+                if self._stop.wait(backoff) or not live():
                     return
 
                 backoff = min(
@@ -738,13 +895,9 @@ class LichessBotRuntime:
                 )
 
             except Exception as exc:
-                with self._lock:
-                    self._connected = False
-                    self._last_error = (
-                        f"Bot event stream: {exc}"
-                    )
+                note(False, f"Bot event stream: {exc}")
 
-                if self._stop.wait(backoff):
+                if self._stop.wait(backoff) or not live():
                     return
 
                 backoff = min(
@@ -753,7 +906,8 @@ class LichessBotRuntime:
                 )
 
         with self._lock:
-            self._connected = False
+            if self._session == session:
+                self._connected = False
 
     def _handle_event(self, event: dict[str, Any]) -> None:
         event_type = event.get("type")
@@ -795,8 +949,16 @@ class LichessBotRuntime:
                 daemon=True,
             )
             self._game_threads[game_id] = thread
+            # Pin the game to the account that is playing it, so a later
+            # selection can never reconnect this game with another token.
+            if game_id not in self._game_accounts and self._session_account is not None:
+                self._game_accounts[game_id] = self._session_account
             self._last_game_id = game_id
             thread.start()
+
+    def _game_account(self, game_id: str) -> BotAccount | None:
+        with self._lock:
+            return self._game_accounts.get(game_id)
 
     @staticmethod
     def _board_from_state(initial_fen: str, moves_text: str) -> chess.Board:
@@ -823,7 +985,10 @@ class LichessBotRuntime:
                 game_clock = None
                 game_rated = None
                 try:
-                    token, _ = self._credentials()
+                    with self._lock:
+                        account = self._game_accounts.get(game_id)
+                    token = account.token if account is not None else self._credentials()[0]
+                    player = account.username if account is not None else self._username
                     self._wait_for_api_cooldown()
                     with requests.get(
                         f"{LICHESS_URL}/api/bot/game/stream/{game_id}",
@@ -864,13 +1029,13 @@ class LichessBotRuntime:
                                 black = event.get("black") or {}
                                 white_id = str(white.get("id") or white.get("name") or "").lower()
                                 black_id = str(black.get("id") or black.get("name") or "").lower()
-                                username = self._username.lower()
+                                username = player.lower()
                                 if white_id == username:
                                     bot_color = chess.WHITE
                                 elif black_id == username:
                                     bot_color = chess.BLACK
                                 else:
-                                    raise RuntimeError(f"Bot account {self._username} is not a player in game {game_id}.")
+                                    raise RuntimeError(f"Bot account {player} is not a player in game {game_id}.")
                                 state = event.get("state") or {}
                             elif event_type == "gameState":
                                 if bot_color is None:
@@ -924,6 +1089,7 @@ class LichessBotRuntime:
             self._clear_game_state(game_id)
             with self._lock:
                 self._game_threads.pop(game_id, None)
+                self._game_accounts.pop(game_id, None)
 
     def _maybe_accept_takeback(self, game_id: str, state: dict[str, Any], bot_color: chess.Color) -> None:
         # Lichess names the request flags by the side asking for the takeback.
@@ -937,7 +1103,8 @@ class LichessBotRuntime:
                 return
             self._takeback_seen.add(signature)
         try:
-            self._request("POST", f"/api/bot/game/{game_id}/takeback/yes", timeout=10)
+            self._request("POST", f"/api/bot/game/{game_id}/takeback/yes", timeout=10,
+                          account=self._game_account(game_id))
         except Exception:
             with self._lock:
                 self._takeback_seen.discard(signature)
@@ -969,7 +1136,8 @@ class LichessBotRuntime:
                 elapsed_ms = int((time.monotonic()-started)*1000)
             else:
                 move, elapsed_ms = self._engine.choose_move(board, level)
-            self._request("POST", f"/api/bot/game/{game_id}/move/{move.uci()}", timeout=10)
+            self._request("POST", f"/api/bot/game/{game_id}/move/{move.uci()}", timeout=10,
+                          account=self._game_account(game_id))
             with self._lock:
                 self._last_move_ms = elapsed_ms
                 # Do not leave a stale reconnect warning visible after a move succeeds.
@@ -980,4 +1148,5 @@ class LichessBotRuntime:
             raise
 
 
-runtime = LichessBotRuntime()
+# The shared runtime opens CHESS_DATA_HOME/bot-accounts on first use.
+runtime = LichessBotRuntime(accounts=BotAccountStore.open_default)

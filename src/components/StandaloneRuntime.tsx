@@ -1,11 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
-import { authenticatedBackendFetch } from '../nativeBackend';
+import { authenticatedBackendFetch, readConnection } from '../nativeBackend';
 import { standalone, type LocalSettings, type AndroidUpdate } from '../standaloneRuntime';
+import { ServerConnectionPanel } from './TabletConnection';
 
 export function StandaloneRuntime({ children }: { children: ReactNode }) {
   const android = Capacitor.getPlatform() === 'android';
+  // A saved Chess Buddy server (a Mac or a hosted one) replaces the on-device backend.
+  const [server] = useState(() => readConnection());
+  const [serverOpen, setServerOpen] = useState(() => !android && typeof window !== 'undefined' && window.location.hash === '#pair-server');
   const [ready, setReady] = useState(!android);
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState<LocalSettings>({});
@@ -39,6 +43,12 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
   }, [android]);
   useEffect(() => {
     if (!android) return;
+    if (server) {
+      window.__CHESS_BACKEND_URL__ = server.url;
+      window.fetch = authenticatedBackendFetch(window.fetch.bind(window), server);
+      setReady(true);
+      return;
+    }
     let active = true;
     void standalone.boot().then(state => {
       if (!active) return;
@@ -49,7 +59,7 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
       setReady(true);
     }).catch(cause => { if (active) setError(String(cause?.message || cause)); });
     return () => { active = false; };
-  }, [android]);
+  }, [android, server]);
   function update(name: string, value: string) { setFields(old => ({ ...old, [name]: value })); }
   async function save() {
     setBusy(true); setError(''); setNotice('');
@@ -74,7 +84,6 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
     } catch (cause) { setError(String((cause as Error).message || cause)); }
     finally { setPassword(''); setBusy(false); }
   }
-  if (!android) return <>{children}</>;
   const updates = <section aria-label="App updates">
     <h2>App updates</h2>
     {appUpdate && <p>{appUpdate.available ? `Chess Buddy ${appUpdate.versionName} is available.` : `Version ${appUpdate.currentVersion} · No newer published version found.`}</p>}
@@ -82,6 +91,14 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
     {appUpdate?.available && <><p className="fine-print">Finish your game and turn robot reactions off before installing. Open the downloaded APK and approve Android's update prompt. Your saved data stays on this tablet.</p><button className="primary" disabled={checkingUpdate} onClick={() => void downloadUpdate()}>Download update</button>{appUpdate.releaseUrl && <button className="ghost" onClick={() => void Browser.open({ url: appUpdate.releaseUrl! }).catch(cause => setUpdateError(String(cause?.message || cause)))}>What's new</button>}</>}
     {updateError && <p role="status">{updateError}</p>}
   </section>;
+  const serverPanel = serverOpen && <ServerConnectionPanel existing={server} onClose={() => {
+    setServerOpen(false);
+    if (window.location.hash === '#pair-server') history.replaceState(null, '', window.location.pathname + window.location.search);
+  }}>{android && server && updates}</ServerConnectionPanel>;
+  const serverButton = server && !serverOpen && <button className="tablet-connection-button ghost" onClick={() => setServerOpen(true)}>
+    Server · {new URL(server.url).host}</button>;
+  if (!android) return <>{children}{serverButton}{serverPanel}</>;
+  if (server) return <>{children}{serverButton}{serverPanel}</>;
   if (!ready) return <div className="tablet-connection-backdrop"><section className="card tablet-connection-card"><h1>Starting Chess Buddy on this tablet…</h1><p>Loading the local chess engine and coaching backend.</p>{error && <><p role="alert">{error}</p><button className="primary" onClick={() => window.location.reload()}>Try again</button>{updates}</>}</section></div>;
   return <>
     {children}
@@ -104,6 +121,10 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
         <details><summary>Optional ElevenLabs voice</summary><label>ElevenLabs key {settings.elevenLabsKeyConfigured && '· saved'}<input type="password" autoComplete="off" value={fields.elevenLabsKey || ''} onChange={e => update('elevenLabsKey', e.target.value)}/></label><label>Voice ID<input value={fields.voiceId || ''} onChange={e => update('voiceId', e.target.value)}/></label></details>
         <button className="primary" disabled={busy}>{busy ? 'Working…' : 'Save tablet settings'}</button>
       </form>
+      <details><summary>Use a Chess Buddy server instead</summary>
+        <p>Pair with a Mac on this Wi-Fi or a hosted server such as https://chess-api.urbot.ai. The server then runs coaching, the Lichess bot and VBOT, and this tablet stops running its own backend.</p>
+        <button className="ghost" disabled={busy} onClick={() => setServerOpen(true)}>Use a Chess Buddy server</button>
+      </details>
       <details><summary>Pair the tablet's own SSH key with VBOT</summary>
         <p>This tablet generates its own key. You can add its public key to your dog's vbot account yourself, or use the one-time password method below. The password is not saved.</p>
         <button className="ghost" disabled={busy} onClick={() => void publicKey()}>Show tablet public key</button>{key && <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{key}</pre>}
@@ -115,5 +136,6 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
       <p className="fine-print">Keys are stored with Android Keystore encryption. Keep this app running during games. Turn robot reactions off before changing settings. The ongoing notification can stop the local backend.</p>
       <button className="ghost" disabled={busy} onClick={() => setOpen(false)}>Continue to Chess Buddy</button>
     </section></div>}
+    {serverPanel}
   </>;
 }

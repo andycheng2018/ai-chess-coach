@@ -30,6 +30,16 @@ SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"
 PROFILE_PATH = Path(os.environ.get('CHESS_DATA_HOME', Path(__file__).resolve().parents[1])) / "vbot-demo" / "device-verification.local.json"
 
 
+def operator_timeout_seconds(value=None) -> float:
+    """VBOT_OPERATOR_TIMEOUT_S: 0 (default) keeps the local-Mac behaviour; a hosted server sets 5-300."""
+    raw = os.environ.get("VBOT_OPERATOR_TIMEOUT_S", "0") if value is None else value
+    try:
+        seconds = float(raw or 0)
+    except ValueError:
+        return 0.0
+    return 0.0 if seconds <= 0 else min(max(seconds, 5.0), 300.0)
+
+
 def run_ssh(command, **kwargs):
     if os.environ.get('CHESS_ANDROID') == '1':
         from android_backend import ssh_run
@@ -182,6 +192,11 @@ class VbotDemo:
         self.mode = "rehearsal"
         self.game_id = ""
         self.target = os.environ.get("VBOT_SSH_TARGET", "").strip() or (self.verification or {}).get("target", "")
+        # On a hosted server the operator's device is elsewhere, so a dead tablet no longer
+        # drops the robot's SSH session. Server-started motion (game-end dance, performance
+        # cues) then requires a paired device to have checked in recently.
+        self.operator_timeout = operator_timeout_seconds()
+        self.operator_seen = float("-inf")
         self.preset = PRESETS[0]
         self.cooldown = 20.0
         self.armed_at = float("inf")
@@ -234,7 +249,8 @@ class VbotDemo:
                 self.disarm({"gameId":self.game_id,"generation":self.generation,"reason":"network_changed"})
             if self.network_needs_target and not self.busy and not self.armed:
                 # A remembered address is a candidate, never automatic live arming.
-                self.target = snapshot.get("suggestedTarget") or ""
+                # Hosted in Linux there is no Mac network to remember, so keep the configured target.
+                self.target = snapshot.get("suggestedTarget") or os.environ.get("VBOT_SSH_TARGET", "").strip()
                 self.network_needs_target = False
 
     def remember_network(self, payload):
@@ -254,6 +270,7 @@ class VbotDemo:
         self._sync_network()
         with self.lock:
             return {"sessionKind": self.session_kind, "performance": self.performance, "performanceApiVersion": 1,
+                    "operatorTimeoutSeconds": self.operator_timeout,
                     "companionApiVersion": 1, "generation": self.generation,
                     "reactionProfile": self.reaction_profile, "demoNextPly": self.demo_next_ply,
                     "network": self.network_book.snapshot() if self.network_book is not None else None,
@@ -310,6 +327,13 @@ class VbotDemo:
         preset = self.chooser(weighted)
         self.last_small_preset = preset
         return preset
+
+    def touch_operator(self) -> None:
+        with self.lock:
+            self.operator_seen = self.clock()
+
+    def _operator_absent(self) -> bool:
+        return self.operator_timeout > 0 and self.clock() - self.operator_seen > self.operator_timeout
 
     def _ssh_identity_anchor(self):
         profile=self.verification or {}
@@ -474,6 +498,10 @@ class VbotDemo:
                 with self.lock:
                     if cancel.is_set() or not self.armed or generation != self.generation:
                         return
+                    if self._operator_absent():
+                        self.performance['stopReason'] = "The operator's device stopped checking in. No next cue submitted."
+                        self._event('performance_operator_offline', message="Operator device offline; no next cue submitted.")
+                        return
                     if self.clock() >= deadline:
                         self.performance['stopReason'] = 'The 15-minute performance limit was reached. No next cue submitted.'
                         self._event('performance_expired', message='Performance time limit reached; no next cue submitted.')
@@ -593,6 +621,7 @@ class VbotDemo:
                 "supervised_rehearsal": "Paused for a supervised preset rehearsal.",
                 "server_shutdown": "Coach server stopped; reactions turned off.",
                 "network_changed": "Mac network changed; reactions turned off. Check the address on this network before enabling again.",
+                "operator_offline": "The operator's device stopped checking in; reactions turned off. Reconnect, check the robot and enable again.",
             }
             reason_code = (payload or {}).get("reason", "unspecified")
             if reason_code not in reasons: reason_code = "unspecified"
@@ -858,6 +887,9 @@ class VbotDemo:
         fields = {key: record.get(key) for key in ("gameId", "ply", "playedMove", "classification", "synthetic")}
         if not self.armed:
             return self._event("skipped", reason="Demo is disarmed.", **fields)
+        if self._operator_absent():
+            self.disarm({"gameId": self.game_id, "generation": self.generation, "reason": "operator_offline"})
+            return self._event("skipped", reason="The operator's device stopped checking in; no action queued.", **fields)
         if self.finish_pending:
             return self._event("skipped", reason="Match is finishing; move reactions are closed.", **fields)
         if record["gameId"] != self.game_id:

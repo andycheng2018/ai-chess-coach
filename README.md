@@ -257,6 +257,75 @@ cd ai-chess-coach
 
 Create a `.env` file using `.env.example` and add the services you want to use.
 
+### Bot accounts
+
+The training opponent plays from a Lichess BOT account. Put its token in `.env`
+as `LICHESS_BOT_TOKEN` (and its name as `LICHESS_BOT_USERNAME`), or in
+`bot/config.yml`. The Android standalone build takes the same values from
+**Tablet settings**. That account is listed as **Default (.env)** and is used
+automatically, so existing setups need no changes.
+
+To use another bot account, open **Bot account → Manage** on the training screen
+before starting a game, enter the bot's Lichess username, and either paste its API
+token or name an environment variable such as `LICHESS_BOT_TOKEN_2`. **Add and use**
+checks the token with Lichess and switches to it; the dropdown switches between
+saved accounts. The next game challenges the selected bot.
+
+- Accounts are kept in a SQLite database at
+  `$CHESS_DATA_HOME/bot-accounts/accounts.sqlite3` (the repository on a Mac,
+  private app storage on Android). The database holds labels, usernames and a
+  reference to each token, not the token itself. Pasted tokens are written to
+  `bot-accounts/tokens/` with owner-only permissions. The folder is ignored by Git.
+- Tokens are never sent back to the browser. The app shows only where a token
+  is stored and its last four characters.
+- Adding, selecting and removing accounts work only from the coach computer or
+  a paired tablet. Other clients can see the list but cannot change it.
+- You can't switch accounts during a game: the change is refused until that game
+  ends, and the game keeps using the token it started with.
+- Removing **Default (.env)** only hides it from the list; the token stays in `.env`.
+
+### Hosted server and remote operator login
+
+The backend can run on a server on the Internet instead of the coach computer, for
+example in Docker on a Mac behind a Cloudflare Tunnel. The tablet or computer then
+only shows the board, and the server runs the Lichess bot, coaching and the VBOT
+controller.
+
+The existing tablet pairing key is the login. Set these in the server's `.env`:
+
+| Setting | Value |
+| --- | --- |
+| `CHESS_TABLET_TOKEN` | A random key of at least 40 characters, for example from `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `CHESS_TABLET_URL` | The server's public address, such as `https://chess-api.example.com` |
+| `CHESS_TABLET_ORIGINS` | Optional. Extra browser origins allowed to send the key, comma-separated, such as `http://localhost:5173` for the web app on a computer. The Android app (`https://localhost`) is always allowed. The same list feeds CORS. |
+| `VBOT_OPERATOR_TIMEOUT_S` | Seconds without a check-in from a paired device before robot reactions turn off. Use `15` on a hosted server; `0` (default) keeps the local-Mac behaviour. |
+| `VBOT_SSH_TARGET` | The robot's SSH address as the server sees it. On a hosted server there is no Mac network to remember addresses for, so this is the default. |
+
+With a key set, every `/api/` request needs it, including `/api/health`. Pair a
+device by showing it the pairing page (`/tablet` on the server's own loopback):
+
+- **Android:** **Tablet settings → Use a Chess Buddy server**, then scan the QR
+  or type the address and key. While a server is saved, the tablet does not start
+  its own backend. **Forget server and use this tablet** switches back.
+- **Computer:** open the web app with `#pair-server` at the end of its address,
+  for example `http://localhost:5173/#pair-server`. Add that origin to
+  `CHESS_TABLET_ORIGINS` first.
+
+A paired device can use coaching, manage bot accounts and control the robot, from
+anywhere. Things to know:
+
+- **Behind a tunnel the key is the only credential.** The private-address check
+  in pairing is always satisfied there, so treat the key like a password and
+  rotate it by changing `CHESS_TABLET_TOKEN` and restarting. Every device must
+  then pair again.
+- **Keep the hosted server behind Docker's port proxy.** If the server runs
+  natively behind a tunnel, requests arrive from `127.0.0.1` and ordinary API
+  calls would skip the key. Robot controls would still require it.
+- **Onsite safety still applies.** The operator still confirms a clear floor and
+  a ready handset Stop before reactions or a show start. If the paired device
+  stops checking in, the server disarms reactions and submits no further show
+  cues. An action already running finishes or must be stopped with the handset.
+
 Then run:
 
 ```bash

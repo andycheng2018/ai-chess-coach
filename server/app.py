@@ -20,14 +20,15 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-from bot_runtime import BOT_LEVELS, runtime
+from bot_runtime import BOT_LEVELS, BotAccountBusy, runtime
 from coach.opening_recognizer import recognize_opening
 from coach.stockfish_analyzer import StockfishAnalyzer, capture_context, find_stockfish
 from coach.history import history
 from coach.analysis_search import analysis_searches
-from tablet_access import TabletAccess, TABLET_ORIGIN, TABLET_HEADER
+from tablet_access import TabletAccess, TABLET_ORIGIN, TABLET_HEADER, parse_origins
 
-tablet_access = TabletAccess(os.environ.get('CHESS_TABLET_TOKEN', ''), os.environ.get('CHESS_TABLET_URL', ''))
+tablet_access = TabletAccess(os.environ.get('CHESS_TABLET_TOKEN', ''), os.environ.get('CHESS_TABLET_URL', ''),
+                             parse_origins(os.environ.get('CHESS_TABLET_ORIGINS', '')))
 from vbot_demo import demo as vbot_demo
 
 # Reuse the bot's one canonical game stream for result celebrations.
@@ -1503,6 +1504,9 @@ def qwen_vbot_commentary(payload: dict[str, Any]) -> dict[str, Any]:
     from vbot_commentary import commentary_for_event
     return commentary_for_event(vbot_demo, payload)
 
+BOT_ACCOUNT_ROUTES = {"/api/bot/accounts", "/api/bot/accounts/select", "/api/bot/accounts/remove"}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AIChessCoach/1.0"
 
@@ -1532,7 +1536,8 @@ class Handler(BaseHTTPRequestHandler):
 
         allowed_origins.update(EXTRA_CORS_ORIGINS)
         if tablet_access.enabled:
-            allowed_origins.add(TABLET_ORIGIN)
+            # One list drives both pairing and CORS, so they cannot disagree.
+            allowed_origins.update(tablet_access.origins)
 
         # Allow Chess Buddy frontend deployed on Render.
         if origin.startswith("https://") and origin.endswith(".onrender.com"):
@@ -1552,7 +1557,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", f"Content-Type, {TABLET_HEADER}")
-            if tablet_access.enabled and self.headers.get('Origin') == TABLET_ORIGIN:
+            if tablet_access.enabled and self.headers.get('Origin') in tablet_access.origins:
                 self.send_header('Access-Control-Allow-Private-Network', 'true')
             self.send_header("Cache-Control", "no-store")
             if status != 204:
@@ -1662,6 +1667,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._vbot_local_request():
                 self._send(403, {"message": "Open VBOT Demo locally on the demo Mac."})
             elif urlsplit(self.path).path == "/api/vbot/status":
+                vbot_demo.touch_operator()  # The app polls every 2 s; this is the presence signal.
                 self._send(200, vbot_demo.status())
             else:
                 self._send_bytes(200, (ROOT / "vbot-demo" / "index.html").read_bytes(), "text/html; charset=utf-8")
@@ -1711,6 +1717,15 @@ class Handler(BaseHTTPRequestHandler):
             })
         elif self.path == "/api/bot/status":
             self._send(200, runtime.status())
+        elif self.path == "/api/bot/accounts":
+            payload = runtime.accounts_payload()
+            payload["canManage"] = self._vbot_local_request()
+            if not payload["canManage"]:
+                # Remote viewers see which bots exist, nothing about their tokens.
+                for account in payload["accounts"]:
+                    account["tokenHint"] = ""
+                    account["tokenEnv"] = None
+            self._send(200, payload)
         elif (
             self.path.startswith("/api/bot/game/")
             and self.path.endswith("/state")
@@ -1778,6 +1793,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(403, {"message": "VBOT controls require local JSON requests from the demo Mac."})
                     return
                 payload = self._json_body()
+                vbot_demo.touch_operator()
                 if self.path == "/api/vbot/arm":
                     response = vbot_demo.arm(payload)
                 elif self.path == "/api/vbot/finish":
@@ -1822,6 +1838,21 @@ class Handler(BaseHTTPRequestHandler):
                 game_id = str(payload.get("gameId") or "").strip()
                 saved = history.save_records(game_id, records)
                 self._send(200, {"gameId": game_id, "records": saved})
+            elif self.path in BOT_ACCOUNT_ROUTES:
+                # Tokens are only accepted from this machine or a paired tablet,
+                # as JSON so browsers must pass the CORS preflight first.
+                if not self._vbot_local_request() or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                    self._send(403, {"message": "Manage bot accounts from the coach computer or a paired tablet."})
+                    return
+                body = self._json_body()
+                if self.path == "/api/bot/accounts":
+                    response = runtime.add_account(body)
+                elif self.path == "/api/bot/accounts/select":
+                    response = runtime.select_account(str(body.get("id") or ""))
+                else:
+                    response = runtime.remove_account(str(body.get("id") or ""))
+                response["canManage"] = True
+                self._send(200, response)
             elif self.path == "/api/bot/start":
                 self._send(200, runtime.start())
             elif self.path == "/api/bot/stop":
@@ -1913,6 +1944,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
             else:
                 self._send(404, {"message": "Not found"})
+        except BotAccountBusy as exc:
+            self._send(409, {"message": str(exc)})
         except ValueError as exc:
             self._send(400, {"message": str(exc)})
         except Exception as exc:
@@ -1931,7 +1964,7 @@ class Handler(BaseHTTPRequestHandler):
         if not tablet_access.enabled or not urlsplit(self.path).path.startswith('/api/'):
             return False
         address = self.client_address[0]
-        native = self.headers.get('Origin') == TABLET_ORIGIN
+        native = self.headers.get('Origin') in tablet_access.origins
         if address in {'127.0.0.1', '::1'} and not native:
             return False
         if tablet_access.authorized(address, self.headers.get('Origin', ''), self.headers.get(TABLET_HEADER, '')):

@@ -29,6 +29,8 @@ import { reconcilePendingMove, resolveMoveFailure, type PendingMoveAttempt } fro
 import { moveLineChanged, shouldApplyBackupSnapshot } from './gameSync';
 import { observeCoachStream, type CoachStreamCursor } from './coachStream';
 import { requireSenseTrainingGame } from './senseRecovery';
+import { BotAccountPicker } from './components/BotAccountPicker';
+import { accountSwitchBlock } from './botAccounts';
 import { acceptBotChallenge, getBotStatus, getCachedGameState, joinSenseRoom, parseSenseRoomUrl, setBotLevel, setBotDemoMode, startBot, type BotRuntimeStatus } from './botControl';
 import {
   analyzeMove,
@@ -3654,7 +3656,8 @@ export default function App() {
       setBot(levelState);
 
       let state = levelState;
-      if (!state.running) {
+      // A newly selected bot account takes over here, before the challenge.
+      if (!state.running || state.accountPending) {
         state = await startBot();
       }
 
@@ -4123,6 +4126,12 @@ export default function App() {
   const focusLessons = Array.from(new Set(coachNotes.map((note) => note.lesson).filter(Boolean))).slice(0, 3);
   void focusLessons;
   const botLabel = bot.connected ? 'Coach bot ready' : bot.running ? 'Coach bot connecting' : 'Coach bot offline';
+  const botAccountBlock = accountSwitchBlock({
+    gameId: gameId || (activeGame ? 'active' : null),
+    startingGame: startingGame || scanningRoom,
+    activeGames: bot.activeGames,
+  });
+  const botAccountPicker = <BotAccountPicker blockedReason={botAccountBlock} onStatus={setBot} />;
   const selectedLevel = LEVELS.find((item) => item.id === level) || LEVELS[2];
   const selectedTimeControl = TIME_CONTROLS.find((item) => item.id === timeControlId) || TIME_CONTROLS[4];
   const reviewBestUci = reviewTarget?.bestMoveUci || '';
@@ -4468,6 +4477,7 @@ export default function App() {
         onOpenSenseSetup={() => setSenseSetupOpen(true)}
         onOpenRooms={() => setRoomLinkOpen(true)}
         onOpenProfile={() => setProfileModalOpen(true)}
+        accountPicker={botAccountPicker}
         onOpenMenu={() => {
           void refreshPlayingGames();
           setMenuModalOpen(true);
@@ -4600,6 +4610,7 @@ export default function App() {
         {!gameId && <section className="card setup-card">
           <div className="section-title"><span>1</span> Training opponent</div>
           <p className="section-copy">Estimated practice strength — start low and move up when games feel comfortable.</p>
+          {botAccountPicker}
           <div className="level-grid">
             {LEVELS.map((item) => <button
               key={item.id}

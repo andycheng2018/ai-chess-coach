@@ -2,6 +2,11 @@ export type BotRuntimeStatus = {
   running: boolean;
   connected?: boolean;
   username?: string;
+  accountId?: string | null;
+  accountLabel?: string | null;
+  selectedAccountId?: string | null;
+  /** The next game must restart the bot on a newly selected account. */
+  accountPending?: boolean;
   level?: string;
   displayElo?: number;
   lastMoveMs?: number | null;
@@ -37,6 +42,63 @@ async function jsonRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message || `${response.status} ${response.statusText}`);
   return data as T;
+}
+
+/** A bot account as the backend lists it. Token values never leave the backend. */
+export type BotAccount = {
+  id: string;
+  label: string;
+  username: string;
+  tokenSource: 'env' | 'saved';
+  tokenEnv: string | null;
+  tokenHint: string;
+  tokenConfigured: boolean;
+  selected: boolean;
+  isDefault: boolean;
+  active: boolean;
+};
+
+export type BotAccountList = {
+  accounts: BotAccount[];
+  selectedId: string | null;
+  activeId: string | null;
+  locked: boolean;
+  lockedReason: string | null;
+  canManage?: boolean;
+  bot: BotRuntimeStatus;
+  message?: string;
+};
+
+export type NewBotAccount = {
+  label?: string;
+  username: string;
+  token?: string;
+  tokenEnv?: string;
+  select?: boolean;
+};
+
+function postJson<T>(path: string, body: unknown): Promise<T> {
+  return jsonRequest(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getBotAccounts(): Promise<BotAccountList> {
+  return jsonRequest('/api/bot/accounts');
+}
+
+export function addBotAccount(account: NewBotAccount): Promise<BotAccountList> {
+  return postJson('/api/bot/accounts', account);
+}
+
+export function selectBotAccount(id: string): Promise<BotAccountList> {
+  return postJson('/api/bot/accounts/select', { id });
+}
+
+export function removeBotAccount(id: string): Promise<BotAccountList> {
+  return postJson('/api/bot/accounts/remove', { id });
 }
 
 export function getBotStatus(): Promise<BotRuntimeStatus> {

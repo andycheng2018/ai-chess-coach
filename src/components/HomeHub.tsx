@@ -40,6 +40,8 @@ type Props = {
   playingGames?: PlayingGame[];
   onLogin: () => void;
   isLoggedIn: boolean;
+  /** Chooses which Lichess BOT account the next game is played against. */
+  accountPicker?: React.ReactNode;
 };
 
 // Instructive demonstration position for Home Hub spotlight (Mikhail Tal's tactical brilliance)
@@ -98,6 +100,7 @@ export const HomeHub: React.FC<Props> = ({
   playingGames = [],
   onLogin,
   isLoggedIn,
+  accountPicker,
 }) => {
   const selectedLevel = levels.find((l) => l.id === level) || levels[0];
 
@@ -398,6 +401,8 @@ export const HomeHub: React.FC<Props> = ({
           </div>
 
           {onOpenRooms && <button type="button" className="ghost wide" onClick={onOpenRooms}>Lichess rooms & existing games</button>}
+
+          {accountPicker}
 
           {/* Level Grid */}
           <div className="setup-group">
