@@ -1,6 +1,6 @@
 import { VoiceModeCard } from '../components/VoiceModeCard';
 import { KIND_LABEL, type CapabilityKind } from '../domain/catalog';
-import { CLOUD_MISSING } from '../transport/cloud';
+import { CloudPairingCard } from '../components/CloudPairingCard';
 import { FAKE_FAULTS, type FakeFault } from '../transport/fake';
 import { isNativeApp } from '../transport/native';
 import type { TransportKind } from '../transport/types';
@@ -14,7 +14,7 @@ const SOURCES: readonly { id: TransportKind; title: string; body: string }[] = [
   isNativeApp
     ? { id: 'local-face', title: 'Real dog, from this device', body: 'Faces over pinned SSH on the same Wi-Fi, plus presets if you enable motion. No computer needed.' }
     : { id: 'local-face', title: 'Real dog, through this computer', body: 'Faces over the local controller and pinned SSH, plus presets if you enable motion.' },
-  { id: 'cloud', title: 'Cloud', body: 'Not built yet. It needs the backend contract.' },
+  { id: 'cloud', title: 'Real dog, through the cloud', body: 'Faces and shows from anywhere, plus presets if you enable motion. Hold-to-drive needs a direct connection.' },
 ];
 
 const CAPABILITY_ROWS: readonly Exclude<CapabilityKind, 'wait'>[] = ['face', 'head', 'body', 'move', 'speech', 'navigation'];
@@ -27,7 +27,7 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
     <div className="view">
       <ViewHeader title="Your dog" subtitle="Connect, see what it can do right now, and find out why anything is unavailable." />
       <div className="dog-grid">
-        <VoiceModeCard />
+        <VoiceModeCard pairing={studio.cloudPairing} />
         <section className="card hero-card">
           <FacePreview label={connected ? 'happy' : 'sleep'} playing={connected} />
           <div className="hero-status">
@@ -42,7 +42,7 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
                   <button className="btn btn-primary" onClick={onBrowse}>Browse actions</button>
                   <button className="btn" disabled={running} onClick={() => void studio.disconnect()}>Disconnect</button>
                 </>
-              : <button className="btn btn-primary" disabled={studio.connecting || needsTarget || settings.kind === 'cloud'} onClick={() => void studio.connect()}>
+              : <button className="btn btn-primary" disabled={studio.connecting || needsTarget || (settings.kind === 'cloud' && !studio.cloudPairing)} onClick={() => void studio.connect()}>
                   {studio.connecting ? 'Connecting…' : snapshot.connection === 'lost' ? 'Reconnect and check status' : simulated ? 'Connect to simulated dog' : settings.kind === 'local-face' && studio.motionConfirm.onsite && studio.motionConfirm.standing && studio.motionConfirm.clear ? 'Connect with motion' : 'Connect'}
                 </button>}
           </div>
@@ -66,10 +66,10 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
               <small>Addresses change between networks. The dog is identified by its pinned SSH key, and an unknown or changed key is refused.</small>
             </label>
           )}
-          {settings.kind === 'cloud' && <p className="notice">{CLOUD_MISSING}</p>}
+          {settings.kind === 'cloud' && <CloudPairingCard pairing={studio.cloudPairing} locked={connected || running || studio.connecting} onChange={studio.setCloudPairing} />}
         </section>
 
-        {settings.kind === 'local-face' && (() => {
+        {settings.kind !== 'fake' && (() => {
           const armed = connected && Boolean(snapshot.capabilities.move?.available || snapshot.capabilities.body.available);
           const ready = studio.motionConfirm.onsite && studio.motionConfirm.standing && studio.motionConfirm.clear;
           return (

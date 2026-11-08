@@ -295,3 +295,4 @@ button:disabled { cursor: not-allowed; }
 .voice-input { display: flex; gap: 8px; }
 .voice-input input { flex: 1; min-width: 0; }
 .voice-card .voice-turns { max-height: 320px; overflow-y: auto; }
+.cloud-pairing { display: grid; gap: 10px; margin-top: 12px; }

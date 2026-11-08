@@ -12,7 +12,7 @@ stage view. It has no chess, Stockfish or Lichess dependency.
 | Head and body presets, and bounded step/turn moves (`robot_studio.py`) | **Deployed to the dog. Presets are tested against fakes only. Turns were watched on one dog on Nov 5 2026; steps did not move it and are being retried (see [Basic moves](#basic-moves-run-on-one-dog)).** Off unless the operator ticks all three onsite confirmations when connecting. No preset is marked rehearsed or confirmed because of it. See [Motion](#motion-optional-untested-on-the-dog). |
 | Navigation | Deliberately absent from the live path |
 | Speech | Placeholder. No verified backend. |
-| Cloud | Placeholder. Needs the backend API, auth and pairing contract. |
+| Cloud | Controls the dog through the hosted server after pairing with its key. No hold-to-drive, and the session ends if Studio stops checking in. |
 | Android app | Project in `vbot-app/android` (`com.andy.vbotstudio`). The controller and pairing are tested against fakes. CI release builds verify the pinned permanent signature and run the embedded controller on an emulator; physical-device verification is separate. |
 | Player tracking | Types and a staged screen. No real perception feed, and no 3D. |
 
@@ -45,7 +45,7 @@ Screens
       │                        → SSH with pinned host key → vbot-demo/robot_face.py → display service
       │   On Android, the same adapter and controller run inside the APK: StudioPlugin
       │   → studio_backend.py → vbot_app_control.py → StudioHost's pinned SSH → robot_face.py
-      └ CloudTransport       explains what's missing
+      └ CloudTransport       the same protocol, through the hosted server
 ```
 
 On Android there's no local network listener, so other apps on the device have nothing to connect to.

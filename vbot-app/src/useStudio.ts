@@ -4,6 +4,7 @@ import { isTerminal, makeEnvelope, type CommandReceipt, type DeviceSnapshot } fr
 import { copyShow, findShow, importShow, loadLibrary, reviseShow, saveLibrary, upsertShow, type KeyValueStore, type LibraryState } from './domain/library';
 import { admitScore, cueFromEntry, makeScore, parseScore, type Score } from './domain/score';
 import { CloudTransport } from './transport/cloud';
+import { readPairing, writePairing, type CloudPairing } from './transport/cloudPairing';
 import { FakeTransport, type FakeFault } from './transport/fake';
 import { LocalFaceTransport } from './transport/localFace';
 import { isNativeApp, studioBackend } from './transport/native';
@@ -37,7 +38,7 @@ function createTransport(kind: TransportKind, store: KeyValueStore): DeviceTrans
       ? new LocalFaceTransport({ fetcher: nativeFetcher(request => studioBackend.call(request)), downMessage: NATIVE_CONTROLLER_DOWN })
       : new LocalFaceTransport();
   }
-  if (kind === 'cloud') return new CloudTransport();
+  if (kind === 'cloud') return new CloudTransport(readPairing(store));
   return new FakeTransport({ store });
 }
 
@@ -60,6 +61,7 @@ export function useStudio() {
 
   useEffect(() => { setStorageOk(saveLibrary(store, library)); }, [library, store]);
   useEffect(() => { store.setItem(SETTINGS_KEY, JSON.stringify(settings)); }, [settings, store]);
+  const [cloudPairing, setCloudPairingState] = useState<CloudPairing | null>(() => readPairing(store));
 
   // Switching adapters only reads status. Nothing connects or runs by itself.
   useEffect(() => {
@@ -71,7 +73,7 @@ export function useStudio() {
     const unsubscribe = next.subscribe(setSnapshot);
     void next.status().then(current => { if (transport.current === next) setSnapshot(current); });
     return () => { unsubscribe(); next.dispose(); transport.current = null; };
-  }, [settings.kind, store]);
+  }, [settings.kind, store, cloudPairing]);
 
   latest.current = snapshot;
 
@@ -200,10 +202,11 @@ export function useStudio() {
   const selected = findShow(library, library.selectedId);
   const setKind = useCallback((kind: TransportKind) => setSettings(state => ({ ...state, kind })), []);
   const setTarget = useCallback((target: string) => setSettings(state => ({ ...state, target })), []);
+  const setCloudPairing = useCallback((pairing: CloudPairing | null) => { writePairing(store, pairing); setCloudPairingState(pairing); }, [store]);
 
   return {
     library, selected, settings, snapshot, receipt, catalog, connecting, sending, running, fault, storageOk, motionConfirm, setMotionConfirm,
-    simulated: settings.kind === 'fake',
+    simulated: settings.kind === 'fake', cloudPairing, setCloudPairing,
     connect, disconnect, startShow, waitForRun, clearReceipt, driver, tryEntry, stopFuture, setFault, setKind, setTarget,
     select, createShow, editShow, saveAs, removeShow, importText, toggleFavorite,
     admission: (score: Pick<Score, 'cues'>) => admitScore(score, snapshot.capabilities),

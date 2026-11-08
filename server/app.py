@@ -32,9 +32,11 @@ tablet_access = TabletAccess(os.environ.get('CHESS_TABLET_TOKEN', ''), os.enviro
 from vbot_demo import demo as vbot_demo
 import diagnostics
 import vbot_speech
+from vbot_cloud_studio import CloudStudio
 from vbot_voice import VoiceMode
 
 voice_mode = VoiceMode(vbot_demo)
+cloud_studio = CloudStudio(vbot_demo)
 
 # Reuse the bot's one canonical game stream for result celebrations.
 runtime.game_observer = lambda game: vbot_demo.observe_game_end(game, runtime.game_state)
@@ -1668,6 +1670,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_bytes(200, tablet_access.page(), 'text/html; charset=utf-8')
             return
+        if urlsplit(self.path).path == "/api/vbot/studio/status":
+            if not self._vbot_local_request():
+                self._send(403, {"message": "Pair this device to use cloud control."})
+            else:
+                self._send(200, cloud_studio.status())
+            return
         if urlsplit(self.path).path == "/api/vbot/voice":
             if not self._vbot_local_request():
                 self._send(403, {"message": "Pair this device to use voice mode."})
@@ -1835,6 +1843,9 @@ class Handler(BaseHTTPRequestHandler):
                     response = vbot_demo.reconcile(payload, runtime.game_state)
                 elif self.path == "/api/vbot/commentary":
                     response = qwen_vbot_commentary(payload)
+                elif self.path.startswith("/api/vbot/studio/"):
+                    self._send(*cloud_studio.handle(self.path.rsplit("/", 1)[1], payload))
+                    return
                 elif self.path == "/api/vbot/voice":
                     response = voice_mode.set_enabled(payload.get("enabled"))
                 elif self.path == "/api/vbot/voice/session/new":

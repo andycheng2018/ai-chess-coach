@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { cloudFetcher, type CloudPairing } from '../transport/cloudPairing';
 
 type Turn = { id: string; heard: string; understood: string; clarifying: boolean; reply: string; error?: string; source?: 'voice' | 'typed' };
 type Session = { id: string; title: string; startedAt: number; updatedAt: number; turnCount: number };
@@ -13,7 +14,10 @@ function sessionLabel(session: Session) {
 }
 
 /** Studio's controls for Qwen voice mode and its sessions. This Mac's controller holds the cloud key. */
-export function VoiceModeCard() {
+export function VoiceModeCard({ pairing }: { pairing: CloudPairing | null }) {
+  // Paired devices go straight to the cloud. Otherwise this Mac's controller adds the key.
+  const base = pairing ? `${pairing.url}/api/vbot/voice` : BASE;
+  const request = useMemo(() => pairing ? cloudFetcher(pairing) : (input: string, init?: RequestInit) => fetch(input, init), [pairing]);
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -25,19 +29,19 @@ export function VoiceModeCard() {
     async function poll() {
       if (document.hidden || working.current) return;
       try {
-        const response = await fetch(BASE, { cache: 'no-store' });
+        const response = await request(base, { cache: 'no-store' });
         if (active && response.ok && !working.current) setStatus(await response.json());
       } catch { /* Shown by the next successful poll or an action error. */ }
     }
     void poll();
     const timer = window.setInterval(() => void poll(), 3000);
     return () => { active = false; window.clearInterval(timer); };
-  }, []);
+  }, [base, request]);
 
   async function send(path: string, body: object): Promise<boolean> {
     setBusy(true); setError(''); working.current = true;
     try {
-      const response = await fetch(BASE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const response = await request(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'The server refused that change.');
       setStatus(data);
