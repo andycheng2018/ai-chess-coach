@@ -12,6 +12,11 @@ test('pairing needs a plain HTTPS address and a full key',()=>{
  for(const bad of ['http://chess-api.urbot.ai','https://a.example/path','https://u:p@a.example','https://a.example/?k=1','nonsense'])assert.throws(()=>api.validatePairing({url:bad,token}),undefined,bad);
  assert.throws(()=>api.validatePairing({url,token:'short'}));
 });
+test('the QR format matches Chess Buddy and is checked like a typed pairing',()=>{
+ const good=api.parsePairingQr(JSON.stringify({type:'chessbuddy-tablet-v1',url,token}));
+ assert.equal(good.url,url);assert.equal(good.token,token);
+ for(const bad of ['not json','null',JSON.stringify({type:'sense-room',url,token}),JSON.stringify({type:'chessbuddy-tablet-v1',url:'http://evil.example',token}),JSON.stringify({type:'chessbuddy-tablet-v1',url,token:'short'})])assert.throws(()=>api.parsePairingQr(bad),undefined,bad);
+});
 test('a saved pairing round-trips and can be forgotten',()=>{
  const values=new Map();const store={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
  assert.equal(api.readPairing(store),null);

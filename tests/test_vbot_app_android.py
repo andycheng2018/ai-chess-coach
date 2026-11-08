@@ -229,10 +229,11 @@ class PackagingTests(unittest.TestCase):
             self.assertFalse(found & forbidden, f'{path.name}: {found & forbidden}')
             self.assertTrue({name for name in found if name.startswith('vbot_')} <= allowed_local, path.name)
 
-    def test_the_manifest_asks_only_for_network_and_blocks_backup(self):
+    def test_the_manifest_asks_only_for_network_and_pairing_camera_and_blocks_backup(self):
         namespace = '{http://schemas.android.com/apk/res/android}'
         root = ElementTree.parse(ANDROID / 'app' / 'src' / 'main' / 'AndroidManifest.xml').getroot()
-        self.assertEqual([item.get(namespace + 'name') for item in root.findall('uses-permission')], ['android.permission.INTERNET'])
+        self.assertEqual([item.get(namespace + 'name') for item in root.findall('uses-permission')], ['android.permission.INTERNET', 'android.permission.CAMERA'])
+        self.assertEqual(root.find('uses-feature').get(namespace + 'required'), 'false')  # Tablets without a camera can still install it.
         application = root.find('application')
         self.assertEqual(application.get(namespace + 'allowBackup'), 'false')
         self.assertIsNone(application.get(namespace + 'usesCleartextTraffic'))

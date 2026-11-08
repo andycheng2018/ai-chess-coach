@@ -12,7 +12,7 @@ stage view. It has no chess, Stockfish or Lichess dependency.
 | Head and body presets, and bounded step/turn moves (`robot_studio.py`) | **Deployed to the dog. Presets are tested against fakes only. Turns were watched on one dog on Nov 5 2026; steps did not move it and are being retried (see [Basic moves](#basic-moves-run-on-one-dog)).** Off unless the operator ticks all three onsite confirmations when connecting. No preset is marked rehearsed or confirmed because of it. See [Motion](#motion-optional-untested-on-the-dog). |
 | Navigation | Deliberately absent from the live path |
 | Speech | Placeholder. No verified backend. |
-| Cloud | Controls the dog through the hosted server after pairing with its key. No hold-to-drive, and the session ends if Studio stops checking in. |
+| Cloud | Controls the dog through the hosted server after pairing with its key, by paste or by scanning `show_pairing_qr.sh` on Android. No hold-to-drive, and the session ends if Studio stops checking in. |
 | Android app | Project in `vbot-app/android` (`com.andy.vbotstudio`). The controller and pairing are tested against fakes. CI release builds verify the pinned permanent signature and run the embedded controller on an emulator; physical-device verification is separate. |
 | Player tracking | Types and a staged screen. No real perception feed, and no 3D. |
 

@@ -17,6 +17,16 @@ export function validatePairing(value: CloudPairing): CloudPairing {
   return { url: url.origin, token };
 }
 
+/** Same QR format as Chess Buddy's server pairing, so one code works for both apps. */
+export function parsePairingQr(raw: string): CloudPairing {
+  let payload: { type?: unknown; url?: unknown; token?: unknown };
+  try { payload = JSON.parse(raw); } catch { throw new Error('That isn’t a Chess Buddy server pairing QR.'); }
+  if (payload?.type !== 'chessbuddy-tablet-v1' || typeof payload.url !== 'string' || typeof payload.token !== 'string') {
+    throw new Error('That isn’t a Chess Buddy server pairing QR.');
+  }
+  return validatePairing({ url: payload.url, token: payload.token });
+}
+
 export function readPairing(store: Store): CloudPairing | null {
   try { return validatePairing(JSON.parse(store.getItem(CLOUD_PAIRING_KEY) ?? 'null')); } catch { return null; }
 }

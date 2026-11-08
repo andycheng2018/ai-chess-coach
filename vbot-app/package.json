@@ -1,5 +1,8 @@
 {
   "name": "vbot-studio",
   "private": true,
-  "description": "Marks this folder as the Capacitor app root. Dependencies live in the repository's root package.json."
+  "description": "Marks this folder as the Capacitor app root. Dependencies live in the repository's root package.json. Capacitor reads this list to find native plugins.",
+  "dependencies": {
+    "@capacitor/barcode-scanner": "^3.1.0"
+  }
 }
