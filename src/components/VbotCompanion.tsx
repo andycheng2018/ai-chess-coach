@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { DEFAULT_REACTION_PROFILE, vbotEventText, vbotReactionLabel, type ReactionProfile } from '../vbotDemo';
 import type { VbotCompanionControl } from '../useVbotCompanion';
 import { VoiceModeControl } from './VoiceModeControl';
+import { CONTROL_URL } from '../coach';
+import { reactionRouteMatches, saveReactionRoute, selectedReactionRoute, type ReactionRoute } from '../reactionRoute';
 
 type Props = { control: VbotCompanionControl; gameId: string | null; canArm: boolean; ended: boolean; blockedReason?: string; practice?: boolean; demoOpponent?: boolean };
 
@@ -11,6 +13,7 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
   const [networkLabel, setNetworkLabel] = useState('');
   const networkSeen = useRef<string | null>(null);
   const [reactionProfile, setReactionProfile] = useState<ReactionProfile>(DEFAULT_REACTION_PROFILE);
+  const [route, setRoute] = useState<ReactionRoute>(selectedReactionRoute);
   const [watchUntil, setWatchUntil] = useState(0);
   const watchProbe = useRef(false);
   const checkRef = useRef(control.check);
@@ -46,7 +49,8 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
   const nativeAvailable = status?.companionApiVersion === 1;
   const linked = Boolean(status?.armed && status.gameId === gameId);
   const ready = Boolean(status?.readinessFresh && status.readiness?.ready && status.readiness.target === target.trim());
-  const locked = pending || Boolean(status?.busy) || offline || !nativeAvailable;
+  const routeReady = reactionRouteMatches(route, CONTROL_URL);
+  const locked = pending || Boolean(status?.busy) || offline || !nativeAvailable || !routeReady;
   const badge = offline ? 'Unavailable' : status?.busy ? 'Reacting' : status?.finishPending ? status.victoryPending ? 'Victory dance waiting' : 'Confirming result' : status?.armed && !linked ? 'Other match' : !linked ? 'Off'
     : status?.mode === 'rehearsal' ? 'Preview only' : (status?.cooldownRemaining || 0) > 0 ? 'Resting' : 'Live';
   const requests = new Set(status?.events.filter(e => e.gameId === gameId).map(e => e.requestId).filter(Boolean));
@@ -58,6 +62,19 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
     <div className="vbot-header"><div><span className="vbot-kicker">ROBOT COMPANION</span><h3>VBOT reacts with you</h3></div>
       <span className={`vbot-badge ${linked ? 'on' : ''}`} role="status">{badge}</span></div>
     <p className="vbot-copy">{practice ? 'Correct queen and rook captures earn the full Rock You dance when rewards are live and VBOT is ready.' : (linked ? status?.reactionProfile === 'demo' : reactionProfile === 'demo') ? 'Demo mode: VBOT dances Rock You on every second move you play, whatever the coach says.' : 'Good moves earn a random brief gesture. Major gains and a confirmed win can earn Rock You. Blunders get a sad reaction.'}</p>
+    <label className="vbot-profile">Reaction connection
+      <select value={route} disabled={pending || Boolean(status?.armed || status?.busy)} onChange={event => {
+        const next = event.target.value as ReactionRoute;
+        try { saveReactionRoute(next); setRoute(next); } catch { /* Keep the current route if it cannot be saved. */ }
+      }}>
+        <option value="cloud">Cloud chess server</option>
+        <option value="local">Direct local controller</option>
+      </select>
+    </label>
+    <p className="vbot-footnote">Reactions use the same server as coaching. The selected server connects to the dog over SSH. Changing servers also changes where the game and coaching run.</p>
+    {!routeReady && <p className="vbot-notice" role="status">{route === 'cloud'
+      ? 'Cloud selected. Pair this device with the hosted chess server before enabling reactions.'
+      : 'Direct local selected. Switch to a local chess controller before enabling reactions.'} <button type="button" className="ghost" onClick={() => window.dispatchEvent(new Event('chessbuddy:server-settings'))}>Server settings</button></p>}
     <details className="vbot-settings"><summary>Demo preflight & connection health</summary>
       <ul className="vbot-preflight">
         {(offline || !nativeAvailable) && <li>Local robot controller is unavailable.</li>}

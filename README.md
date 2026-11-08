@@ -314,6 +314,14 @@ device by showing it the pairing page (`/tablet` on the server's own loopback):
 A paired device can use coaching, manage bot accounts and control the robot, from
 anywhere. Things to know:
 
+- In **VBOT companion → Reaction connection**, **Cloud chess server** is the default;
+  **Direct local controller** keeps the local Mac/tablet route. The selected route
+  must match the server used for coaching, because that server owns the verified
+  game and analysis records. Use **Server settings** to pair with the hosted server
+  or switch to the local controller; switching servers changes the backend for the
+  whole chess app. A mismatch blocks reactions rather than falling back silently.
+  The selected server still needs verified SSH access to the dog and its current IP.
+
 - **Behind a tunnel the key is the only credential.** The private-address check
   in pairing is always satisfied there, so treat the key like a password and
   rotate it by changing `CHESS_TABLET_TOKEN` and restarting. Every device must

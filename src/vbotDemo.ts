@@ -1,10 +1,12 @@
 import { CONTROL_URL, type CoachResult } from './coach';
+import { reactionRouteMatches, selectedReactionRoute } from './reactionRoute';
 
 /** Fire once from accepted live coaching; never block the chess/voice pipeline. */
 export async function notifyVbotMove(
   result: CoachResult, gameId: string, playerColor: 'white' | 'black',
 ): Promise<void> {
-  if (!gameId || result.gameId !== gameId || !result.recordId || result.playerColor !== playerColor) return;
+  if (!gameId || result.gameId !== gameId || !result.recordId || result.playerColor !== playerColor
+      || !reactionRouteMatches(selectedReactionRoute(), CONTROL_URL)) return;
   try {
     const response = await fetch(`${CONTROL_URL}/api/vbot/celebrate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -11,7 +11,7 @@ export function ServerConnectionPanel({ existing, onClose, children }: {
   existing: TabletConnection | null; onClose: () => void; children?: ReactNode;
 }) {
   const native = Capacitor.getPlatform() === 'android';
-  const [url, setUrl] = useState(existing?.url || '');
+  const [url, setUrl] = useState(existing?.url || 'https://chess-api.urbot.ai');
   const [token, setToken] = useState(existing?.token || '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);

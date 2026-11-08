@@ -48,6 +48,11 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('hashchange', route);
   }, []);
   useEffect(() => {
+    const openServerSettings = () => setServerOpen(true);
+    window.addEventListener('chessbuddy:server-settings', openServerSettings);
+    return () => window.removeEventListener('chessbuddy:server-settings', openServerSettings);
+  }, []);
+  useEffect(() => {
     if (android) void checkUpdate();
   }, [android]);
   useEffect(() => {

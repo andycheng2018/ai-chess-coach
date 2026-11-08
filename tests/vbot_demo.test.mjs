@@ -4,14 +4,20 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-function load(fetch) {
+function load(fetch, routeMatches = true) {
   const source=readFileSync(new URL('../src/vbotDemo.ts',import.meta.url),'utf8');
   const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const exports={};let warnings=0;
-  vm.runInNewContext(compiled,{exports,fetch,AbortSignal,console:{warn:()=>warnings++},require:()=>({CONTROL_URL:'http://127.0.0.1:8765'})});
+  vm.runInNewContext(compiled,{exports,fetch,AbortSignal,console:{warn:()=>warnings++},require:(name)=>name === './reactionRoute' ? { selectedReactionRoute:()=> 'local', reactionRouteMatches:()=>routeMatches } : ({CONTROL_URL:'http://127.0.0.1:8765'})});
   return {notify:exports.notifyVbotMove,warnings:()=>warnings, ...exports};
 }
 const record={recordId:'engine-1',gameId:'AbCd1234',playerColor:'white',classification:'good'};
+test('a route that does not match the coach backend never sends a reaction', async () => {
+  let calls = 0;
+  const { notify } = load(async () => { calls++; return { ok: true }; }, false);
+  await notify(record, 'AbCd1234', 'white');
+  assert.equal(calls, 0);
+});
 test('live accepted result sends only a server identity, never a client verdict',async()=>{
   const calls=[];const {notify}=load(async(url,options)=>{calls.push([url,JSON.parse(options.body)]);return {ok:true};});
   await notify(record,'AbCd1234','white');
