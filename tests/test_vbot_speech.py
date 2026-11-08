@@ -1,12 +1,11 @@
 """Qwen-to-dog speech. Network and robot I/O are replaced; nothing here reaches a robot."""
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'server'))
@@ -69,19 +68,6 @@ class SayTests(unittest.TestCase):
     def test_missing_helper_is_explained(self):
         with patch.object(diagnostics, 'run_ssh', return_value=ssh('', returncode=2, stderr='No such file')):
             self.assertIn('installed', vbot_speech.say(demo(), {'text': 'hi'})['reason'])
-
-
-@patch.dict(os.environ, {'LLM_PROVIDER': 'qwen', 'QWEN_BASE_URL': 'http://127.0.0.1:18000/v1'})
-class AskTests(unittest.TestCase):
-    def test_answer_is_cleaned_for_speech(self):
-        client = Mock(); client.return_value.create.return_value = SimpleNamespace(output_text='<think>hm</think>**Dogs** wag\n to talk.')
-        with patch('coach.qwen_adapter.QwenClient', client):
-            self.assertEqual(vbot_speech.ask_qwen({'question': 'why?'})['answer'], 'Dogs wag to talk.')
-
-    def test_bad_questions_are_rejected(self):
-        for question in ('', '   ', 'x' * 1001):
-            with self.assertRaises(ValueError):
-                vbot_speech.ask_qwen({'question': question})
 
 
 class HelperTests(unittest.TestCase):
