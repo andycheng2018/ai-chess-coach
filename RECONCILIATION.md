@@ -96,3 +96,25 @@ file mode.
 - Local coaching logs, Wi-Fi/LAN address memory, robot verification/rehearsal
   records, verification backups and credentials are excluded from these commits.
   Verification backup/temp patterns are now ignored explicitly as well.
+
+
+## November 8, 2026: consolidate recent Claude and Codex work
+
+- Destination: `add-llm-log`, initially `b5c0aab` with a clean working tree.
+- Refreshed origin refs before comparing branch ancestry. The Android/server,
+  selectable bot accounts, VBOT Studio, MCP/Qwen dashboard, and speech changes
+  were already ancestors of the destination; they were not reapplied.
+- Merged `claude/dog-dance-variety-551640` (`dfcd5f6`) with merge commit
+  `09ebc2a`, retaining the feature branch's original authorship. Git resolved
+  the merge without conflicts. Both source worktrees were clean.
+- Updated two fixed-Rock-You expectations for varied demo celebrations. Added
+  offline coverage for no immediate repeats, rehearsal-only live pools, single
+  candidates, session reset, and separated milestone dispatch. Existing capture
+  reward and victory tests continue to cover their Rock You behavior.
+- Validation: 260 Node tests passed; 600 Python tests ran successfully with six
+  skips. Chess Buddy and VBOT Studio production builds both passed.
+- Every local and fetched remote branch tip is an ancestor of the consolidated
+  destination. All three stashes remain intact. The most recent stash contains
+  generated Android assets and was not replayed over current builds.
+- This is a local source integration only: no robot commands, deployment,
+  tablet installation, backend restart, or remote push was performed.

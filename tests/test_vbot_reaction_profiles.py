@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'server'))
 from vbot_demo import VbotDemo
-from vbot_policy import HEAD_PRESETS
+from vbot_policy import HEAD_PRESETS, DANCE_PRESETS, EXTRA_DANCE_PRESETS
 
 class ReactionProfiles(unittest.TestCase):
     def make(self, profile):
@@ -48,7 +48,7 @@ LINE = 'e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 d2d3 f8c5 c2c3 d7d6'.split()
 
 
 class DemoRhythm(unittest.TestCase):
-    """Demo mode: Rock You on every second human move, whatever the coach says."""
+    """Demo mode: varied celebrations on every second human move, whatever the coach says."""
     def setUp(self):
         self.now=1000.0
         self.sender=Mock(return_value={'status':'completed','readyForNext':True})
@@ -73,11 +73,13 @@ class DemoRhythm(unittest.TestCase):
         self.now+=10
         return self.d.celebrate({'recordId':f'r{ply}','gameId':'AbCd1234','playerColor':'white'}, game)
 
-    def test_every_second_move_dances_rock_you_regardless_of_verdict(self):
+    def test_every_second_move_varies_celebrations_regardless_of_verdict(self):
         self.arm()
         results=[self.play(p, c) for p,c in ((1,'blunder'),(3,'mistake'),(5,'good'),(7,'inaccuracy'),(9,'best'))]
         self.assertEqual([r['status'] for r in results],['skipped','rehearsed','skipped','rehearsed','skipped'])
-        self.assertTrue(all(r['preset']=='actions/ROCKYOU.json' and r['tier']=='demo' for r in results if r['status']=='rehearsed'))
+        celebrations = [r for r in results if r['status'] == 'rehearsed']
+        self.assertTrue(all(r['preset'] in DANCE_PRESETS and r['tier'] == 'demo' for r in celebrations))
+        self.assertNotEqual(celebrations[0]['preset'], celebrations[1]['preset'])
         self.sender.assert_not_called()
 
     def test_busy_dog_dances_on_the_next_move_instead(self):
@@ -87,7 +89,8 @@ class DemoRhythm(unittest.TestCase):
         self.assertEqual(self.play(3)['status'],'skipped')
         self.d.busy=False
         r=self.play(5)
-        self.assertEqual((r['status'],r['preset']),('rehearsed','actions/ROCKYOU.json'))
+        self.assertEqual(r['status'], 'rehearsed')
+        self.assertIn(r['preset'], DANCE_PRESETS)
         self.assertEqual(self.play(7)['status'],'skipped')
         self.assertEqual(self.play(9)['status'],'rehearsed')
 
@@ -105,3 +108,31 @@ class DemoRhythm(unittest.TestCase):
         from vbot_demo import PRACTICE_ID
         self.d.arm({'gameId':PRACTICE_ID,'mode':'rehearsal','reactionProfile':'demo','practice':True})
         self.assertEqual(self.d.status()['reactionProfile'],'balanced')
+
+class DanceVariety(unittest.TestCase):
+    def setUp(self):
+        self.d = VbotDemo(verification={}, chooser=lambda options: options[0])
+
+    def test_live_pool_excludes_unrehearsed_candidates(self):
+        from unittest.mock import patch
+        self.d.mode = 'live'
+        rehearsed = {'actions/ROCKYOU.json', 'actions/HIGH_FIVE_L.json'}
+        with patch.object(self.d, '_verified_entry', side_effect=lambda target, preset: {'movementConfirmed': True} if preset in rehearsed else None):
+            pool = self.d._dance_presets('vbot@robot.example')
+        self.assertEqual(set(pool), rehearsed)
+        self.assertTrue(set(pool).isdisjoint(EXTRA_DANCE_PRESETS))
+        self.assertNotEqual(self.d._choose_dance(pool), self.d._choose_dance(pool))
+
+    def test_single_candidate_is_allowed_without_inventing_a_second(self):
+        pool = ['actions/ROCKYOU.json']
+        self.assertEqual(self.d._choose_dance(pool), pool[0])
+        self.assertEqual(self.d._choose_dance(pool), pool[0])
+
+    def test_rehearsal_can_preview_candidates_without_sending(self):
+        self.d.mode = 'rehearsal'
+        self.assertEqual(set(self.d._dance_presets('vbot@robot.example')), set(DANCE_PRESETS))
+
+    def test_new_session_resets_previous_dance(self):
+        self.d.last_dance_preset = 'actions/WAVE.json'
+        self.d.arm({'gameId': 'AbCd1234', 'mode': 'rehearsal'})
+        self.assertIsNone(self.d.last_dance_preset)

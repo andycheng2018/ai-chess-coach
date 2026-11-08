@@ -431,6 +431,17 @@ class TierDispatchTests(unittest.TestCase):
         self.now+=181
         self.assertEqual(self.submit(5,"major")["tier"],"major")
 
+    def test_separated_milestones_rotate_among_this_robots_rehearsed_presets(self):
+        first = self.submit(1, "major")
+        self.now += 181
+        second = self.submit(3, "major")
+        self.assertEqual(first['tier'], 'major')
+        self.assertEqual(second['tier'], 'major')
+        self.assertNotEqual(first['preset'], second['preset'])
+        self.assertEqual(first['preset'], 'actions/ROCKYOU.json')
+        self.assertEqual(second['preset'], 'actions/WAVE.json')
+        self.assertEqual(self.sender.call_count, 2)
+
     def test_fast_game_major_and_good_moves_use_only_heads(self):
         for ply,tier in [(1,"major"),(3,"small")]:
             event=self.submit(ply,tier,True)
