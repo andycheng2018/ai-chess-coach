@@ -162,6 +162,7 @@ class VbotDemo:
         self.victory_wait = victory_wait
         self.network_book = network_book
         self.network_key = None
+        self.hosted_targets = set()
         self.network_initialized = False
         self.network_needs_target = False
         self.finish_pending = False
@@ -246,6 +247,7 @@ class VbotDemo:
                 self.readiness = None
                 self.readiness_at = float("-inf")
                 self.probe_generation += 1
+                self.hosted_targets.clear()
             if changed and self.armed:
                 self.disarm({"gameId":self.game_id,"generation":self.generation,"reason":"network_changed"})
             if self.network_needs_target and not self.busy and not self.armed:
@@ -294,7 +296,7 @@ class VbotDemo:
     def _verified_entry(self, target: str, preset: str) -> dict | None:
         profile = self.verification or {}
         canonical = target if target.startswith("vbot@") else "vbot@" + target
-        if canonical != profile.get("target") and not (self.network_book is not None and
+        if canonical != profile.get("target") and canonical not in self.hosted_targets and not (self.network_book is not None and
                 self.network_book.target_verified(canonical,profile.get("hostKeyFingerprint"))):
             return None
         return next((item for item in profile.get("presets", []) if item.get("preset") == preset and
@@ -383,8 +385,13 @@ class VbotDemo:
                 raise ValueError("The connection changed during this check. Check again before enabling motion.")
             # A positive helper reply proves SSH reached the pinned robot even
             # when battery/posture currently prevents motion. Failures never learn.
-            if network and network.get("id") and result.get("code") in {
-                    "ready","battery","system","posture","head_fault","head_pending","head_busy","stale","incomplete"}:
+            reached_robot = result.get("code") in {
+                    "ready","battery","system","posture","head_fault","head_pending","head_busy","stale","incomplete"}
+            if self.network_book is not None and reached_robot and not (network and network.get("id")):
+                # A hosted server has no LAN to save the address against, so
+                # trust it only for this process and re-learn it on each check.
+                self.hosted_targets.add(target if target.startswith("vbot@") else "vbot@" + target)
+            if network and network.get("id") and reached_robot:
                 try:
                     self.network_book.remember(target,fingerprint=fingerprint,verified=True,network_id=network["id"])
                 except ValueError as error:

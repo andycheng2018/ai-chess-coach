@@ -106,3 +106,31 @@ class DemoRhythm(unittest.TestCase):
         from vbot_demo import PRACTICE_ID
         self.d.arm({'gameId':PRACTICE_ID,'mode':'rehearsal','reactionProfile':'demo','practice':True})
         self.assertEqual(self.d.status()['reactionProfile'],'balanced')
+
+
+class HostedServerTargets(unittest.TestCase):
+    """A hosted server has no LAN identity, so a pinned check is what trusts a new address."""
+    FINGERPRINT='SHA256:'+'a'*43
+
+    def make(self, code):
+        book=Mock(error=None)
+        book.current.return_value={'id':None,'message':'No physical LAN default route detected.'}
+        book.snapshot.return_value={'current':{'id':None},'label':None,'addresses':[],'suggestedTarget':None,'error':None,'profiles':[]}
+        book.target_verified.return_value=False
+        profile={'target':'vbot@172.20.10.5','hostKeyFingerprint':self.FINGERPRINT,
+                 'presets':[{'preset':'actions/ROCKYOU.json','status':'SUCCEEDED','errorCategory':0,'movementConfirmed':True}]}
+        d=VbotDemo(verification=profile,network_book=book,sender=Mock(),fingerprint_reader=lambda anchor:{self.FINGERPRINT},
+                   checker=lambda target:{'ready':code=='ready','code':code})
+        d.check_device({'target':'10.1.17.208'})
+        return d
+
+    def test_pinned_reply_trusts_the_checked_address_only(self):
+        d=self.make('ready')
+        self.assertIsNotNone(d._verified_entry('10.1.17.208','actions/ROCKYOU.json'))
+        self.assertIsNone(d._verified_entry('10.1.17.209','actions/ROCKYOU.json'))
+
+    def test_posture_reply_still_proves_the_robot_was_reached(self):
+        self.assertIsNotNone(self.make('posture')._verified_entry('vbot@10.1.17.208','actions/ROCKYOU.json'))
+
+    def test_failed_check_does_not_trust_the_address(self):
+        self.assertIsNone(self.make('timeout')._verified_entry('10.1.17.208','actions/ROCKYOU.json'))
