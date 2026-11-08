@@ -85,7 +85,7 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
       : status?.finishPending && !status?.busy ? 'Confirming the final Lichess result. No new move reactions will start.'
       : status?.busy ? 'A reaction is in progress, including its readiness checks. New moves are not queued.'
       : (status?.cooldownRemaining || 0) > 0 ? `Resting for ${Math.ceil(status?.cooldownRemaining || 0)}s before another reaction.`
-      : status?.reactionProfile === 'demo' ? 'Demo mode: Rock You on every second move you play. A move made while VBOT is dancing moves the dance to your next move.'
+      : status?.reactionProfile === 'demo' ? 'Demo mode: a dance on every second move you play. A move made while VBOT is dancing moves the dance to your next move.'
       : 'Listening for the next eligible coach verdict. Earlier moves are not replayed.'}</p>}
     {!linked && attention && <p className="vbot-notice" role="status">Paused: {attention.reason || attention.message} Inspect VBOT, then check again before enabling reactions.</p>}
     {status?.network && <div className="vbot-network-summary" role="status">
@@ -121,7 +121,7 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
         </details>
         <label className="vbot-profile">Reaction style
           <select value={practice && reactionProfile === 'demo' ? 'balanced' : reactionProfile} disabled={locked} onChange={e => setReactionProfile(e.target.value as ReactionProfile)}>
-            {!practice && <option value="demo">Demo · Rock You every second move</option>}
+            {!practice && <option value="demo">Demo · A dance every second move</option>}
             <option value="quiet">Quiet · head gestures</option><option value="balanced">Balanced · varied gestures</option><option value="showmanship">Showmanship · shorter brief-gesture rest</option>
           </select>
         </label>

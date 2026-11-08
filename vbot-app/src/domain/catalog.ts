@@ -71,6 +71,21 @@ const MOTION_PRESETS: readonly (readonly [string, CapabilityKind, string, string
   ['actions/JUMP_IN_PLACE.json', 'body', 'Jump in place', 'Jumps', 7324],
   ['actions/ROCKYOU.json', 'body', 'Rock You dance', 'Dances', 40451],
   ['actions/CHEER_R.json', 'body', 'Cheer', 'Reactions', null],
+  ['actions/CHEER_L.json', 'body', 'Left cheer', 'Reactions', null],
+  ['actions/EXCITED.json', 'body', 'Excited', 'Reactions', null],
+  ['actions/ENJOY.json', 'body', 'Enjoy', 'Reactions', null],
+  ['actions/HAPPY_BOUNCE_B.json', 'body', 'Happy bounce', 'Jumps', null],
+  ['actions/RHYTHM.json', 'body', 'Rhythm', 'Dances', null],
+  ['actions/RHYTHMIC_SWING.json', 'body', 'Rhythmic swing', 'Dances', null],
+  ['actions/RELAXED_SWING.json', 'body', 'Relaxed swing', 'Dances', null],
+  ['actions/TWIST_BUTT.json', 'body', 'Hip twist', 'Dances', null],
+  ['actions/GUITAR.json', 'body', 'Guitar', 'Dances', null],
+  ['actions/PIANO.json', 'body', 'Piano', 'Dances', null],
+  ['actions/DRUM.json', 'body', 'Drum', 'Dances', null],
+  ['actions/DRUMER.json', 'body', 'Drummer', 'Dances', null],
+  ['actions/SAXOPHONE.json', 'body', 'Saxophone', 'Dances', null],
+  ['actions/VIOLIN.json', 'body', 'Violin', 'Dances', null],
+  ['actions/CONDUCT.json', 'body', 'Conductor', 'Dances', null],
 ];
 
 export const MOTION_PRESET_NAMES: ReadonlySet<string> = new Set(MOTION_PRESETS.map(row => row[0]));
