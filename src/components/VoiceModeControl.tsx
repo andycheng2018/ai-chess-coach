@@ -39,6 +39,7 @@ export function VoiceModeControl() {
 
   if (!status) return null;
   const recent = [...status.turns].reverse().slice(0, 3);
+  const session = status.sessions?.find(item => item.id === status.activeSession);
   return <div className="voice-mode">
     <div className="voice-mode-top">
       <strong>Qwen voice mode</strong>
@@ -48,10 +49,11 @@ export function VoiceModeControl() {
     </div>
     <p className={`voice-mode-state ${status.state === 'error' ? 'error' : ''}`} role="status">{status.message || VOICE_STATE_TEXT[status.state]}</p>
     <p>{status.available ? 'Say the wake word and talk. Qwen answers instead of the dog’s built-in assistant, and it stays on after you close this app.' : status.reason}</p>
+    {session && <p>Session: {session.title || 'New session'} · {session.turnCount} {session.turnCount === 1 ? 'turn' : 'turns'}</p>}
     {error && <p className="voice-mode-state error" role="alert">{error}</p>}
     {recent.length > 0 && <ul className="voice-mode-turns">
       {recent.map(turn => <li key={turn.id}>
-        <span><b>Heard:</b> {turn.heard}</span>
+        <span><b>{turn.source === 'typed' ? 'Typed:' : 'Heard:'}</b> {turn.heard}</span>
         {turn.understood && turn.understood !== turn.heard && <span><b>Understood:</b> {turn.understood}</span>}
         {turn.reply && <span><b>{turn.clarifying ? 'Asked:' : 'Qwen:'}</b> {turn.reply}</span>}
         {turn.error && <span>{turn.error}</span>}

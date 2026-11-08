@@ -245,6 +245,119 @@ class VoiceModeTests(unittest.TestCase):
             self.wait_for(lambda: ask.called)
             mode.set_enabled(False)
 
+    def answered_turn(self, mode, text):
+        return mode._run_turn(text, False)
+
+    def test_qwen_keeps_the_thread_however_long_the_gap(self):
+        mode, ask = self.make(FakeProcess([]))
+        self.answered_turn(mode, 'my name is Zack')
+        with patch.object(vbot_voice.time, 'monotonic', return_value=10**7):
+            self.answered_turn(mode, 'what is my name')
+        history = ask.call_args.args[0]
+        self.assertEqual(history[0]['content'], 'They said: "my name is Zack"')
+
+    def test_a_session_survives_a_server_restart(self):
+        mode, _ = self.make(FakeProcess([]))
+        self.answered_turn(mode, 'remember the blue ball')
+        ask = Mock(return_value={'understood': '', 'clarifying': False, 'reply': 'ok'})
+        again = VoiceMode(demo(), data_home=mode.path.parent, ask=ask)
+        self.assertEqual(again.active_id, mode.active_id)
+        again._run_turn('what should you remember', False)
+        self.assertIn('blue ball', ask.call_args.args[0][0]['content'])
+
+    def test_new_session_starts_clean_and_old_one_can_be_continued(self):
+        mode, ask = self.make(FakeProcess([]))
+        self.answered_turn(mode, 'first topic')
+        first = mode.active_id
+        status = mode.new_session()
+        second = status['activeSession']
+        self.assertNotEqual(first, second)
+        self.assertEqual(status['turns'], [])
+        self.answered_turn(mode, 'second topic')
+        self.assertEqual(ask.call_args.args[0], [])
+        status = mode.continue_session(first)
+        self.assertEqual(status['activeSession'], first)
+        self.assertEqual({item['title'] for item in status['sessions']}, {'first topic', 'second topic'})
+        self.answered_turn(mode, 'back to the first')
+        self.assertIn('first topic', ask.call_args.args[0][0]['content'])
+
+    def test_the_chosen_session_is_remembered_after_a_restart(self):
+        mode, _ = self.make(FakeProcess([]))
+        self.answered_turn(mode, 'one'); first = mode.active_id
+        mode.new_session(); self.answered_turn(mode, 'two')
+        mode.continue_session(first)
+        self.assertEqual(VoiceMode(demo(), data_home=mode.path.parent, ask=Mock()).active_id, first)
+
+    def test_repeated_new_session_does_not_pile_up_empty_ones(self):
+        mode, _ = self.make(FakeProcess([]))
+        mode.new_session(); mode.new_session()
+        self.assertEqual(len(mode.status()['sessions']), 1)
+
+    def test_unknown_session_is_refused(self):
+        mode, _ = self.make(FakeProcess([]))
+        with self.assertRaises(ValueError):
+            mode.continue_session('../../etc/passwd')
+
+    def test_failed_turns_are_not_fed_back_to_qwen(self):
+        ask = Mock(side_effect=[RuntimeError('down'), {'understood': '', 'clarifying': False, 'reply': 'ok'}])
+        mode, _ = self.make(FakeProcess([]), ask)
+        mode._run_turn('first', False); mode._run_turn('second', False)
+        self.assertEqual(ask.call_args.args[0], [])
+
+    def test_context_is_bounded_but_keeps_the_newest(self):
+        mode, ask = self.make(FakeProcess([]))
+        with patch.object(vbot_voice, 'CONTEXT_CHARS', 80):
+            for number in range(10):
+                self.answered_turn(mode, f'message number {number}')
+        history = ask.call_args.args[0]
+        self.assertLess(len(history), 18)
+        self.assertIn('number 8', history[-2]['content'])
+
+    def test_session_files_are_private(self):
+        mode, _ = self.make(FakeProcess([]))
+        self.answered_turn(mode, 'secret')
+        path = mode.session_dir / f'{mode.active_id}.json'
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_a_damaged_session_file_does_not_lose_the_rest(self):
+        mode, _ = self.make(FakeProcess([]))
+        self.answered_turn(mode, 'keep me')
+        (mode.session_dir / ('b' * 32 + '.json')).write_text('not json')
+        again = VoiceMode(demo(), data_home=mode.path.parent, ask=Mock())
+        self.assertEqual(len(again.status()['sessions']), 1)
+
+    @patch.object(vbot_voice, 'say_once', return_value={'ok': True})
+    def test_typed_message_joins_the_session_and_is_spoken(self, say):
+        mode, ask = self.make(FakeProcess([]))
+        self.answered_turn(mode, 'we talked about dances')
+        status = mode.send_typed({'text': 'and which one is best'})
+        self.assertEqual(ask.call_args.kwargs['typed'], True)
+        self.assertIn('dances', ask.call_args.args[0][0]['content'])
+        say.assert_called_once()
+        self.assertTrue(status['turns'][-1]['spoken'])
+
+    def test_typed_message_uses_the_open_session_to_the_dog(self):
+        process = FakeProcess([{'event': 'ready'}])
+        mode, _ = self.make(process)
+        mode.set_enabled(True)
+        self.wait_for(lambda: mode.status()['state'] == 'listening')
+        mode.send_typed({'text': 'hello'})
+        self.assertTrue(any(f['op'] == 'say' for f in process.written))
+        mode.set_enabled(False)
+
+    def test_typed_message_does_not_talk_over_reactions(self):
+        mode, _ = self.make(FakeProcess([]), armed=True)
+        with patch.object(vbot_voice, 'say_once') as say:
+            status = mode.send_typed({'text': 'hello'})
+        say.assert_not_called()
+        self.assertFalse(status['turns'][-1]['spoken'])
+
+    def test_dashboard_question_joins_the_session(self):
+        mode, ask = self.make(FakeProcess([]))
+        self.answered_turn(mode, 'earlier')
+        self.assertEqual(mode.ask_only({'question': 'now?'})['answer'], 'I am a robot dog.')
+        self.assertIn('earlier', ask.call_args.args[0][0]['content'])
+
     def test_unavailable_without_qwen(self):
         process = FakeProcess([])
         mode, _ = self.make(process)

@@ -14,6 +14,7 @@ from vbot_app_control import AppController, MAX_BODY, route  # noqa: E402
 
 PORT = int(os.environ.get('VBOT_APP_PORT', '8791'))
 CLOUD_VOICE_PATH = '/api/vbot/voice'
+VOICE_ACTIONS = {'voice/session/new', 'voice/session/continue', 'voice/message'}
 CLOUD_ORIGIN = 'http://localhost:5173'  # One of the origins the cloud server accepts for this key.
 DIST = Path(__file__).resolve().parents[1] / 'vbot-app' / 'dist'
 DEV_ORIGINS = {'http://localhost:5180', 'http://127.0.0.1:5180'}
@@ -81,6 +82,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.removeprefix('/api/app/') if self.path.startswith('/api/app/') else ''
         if path == 'voice':
             return self._json(*cloud_voice(payload))
+        if path in VOICE_ACTIONS:
+            return self._json(*cloud_voice(payload, path.removeprefix('voice')))
         return self._json(*route(self.controller, path, payload))
 
 
@@ -95,7 +98,7 @@ def _cloud_settings():
     return url.rstrip('/'), token
 
 
-def cloud_voice(payload=None):
+def cloud_voice(payload=None, action=''):
     """Studio's voice switch. The key stays on this Mac; the page never sees it."""
     url, token = _cloud_settings()
     if not url or not token:
@@ -107,7 +110,7 @@ def cloud_voice(payload=None):
         if payload is None:
             response = requests.get(url + CLOUD_VOICE_PATH, headers=headers, timeout=10, allow_redirects=False)
         else:
-            response = requests.post(url + CLOUD_VOICE_PATH, json=payload, headers=headers, timeout=25, allow_redirects=False)
+            response = requests.post(url + CLOUD_VOICE_PATH + action, json=payload, headers=headers, timeout=70, allow_redirects=False)
         return response.status_code, response.json()
     except (requests.RequestException, ValueError):
         return 502, {'message': 'Could not reach the cloud server.'}

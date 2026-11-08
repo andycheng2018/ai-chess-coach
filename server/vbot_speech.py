@@ -1,4 +1,4 @@
-"""Ask Qwen from the server, then have the dog say the answer in its own voice.
+"""Have the dog say text in its own voice.
 
 This goes straight to the dog's speech service, so the dog's onboard model is not
 involved and the words spoken are exactly the words shown. It cannot move the robot.
@@ -6,7 +6,6 @@ involved and the words spoken are exactly the words shown. It cannot move the ro
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 import threading
@@ -14,11 +13,8 @@ import threading
 from diagnostics import run_on_robot, ssh_failure
 from vbot_ssh import REMOTE_ROOT
 
-MAX_QUESTION = 1000
 MAX_SPOKEN = 400
 SSH_FAILED = 255
-INSTRUCTIONS = ('You are a friendly robot dog answering out loud. Reply in at most two short sentences of plain '
-                'spoken words. No lists, markdown, emoji or stage directions.')
 _speaking = threading.Lock()
 
 
@@ -28,21 +24,6 @@ def spoken_text(raw) -> str:
     text = re.sub(r'[*_`#]+', '', text)
     text = re.sub(r'[\x00-\x1f\x7f]+', ' ', text)
     return ' '.join(text.split())[:MAX_SPOKEN].strip()
-
-
-def ask_qwen(payload: dict) -> dict:
-    question = str(payload.get('question') or '').strip()
-    if not 1 <= len(question) <= MAX_QUESTION:
-        raise ValueError(f'Type a question of up to {MAX_QUESTION} characters.')
-    if os.getenv('LLM_PROVIDER', 'openai').lower() != 'qwen':
-        raise ValueError('This server is not set to use Qwen.')
-    from coach.qwen_adapter import QwenClient
-    model = os.getenv('QWEN_MODEL', 'qwen3.8-27b:latest')
-    result = QwenClient(timeout=80).create(model=model, instructions=INSTRUCTIONS, input=question, max_output_tokens=400)
-    answer = spoken_text(result.output_text)
-    if not answer:
-        raise ValueError('Qwen returned nothing that can be spoken. Try asking again.')
-    return {'answer': answer, 'model': model}
 
 
 def say(demo, payload: dict) -> dict:

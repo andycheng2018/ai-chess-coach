@@ -1837,8 +1837,14 @@ class Handler(BaseHTTPRequestHandler):
                     response = qwen_vbot_commentary(payload)
                 elif self.path == "/api/vbot/voice":
                     response = voice_mode.set_enabled(payload.get("enabled"))
+                elif self.path == "/api/vbot/voice/session/new":
+                    response = voice_mode.new_session()
+                elif self.path == "/api/vbot/voice/session/continue":
+                    response = voice_mode.continue_session(payload.get("id"))
+                elif self.path == "/api/vbot/voice/message":
+                    response = voice_mode.send_typed(payload)
                 elif self.path == "/api/vbot/say/ask":
-                    response = vbot_speech.ask_qwen(payload)
+                    response = voice_mode.ask_only(payload)  # Joins the active session.
                 elif self.path == "/api/vbot/say/speak":
                     response = vbot_speech.say(vbot_demo, payload)
                 elif self.path == "/api/vbot/rehearse":

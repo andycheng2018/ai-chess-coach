@@ -3,7 +3,8 @@
 The server owns one SSH session to vbot-demo/robot_voice.py. If that link drops, the
 helper turns the dog's own chat back on by itself. The on/off choice is saved, so the
 mode comes back after a restart and stays on with every app closed. Conversations are
-kept in memory only. Qwen can only produce words here; it has no route to movement.
+saved as sessions under CHESS_DATA_HOME, so one can be continued days later. Qwen can
+only produce words here; it has no route to movement.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import shlex
 import subprocess
 import threading
@@ -19,12 +21,17 @@ import time
 import uuid
 
 from diagnostics import ssh_failure
-from vbot_speech import spoken_text
+from vbot_speech import say as say_once, spoken_text
 from vbot_ssh import REMOTE_ROOT, ssh_argv
 
 JOIN_SECONDS = 1.2           # One thought often arrives as several transcripts.
-HISTORY_TURNS = 6
-HISTORY_IDLE_SECONDS = 120
+MAX_STORED_TURNS = 200       # Per session, on disk.
+CONTEXT_TURNS = 40           # How far back Qwen is reminded.
+CONTEXT_CHARS = 6000         # Keeps the request inside the model's context window.
+STATUS_TURNS = 30
+MAX_TYPED = 1000
+TITLE_CHARS = 48
+SESSION_ID = re.compile(r'[a-f0-9]{32}')
 KEEPALIVE_SECONDS = 20
 CLOSE_WAIT_SECONDS = 10
 BACKOFF_SECONDS = (5, 10, 20, 30)
@@ -36,7 +43,8 @@ INSTRUCTIONS = (
     'short spoken sentences. If you cannot tell, do not guess and do not just say you did not understand: ask one short '
     'clarifying question that offers your best guess, such as "Did you ask about my dances?". Reply in the language they '
     'used, defaulting to English. Use plain spoken words with no lists, markdown, emoji or stage directions. Never '
-    'mention speech recognition or transcripts. You cannot move your body from this conversation, so never promise to. '
+    'mention speech recognition or transcripts. Lines that begin "They typed" are exact, with no recognition errors. Use '
+    'the whole conversation so far and refer back to it naturally. You cannot move your body from this conversation, so never promise to. '
     'Fill in three fields. "understood" is one short restatement of what they asked, never your answer. "clarifying" is '
     'true only when your reply is a question asking what they meant. "reply" is exactly what you say out loud.')
 REPLY_FORMAT = {'format': {'type': 'json_schema', 'name': 'voice_reply', 'strict': True, 'schema': {
@@ -44,10 +52,14 @@ REPLY_FORMAT = {'format': {'type': 'json_schema', 'name': 'voice_reply', 'strict
     'properties': {'understood': {'type': 'string'}, 'clarifying': {'type': 'boolean'}, 'reply': {'type': 'string'}}}}}
 
 
-def ask_qwen(history, heard, rejected):
+def user_line(text, typed):
+    return f'They typed: "{text}"' if typed else f'They said: "{text}"'
+
+
+def ask_qwen(history, heard, rejected, typed=False):
     from coach.qwen_adapter import QwenClient
     hint = ' (The recognizer was unsure about this one.)' if rejected else ''
-    messages = [*history, {'role': 'user', 'content': f'They said: "{heard}"{hint}'}]
+    messages = [*history, {'role': 'user', 'content': user_line(heard, typed) + hint}]
     result = QwenClient(timeout=45).create(
         model=os.getenv('QWEN_MODEL', 'qwen3.8-27b:latest'), instructions=INSTRUCTIONS, input=messages,
         text=REPLY_FORMAT, max_output_tokens=500)
@@ -61,19 +73,21 @@ class VoiceMode:
         self.demo, self.ask, self.popen = demo, ask, popen
         home = Path(data_home or os.environ.get('CHESS_DATA_HOME') or Path(__file__).resolve().parents[1])
         self.path = home / 'vbot-voice.json'
+        self.session_dir = home / 'vbot-voice-sessions'
         self.lock = threading.RLock()
         self.enabled = False
         self.state, self.message = 'off', ''
         self.chat_restored = None
         self.process = None
         self.wake = threading.Event()
-        self.turns = deque(maxlen=20)
-        self.history = deque(maxlen=HISTORY_TURNS * 2)
-        self.last_turn_at = 0.0
+        self.qwen_lock = threading.Lock()  # One turn at a time, so a session's order stays true.
+        self.sessions = {}
+        self.active_id = None
         self.heard = queue.Queue()
         self.supervisor = None
         self.worker = None
         self.closed = threading.Event()
+        self._load_sessions()
 
     # --- public surface -----------------------------------------------------------------------
     def available(self):
@@ -88,14 +102,16 @@ class VoiceMode:
     def status(self):
         usable, reason = self.available()
         with self.lock:
+            summaries = sorted((self._summary(session) for session in self.sessions.values()), key=lambda item: item['updatedAt'], reverse=True)
+            turns = list(self.sessions[self.active_id]['turns'])[-STATUS_TURNS:] if self.active_id else []
             return {'available': usable, 'reason': reason, 'enabled': self.enabled, 'state': self.state, 'message': self.message,
-                    'chatRestored': self.chat_restored, 'turns': list(self.turns)}
+                    'chatRestored': self.chat_restored, 'activeSession': self.active_id, 'sessions': summaries, 'turns': turns}
 
     def resume(self):
         """Called at server start, so a saved 'on' survives restarts."""
         try:
-            wanted = json.loads(self.path.read_text()).get('enabled') is True
-        except (OSError, ValueError, AttributeError):
+            wanted = self._saved_state().get('enabled') is True
+        except AttributeError:
             wanted = False
         if wanted and self.available()[0]:
             self._start()
@@ -114,11 +130,134 @@ class VoiceMode:
             self._stop()
         return self.status()
 
+    def new_session(self):
+        """Starts a fresh conversation. An untouched session is reused, not duplicated."""
+        with self.qwen_lock, self.lock:
+            active = self.sessions.get(self.active_id)
+            if active is None or active['turns']:
+                self._create_session()
+            return self.status()
+
+    def continue_session(self, session_id):
+        with self.qwen_lock, self.lock:
+            if not isinstance(session_id, str) or session_id not in self.sessions:
+                raise ValueError('That session no longer exists.')
+            self.active_id = session_id
+            self._write_state({'activeSession': session_id})
+            return self.status()
+
+    def send_typed(self, payload):
+        """Typed text joins the active session, and the dog says the answer."""
+        turn = self._typed_turn(payload)
+        if self.demo.armed or self.demo.busy:
+            self._finish_unspoken(turn, 'Paused while chess reactions or a show are running.')
+            return self.status()
+        with self.lock:
+            sent = self._write({'op': 'say', 'id': turn['id'], 'text': turn['reply']})
+        if not sent:  # Voice mode is off, so there is no open session to the dog.
+            result = say_once(self.demo, {'text': turn['reply']})
+            with self.lock:
+                turn['spoken'] = result.get('ok') is True
+                if not turn['spoken']:
+                    self._add_error(turn, str(result.get('reason') or 'The dog did not speak.'))
+                self._persist_turn_owner(turn)
+        return self.status()
+
+    def ask_only(self, payload):
+        """For the page that shows Qwen's words first and speaks them on a second click."""
+        turn = self._typed_turn({'text': payload.get('question')})
+        if not turn['answered']:
+            raise ValueError('Qwen did not answer. Try asking again.')
+        return {'answer': turn['reply'], 'model': os.getenv('QWEN_MODEL', 'qwen3.8-27b:latest')}
+
+    def _typed_turn(self, payload):
+        text = str(payload.get('text') or '').strip()
+        if not 1 <= len(text) <= MAX_TYPED:
+            raise ValueError(f'Type a message of up to {MAX_TYPED} characters.')
+        if os.getenv('LLM_PROVIDER', 'openai').lower() != 'qwen':
+            raise ValueError('This server is not set to use Qwen.')
+        return self._run_turn(text, False, typed=True)
+
+    # --- saved sessions -----------------------------------------------------------------------
+    def _saved_state(self):
+        try:
+            state = json.loads(self.path.read_text())
+            return state if isinstance(state, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _write_state(self, changes):
+        self._write_private(self.path, {**self._saved_state(), **changes})
+
+    @staticmethod
+    def _write_private(path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix('.tmp')
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, 'w') as handle:
+            json.dump(data, handle, ensure_ascii=False)
+        temporary.replace(path)
+
+    def _load_sessions(self):
+        try:
+            files = list(self.session_dir.glob('*.json'))
+        except OSError:
+            files = []
+        for path in files:
+            try:
+                data = json.loads(path.read_text())
+                if SESSION_ID.fullmatch(data['id']) and isinstance(data['turns'], list):
+                    self.sessions[data['id']] = {'id': data['id'], 'title': str(data.get('title') or ''), 'startedAt': data.get('startedAt', 0),
+                                                 'updatedAt': data.get('updatedAt', 0), 'turns': deque(data['turns'], maxlen=MAX_STORED_TURNS)}
+            except (OSError, ValueError, KeyError, TypeError):
+                continue  # One damaged session must not lose the others.
+        wanted = self._saved_state().get('activeSession')
+        if wanted in self.sessions:
+            self.active_id = wanted
+        elif self.sessions:
+            self.active_id = max(self.sessions.values(), key=lambda item: item['updatedAt'])['id']
+
+    def _create_session(self):
+        now = round(time.time())
+        session = {'id': uuid.uuid4().hex, 'title': '', 'startedAt': now, 'updatedAt': now, 'turns': deque(maxlen=MAX_STORED_TURNS)}
+        self.sessions[session['id']] = session
+        self.active_id = session['id']
+        self._persist(session)
+        self._write_state({'activeSession': session['id']})
+        return session
+
+    @staticmethod
+    def _summary(session):
+        return {'id': session['id'], 'title': session['title'], 'startedAt': session['startedAt'],
+                'updatedAt': session['updatedAt'], 'turnCount': len(session['turns'])}
+
+    def _persist(self, session):
+        try:
+            self._write_private(self.session_dir / f"{session['id']}.json", {**session, 'turns': list(session['turns'])})
+        except OSError as error:
+            print(f'Voice mode: could not save a session: {type(error).__name__}', flush=True)
+
+    def _persist_turn_owner(self, turn):
+        for session in self.sessions.values():
+            if any(item is turn for item in session['turns']):
+                return self._persist(session)
+
+    def _context(self, session):
+        """The newest answered turns that fit, oldest first, so Qwen keeps the thread."""
+        messages, used = [], 0
+        for turn in reversed(session['turns']):
+            if not turn.get('answered'):
+                continue  # Fallback lines and paused turns would only confuse it.
+            line = user_line(turn['heard'], turn.get('source') == 'typed')
+            used += len(line) + len(turn['reply'])
+            if used > CONTEXT_CHARS or len(messages) >= CONTEXT_TURNS * 2:
+                break
+            messages[:0] = [{'role': 'user', 'content': line}, {'role': 'assistant', 'content': turn['reply']}]
+        return messages
+
     # --- session ------------------------------------------------------------------------------
     def _save(self, enabled):
-        temporary = self.path.with_suffix('.tmp')
-        temporary.write_text(json.dumps({'enabled': enabled}))
-        temporary.replace(self.path)
+        self._write_state({'enabled': enabled})
 
     def _start(self):
         with self.lock:
@@ -248,12 +387,14 @@ class VoiceMode:
         return False
 
     def _record_spoken(self, event):
-        for turn in reversed(self.turns):
-            if turn['id'] == event.get('id'):
-                turn['spoken'] = event.get('ok') is True
-                if not turn['spoken']:
-                    self._add_error(turn, str(event.get('reason') or 'The dog did not speak.')[:200])
-                return
+        for session in self.sessions.values():
+            for turn in reversed(session['turns']):
+                if turn['id'] == event.get('id'):
+                    turn['spoken'] = event.get('ok') is True
+                    if not turn['spoken']:
+                        self._add_error(turn, str(event.get('reason') or 'The dog did not speak.')[:200])
+                    self._persist(session)
+                    return
 
     @staticmethod
     def _add_error(turn, problem):
@@ -284,33 +425,52 @@ class VoiceMode:
                 return
             self._answer(*utterance)
 
+    def _finish_unspoken(self, turn, problem):
+        with self.lock:
+            turn['spoken'] = False
+            self._add_error(turn, problem)
+            self._persist_turn_owner(turn)
+
+    def _run_turn(self, heard, rejected, typed=False):
+        turn = {'id': uuid.uuid4().hex, 'at': round(time.time()), 'heard': heard, 'rejected': rejected, 'source': 'typed' if typed else 'voice',
+                'understood': '', 'clarifying': False, 'reply': '', 'spoken': None, 'answered': False}
+        with self.qwen_lock:
+            with self.lock:
+                session = self.sessions.get(self.active_id) or self._create_session()
+                if not session['title']:
+                    session['title'] = heard[:TITLE_CHARS]
+                history = self._context(session)
+                session['turns'].append(turn)
+                if self.enabled and not typed:
+                    self._set_state('thinking', 'Qwen is thinking…')
+            try:
+                answer = self.ask(history, heard, rejected, typed=typed)
+                reply, answered = answer['reply'] or FALLBACK_REPLY, bool(answer['reply'])
+                if not answered:
+                    turn['error'] = 'Qwen returned an empty reply.'
+            except Exception as error:
+                answer, reply, answered = {'understood': '', 'clarifying': False}, FALLBACK_REPLY, False
+                turn['error'] = f'Qwen did not answer ({type(error).__name__}).'
+                print(f'Voice mode: Qwen failed: {type(error).__name__}: {str(error)[:200]}', flush=True)
+            with self.lock:
+                turn.update(understood=answer['understood'], clarifying=answer['clarifying'], reply=reply, answered=answered)
+                session['updatedAt'] = round(time.time())
+                self._persist(session)
+                if self.enabled and self.state == 'thinking':
+                    self._set_state('listening', 'Say the wake word, then talk.')
+        return turn
+
     def _answer(self, heard, rejected):
-        turn = {'id': uuid.uuid4().hex, 'at': round(time.time()), 'heard': heard, 'rejected': rejected,
-                'understood': '', 'clarifying': False, 'reply': '', 'spoken': None}
+        if self.demo.armed or self.demo.busy:
+            with self.lock:
+                session = self.sessions.get(self.active_id) or self._create_session()
+                session['turns'].append({'id': uuid.uuid4().hex, 'at': round(time.time()), 'heard': heard, 'rejected': rejected, 'source': 'voice',
+                                         'understood': '', 'clarifying': False, 'reply': '', 'spoken': False, 'answered': False,
+                                         'error': 'Paused while chess reactions or a show are running.'})
+                self._persist(session)
+            return
+        turn = self._run_turn(heard, rejected)
         with self.lock:
-            if self.demo.armed or self.demo.busy:
-                turn['error'] = 'Paused while chess reactions or a show are running.'
-                turn['spoken'] = False
-                self.turns.append(turn)
-                return
-            if time.monotonic() - self.last_turn_at > HISTORY_IDLE_SECONDS:
-                self.history.clear()
-            history = list(self.history)
-            self.turns.append(turn)
-            self._set_state('thinking', 'Qwen is thinking…')
-        try:
-            answer = self.ask(history, heard, rejected)
-            reply = answer['reply'] or FALLBACK_REPLY
-        except Exception as error:
-            answer, reply = {'understood': '', 'clarifying': False}, FALLBACK_REPLY
-            turn['error'] = f'Qwen did not answer ({type(error).__name__}).'
-            print(f'Voice mode: Qwen failed: {type(error).__name__}: {str(error)[:200]}', flush=True)
-        with self.lock:
-            turn.update(understood=answer['understood'], clarifying=answer['clarifying'], reply=reply)
-            self.history.extend([{'role': 'user', 'content': f'They said: "{heard}"'}, {'role': 'assistant', 'content': reply}])
-            self.last_turn_at = time.monotonic()
-            if self.enabled and self.state == 'thinking':
-                self._set_state('listening', 'Say the wake word, then talk.')
-            if not self._write({'op': 'say', 'id': turn['id'], 'text': reply}):
-                turn['spoken'] = False
-                self._add_error(turn, 'The link to the dog dropped before it could answer.')
+            sent = self._write({'op': 'say', 'id': turn['id'], 'text': turn['reply']})
+        if not sent:
+            self._finish_unspoken(turn, 'The link to the dog dropped before it could answer.')
