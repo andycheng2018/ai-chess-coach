@@ -19,11 +19,12 @@ curl -fsS -m 15 -H @"$H" http://127.0.0.1:8765/api/vbot/status |
 TS=$(date +%Y%m%d-%H%M%S)
 cp -p .env ".env.bak-$TS"
 cp -p ai-chess-coach/server/app.py "ai-chess-coach/server/app.py.bak-$TS"
+[ ! -f ai-chess-coach/server/diagnostics.py ] || cp -p ai-chess-coach/server/diagnostics.py "ai-chess-coach/server/diagnostics.py.bak-$TS"
 cp -p ai-chess-coach/server/coach/qwen_adapter.py "ai-chess-coach/server/coach/qwen_adapter.py.bak-$TS"
 echo "Backups: ~/chess-coach/.env.bak-$TS, server/app.py.bak-$TS and server/coach/qwen_adapter.py.bak-$TS"
 EOF
 
-scp -q -o "$PX" "$ROOT/server/app.py" "$ROOT/server/diagnostics.py" "$MS:chess-coach/ai-chess-coach/server/"
+scp -q -o "$PX" "$ROOT/server/app.py" "$ROOT/server/diagnostics.py" "$ROOT/server/vbot_speech.py" "$MS:chess-coach/ai-chess-coach/server/"
 scp -q -o "$PX" "$ROOT/server/coach/qwen_adapter.py" "$MS:chess-coach/ai-chess-coach/server/coach/"
 
 ssh -o "$PX" "$MS" 'bash -s' <<'EOF'

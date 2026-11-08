@@ -4043,4 +4043,13 @@ header {
 .test-steps li.fail .test-step-icon { color: #f08f84; }
 .test-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 4px; }
 .test-dashboard-foot { margin: 14px 0 0; }
+.test-speech { display: grid; gap: 10px; margin-top: 12px; }
+.test-speech h2 { margin: 0; color: #f1efec; font-size: 17px; }
+.test-speech .fine-print, .test-speech-answer p { margin: 0; }
+.test-speech label { display: block; margin-bottom: 6px; color: #e8e6e3; font-size: 13px; font-weight: 700; }
+.test-speech-row { display: flex; gap: 8px; }
+.test-speech-row input { flex: 1; min-width: 0; padding: 10px 12px; color: #e8e6e3; background: #191817; border: 1px solid #ffffff33; border-radius: 8px; }
+.test-speech-answer { display: grid; gap: 8px; padding: 12px; border-radius: 8px; background: #1f1d1b; }
+.test-speech-answer p { color: #e8e6e3; line-height: 1.5; overflow-wrap: anywhere; }
+.test-speech-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 @media (max-width: 700px) { .test-card-grid { grid-template-columns: minmax(0, 1fr); } }

@@ -31,6 +31,7 @@ tablet_access = TabletAccess(os.environ.get('CHESS_TABLET_TOKEN', ''), os.enviro
                              parse_origins(os.environ.get('CHESS_TABLET_ORIGINS', '')))
 from vbot_demo import demo as vbot_demo
 import diagnostics
+import vbot_speech
 
 # Reuse the bot's one canonical game stream for result celebrations.
 runtime.game_observer = lambda game: vbot_demo.observe_game_end(game, runtime.game_state)
@@ -1825,6 +1826,10 @@ class Handler(BaseHTTPRequestHandler):
                     response = vbot_demo.reconcile(payload, runtime.game_state)
                 elif self.path == "/api/vbot/commentary":
                     response = qwen_vbot_commentary(payload)
+                elif self.path == "/api/vbot/say/ask":
+                    response = vbot_speech.ask_qwen(payload)
+                elif self.path == "/api/vbot/say/speak":
+                    response = vbot_speech.say(vbot_demo, payload)
                 elif self.path == "/api/vbot/rehearse":
                     response = vbot_demo.rehearse(payload.get("classification", "good"), payload.get("scenario", "ordinary"))
                 elif self.path == '/api/vbot/performance/preview':

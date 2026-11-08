@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { isCloudBackend, runDiagnostic, type DiagnosticName, type DiagnosticReport, type DiagnosticStatus } from '../diagnostics';
+import { askQwenToSpeak, isCloudBackend, runDiagnostic, sayOnDog, type DiagnosticName, type DiagnosticReport, type DiagnosticStatus } from '../diagnostics';
 
 const CARDS: { name: DiagnosticName; title: string; description: string }[] = [
   { name: 'backend', title: 'Cloud backend', description: 'This device → chess server' },
@@ -25,8 +25,23 @@ export function TestDashboard({ onClose, onPair }: { onClose: () => void; onPair
   const [finishedAt, setFinishedAt] = useState<Partial<Record<DiagnosticName, Date>>>({});
   const [runningAll, setRunningAll] = useState(false);
   const inFlight = useRef(new Set<DiagnosticName>());
+  const [question, setQuestion] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [speech, setSpeech] = useState<'idle' | 'asking' | 'ready' | 'saying' | 'said'>('idle');
+  const [speechError, setSpeechError] = useState('');
   const url = backendUrl();
   const cloud = isCloudBackend(url);
+
+  async function ask() {
+    setSpeech('asking'); setSpeechError(''); setAnswer('');
+    try { setAnswer(await askQwenToSpeak(question.trim(), url)); setSpeech('ready'); }
+    catch (cause) { setSpeechError((cause as Error).message); setSpeech('idle'); }
+  }
+  async function say() {
+    setSpeech('saying'); setSpeechError('');
+    try { await sayOnDog(answer, url); setSpeech('said'); }
+    catch (cause) { setSpeechError((cause as Error).message); setSpeech('ready'); }
+  }
 
   async function run(name: DiagnosticName) {
     if (inFlight.current.has(name)) return;
@@ -87,7 +102,27 @@ export function TestDashboard({ onClose, onPair }: { onClose: () => void; onPair
           </section>;
         })}
       </div>
-      <p className="fine-print test-dashboard-foot">These tests only read status and ask Qwen one short question. They never move the dog.</p>
+      <section className="card test-speech" aria-labelledby="test-speech-title">
+        <h2 id="test-speech-title">Make the dog talk</h2>
+        <p className="fine-print">Qwen answers here first. Then the dog says exactly those words in its own voice, without its onboard model.</p>
+        <form onSubmit={event => { event.preventDefault(); if (question.trim() && speech !== 'asking' && speech !== 'saying') void ask(); }}>
+          <label htmlFor="test-speech-question">Question for Qwen</label>
+          <div className="test-speech-row">
+            <input id="test-speech-question" maxLength={1000} value={question} onChange={event => setQuestion(event.target.value)} placeholder="Why do dogs wag their tails?" autoComplete="off" />
+            <button className="primary" disabled={!question.trim() || speech === 'asking' || speech === 'saying'}>{speech === 'asking' ? 'Asking…' : 'Ask Qwen'}</button>
+          </div>
+        </form>
+        {answer && <div className="test-speech-answer">
+          <span className="eyebrow">QWEN SAYS</span>
+          <p>{answer}</p>
+          <div className="test-speech-actions">
+            <button className="primary" disabled={speech === 'saying' || speech === 'asking'} onClick={() => void say()}>{speech === 'saying' ? 'Sending…' : speech === 'said' ? 'Say it again' : 'Say it on the dog'}</button>
+            {speech === 'said' && <span role="status" className="test-badge pass">Sent to the dog</span>}
+          </div>
+        </div>}
+        {speechError && <p className="inline-error" role="alert">{speechError}</p>}
+      </section>
+      <p className="fine-print test-dashboard-foot">The status tests only read information and ask Qwen one short question. Nothing here moves the dog.</p>
     </div>
   </div>;
 }

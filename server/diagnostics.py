@@ -56,7 +56,7 @@ class Report:
                 'latencyMs': _ms(self.started), 'steps': self.steps}
 
 
-def _ssh_failure(stderr):
+def ssh_failure(stderr):
     error = (stderr or '').lower()
     if 'host key verification failed' in error or 'remote host identification has changed' in error:
         return "The dog's SSH identity could not be verified."
@@ -65,22 +65,30 @@ def _ssh_failure(stderr):
     return "The dog isn't answering. Check its power, Wi-Fi and link to the server."
 
 
-def _robot_ssh(demo, remote, timeout):
-    """Returns (stdout, None) or (None, reason), using the same pinned identity as dispatch."""
+def run_on_robot(demo, remote, timeout, stdin=None):
+    """Returns (finished process, None) or (None, reason), using the same pinned identity as dispatch."""
     if not demo.target:
         return None, 'No robot address is configured on this server.'
     try:
         # known_hosts is keyed by the bare address, so drop the account name from the anchor.
         alias = demo._ssh_identity_anchor().removeprefix('vbot@') if demo.network_book is not None else None
-        result = run_ssh(ssh_argv(demo.target, remote, host_key_alias=alias),
-                         capture_output=True, text=True, timeout=timeout, check=False)
+        extra = {} if stdin is None else {'input': stdin}
+        return run_ssh(ssh_argv(demo.target, remote, host_key_alias=alias),
+                       capture_output=True, text=True, timeout=timeout, check=False, **extra), None
     except ValueError as error:
         return None, str(error)
     except Exception as error:  # A subprocess timeout or the Android SSH client.
         return None, f"The dog didn't answer in time ({type(error).__name__})."
-    if result.returncode != 0:
-        return None, _ssh_failure(result.stderr)
-    return result.stdout, None
+
+
+def _robot_ssh(demo, remote, timeout):
+    """Returns (stdout, None) or (None, reason)."""
+    done, problem = run_on_robot(demo, remote, timeout)
+    if problem:
+        return None, problem
+    if done.returncode != 0:
+        return None, ssh_failure(done.stderr)
+    return done.stdout, None
 
 
 def check_backend(demo, server):
