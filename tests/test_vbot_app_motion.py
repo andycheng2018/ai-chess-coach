@@ -504,12 +504,23 @@ class DriveTests(MotionCase):
     def test_a_show_in_progress_blocks_a_drive_and_a_drive_blocks_a_show(self):
         self.arm()
         self.gate = threading.Event()
+        entered = threading.Event()
+        def wait_for_release(cancel, seconds):
+            entered.set()
+            self.gate.wait(10)
+            return cancel.is_set()
+        # MotionCase's default waiter completes immediately. Explicitly hold this
+        # show so the exclusion assertion doesn't depend on thread scheduling.
+        self.controller.waiter = wait_for_release
         self.controller.submit(self.show({**FACE, 'durationMs': 5000}))
-        with self.assertRaises(Rejected) as caught:
-            self.controller.drive({'action': 'start'})
-        self.assertEqual(caught.exception.code, 'busy')
-        self.gate.set()
-        self.finish()
+        try:
+            self.assertTrue(entered.wait(2), 'Show did not reach its waiting cue')
+            with self.assertRaises(Rejected) as caught:
+                self.controller.drive({'action': 'start'})
+            self.assertEqual(caught.exception.code, 'busy')
+        finally:
+            self.gate.set()
+            self.finish()
         self.controller.drive({'action': 'start'})
         receipt = self.controller.submit(self.show(FACE, commandId='c' * 32))
         self.assertEqual((receipt['state'], receipt['code']), ('rejected', 'busy'))

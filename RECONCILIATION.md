@@ -168,3 +168,8 @@ Test Dashboard, and rehearsed dance variety. Validation: 267 Node tests passed;
 649 Python tests ran with six skips and no failures; both web builds passed.
 Android compilation, pinned signature verification and emulator checks run in CI.
 This audit does not claim tablet installation, robot motion or venue acceptance.
+
+CI exposed a scheduling race in the show/drive exclusion test: MotionCase's
+default waiter finishes immediately, so its unused gate never held the show.
+The test now explicitly waits at the cue and releases in finally; no production
+admission rules were weakened. Revalidated the full suite before republishing.
