@@ -19,7 +19,7 @@ import signal
 import time
 import uuid
 
-PRESETS = ('actions/ROCKYOU.json', 'actions/CHEER_R.json', 'actions/WAVE.json', 'atom/look_left.json', 'atom/look_right.json', 'atom/look_forward.json', 'atom/look_up.json', 'atom/look_down.json', 'actions/SHAKEHAND.json', 'actions/SHAKEHAND_L.json', 'actions/HIGH_FIVE_R.json', 'actions/HIGH_FIVE_L.json', 'actions/SAYYES.json', 'actions/GRIEVANCE.json', 'actions/HAPPY_LITTLE_JUMP.json', 'actions/HAPPY_JUMP.json', 'actions/JUMP_IN_PLACE.json', 'actions/RHYTHM.json', 'actions/RHYTHMIC_SWING.json', 'actions/RELAXED_SWING.json', 'actions/TWIST_BUTT.json', 'actions/GUITAR.json', 'actions/PIANO.json', 'actions/DRUM.json', 'actions/DRUMER.json', 'actions/SAXOPHONE.json', 'actions/VIOLIN.json', 'actions/CONDUCT.json', 'actions/HAPPY_BOUNCE_B.json', 'actions/EXCITED.json', 'actions/CHEER_L.json', 'actions/ENJOY.json')
+PRESETS = ('actions/ROCKYOU.json', 'actions/CHEER_R.json', 'actions/WAVE.json', 'atom/look_left.json', 'atom/look_right.json', 'atom/look_forward.json', 'atom/look_up.json', 'atom/look_down.json', 'actions/SHAKEHAND.json', 'actions/SHAKEHAND_L.json', 'actions/HIGH_FIVE_R.json', 'actions/HIGH_FIVE_L.json', 'actions/SAYYES.json', 'actions/GRIEVANCE.json', 'actions/HAPPY_LITTLE_JUMP.json', 'actions/HAPPY_JUMP.json', 'actions/JUMP_IN_PLACE.json', 'actions/RHYTHM.json', 'actions/RHYTHMIC_SWING.json', 'actions/RELAXED_SWING.json', 'actions/TWIST_BUTT.json')
 SESSION = "/opt/vita/aorta/edu/edu_session.json5"
 VERSIONS = {"aorta-sdk": "2026.9.23", "aorta-msgs": "2026.9.23", "vbot-edu-msgs": "2026.9.24", "flatbuffers": "25.12.19"}
 SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"

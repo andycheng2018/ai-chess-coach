@@ -60,10 +60,7 @@ MOTION_PRESETS = ('actions/ROCKYOU.json', 'actions/CHEER_R.json', 'actions/WAVE.
                   'atom/look_forward.json', 'atom/look_up.json', 'atom/look_down.json', 'actions/SHAKEHAND.json',
                   'actions/SHAKEHAND_L.json', 'actions/HIGH_FIVE_R.json', 'actions/HIGH_FIVE_L.json', 'actions/SAYYES.json',
                   'actions/GRIEVANCE.json', 'actions/HAPPY_LITTLE_JUMP.json', 'actions/HAPPY_JUMP.json', 'actions/JUMP_IN_PLACE.json',
-                  'actions/RHYTHM.json', 'actions/RHYTHMIC_SWING.json', 'actions/RELAXED_SWING.json', 'actions/TWIST_BUTT.json',
-                  'actions/GUITAR.json', 'actions/PIANO.json', 'actions/DRUM.json', 'actions/DRUMER.json', 'actions/SAXOPHONE.json',
-                  'actions/VIOLIN.json', 'actions/CONDUCT.json', 'actions/HAPPY_BOUNCE_B.json', 'actions/EXCITED.json',
-                  'actions/CHEER_L.json', 'actions/ENJOY.json')
+                  'actions/RHYTHM.json', 'actions/RHYTHMIC_SWING.json', 'actions/RELAXED_SWING.json', 'actions/TWIST_BUTT.json')
 # Bounded basic moves. The amounts live on the dog (robot_studio.MOVES); a test keeps these names equal.
 MOVES = ('step_forward', 'step_back', 'step_left', 'step_right', 'turn_left_30', 'turn_right_30', 'turn_left_90', 'turn_right_90',
          'turn_left_10', 'turn_right_10')

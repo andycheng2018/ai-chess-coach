@@ -16,10 +16,10 @@ SMALL_PRESETS = ("actions/WAVE.json", *HEAD_PRESETS, "actions/SHAKEHAND.json",
                  "actions/HIGH_FIVE_L.json", "actions/SAYYES.json", *JUMP_PRESETS)
 # Full celebrations for good moves. Every name must be in robot_action.PRESETS,
 # the dog's own allowlist. Live mode only draws the ones rehearsed on that dog.
+# Never add actions/CONDUCT.json or actions/HAPPY_BOUNCE_B.json: both made the
+# dog fall in supervised rehearsals.
 EXTRA_DANCE_PRESETS = ("actions/RHYTHM.json", "actions/RHYTHMIC_SWING.json", "actions/RELAXED_SWING.json",
-                       "actions/TWIST_BUTT.json", "actions/GUITAR.json", "actions/PIANO.json", "actions/DRUM.json",
-                       "actions/DRUMER.json", "actions/SAXOPHONE.json", "actions/VIOLIN.json", "actions/CONDUCT.json",
-                       "actions/HAPPY_BOUNCE_B.json", "actions/EXCITED.json", "actions/CHEER_L.json", "actions/ENJOY.json")
+                       "actions/TWIST_BUTT.json")
 DANCE_PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *JUMP_PRESETS, "actions/WAVE.json",
                  "actions/HIGH_FIVE_R.json", "actions/HIGH_FIVE_L.json", *EXTRA_DANCE_PRESETS)
 MAX_SMALL_DURATION_MS = 15000

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'server'))
 from vbot_demo import VbotDemo
-from vbot_policy import HEAD_PRESETS
+from vbot_policy import DANCE_PRESETS, HEAD_PRESETS
 
 class ReactionProfiles(unittest.TestCase):
     def make(self, profile):
@@ -48,7 +48,7 @@ LINE = 'e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 d2d3 f8c5 c2c3 d7d6'.split()
 
 
 class DemoRhythm(unittest.TestCase):
-    """Demo mode: Rock You on every second human move, whatever the coach says."""
+    """Demo mode: a dance on every second human move, whatever the coach says."""
     def setUp(self):
         self.now=1000.0
         self.sender=Mock(return_value={'status':'completed','readyForNext':True})
@@ -73,11 +73,11 @@ class DemoRhythm(unittest.TestCase):
         self.now+=10
         return self.d.celebrate({'recordId':f'r{ply}','gameId':'AbCd1234','playerColor':'white'}, game)
 
-    def test_every_second_move_dances_rock_you_regardless_of_verdict(self):
+    def test_every_second_move_dances_regardless_of_verdict(self):
         self.arm()
         results=[self.play(p, c) for p,c in ((1,'blunder'),(3,'mistake'),(5,'good'),(7,'inaccuracy'),(9,'best'))]
         self.assertEqual([r['status'] for r in results],['skipped','rehearsed','skipped','rehearsed','skipped'])
-        self.assertTrue(all(r['preset']=='actions/ROCKYOU.json' and r['tier']=='demo' for r in results if r['status']=='rehearsed'))
+        self.assertTrue(all(r['preset'] in DANCE_PRESETS and r['tier']=='demo' for r in results if r['status']=='rehearsed'))
         self.sender.assert_not_called()
 
     def test_busy_dog_dances_on_the_next_move_instead(self):
@@ -87,7 +87,8 @@ class DemoRhythm(unittest.TestCase):
         self.assertEqual(self.play(3)['status'],'skipped')
         self.d.busy=False
         r=self.play(5)
-        self.assertEqual((r['status'],r['preset']),('rehearsed','actions/ROCKYOU.json'))
+        self.assertEqual(r['status'],'rehearsed')
+        self.assertIn(r['preset'],DANCE_PRESETS)
         self.assertEqual(self.play(7)['status'],'skipped')
         self.assertEqual(self.play(9)['status'],'rehearsed')
 
