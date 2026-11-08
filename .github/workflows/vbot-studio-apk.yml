@@ -110,8 +110,8 @@ jobs:
           VBOT Studio Android 0.1.$code. Separate app: com.andy.vbotstudio.
 
           Includes the integrated action library, rehearsed dance catalog and performance editor.
-          Qwen voice/session controls in the web app require the computer-side Studio server;
-          the standalone Android controller does not provide that cloud voice service yet.
+          Includes hosted cloud control, pairing by QR or key, and Qwen voice/session controls
+          through the paired hosted server. Voice requires the server and a working robot link.
 
           Signed with the permanent pinned release certificate. Source tests, APK signature
           verification and Android emulator controller checks passed.

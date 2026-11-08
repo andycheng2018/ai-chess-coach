@@ -118,3 +118,53 @@ file mode.
   generated Android assets and was not replayed over current builds.
 - This is a local source integration only: no robot commands, deployment,
   tablet installation, backend restart, or remote push was performed.
+
+
+## November 8, 2026: final Android release consolidation
+
+Refreshed origin and verified all 27 recorded local and remote tips below are ancestors
+of the release. Reconciled the remaining Android merge commit without source conflicts.
+
+| Ref | Audited tip |
+| --- | --- |
+| `refs/heads/add-llm-log` | `5a74748b04054382de87bc50bc3b8a885f64af6d` |
+| `refs/heads/claude/dog-dance-variety-551640` | `febc27d2e0636185643c80f3a41f8d6c61244956` |
+| `refs/heads/claude/vbot-agent-mcp-integration-3e1ae9` | `73c33975d6a2e12e0229ff1000c188a760fbb67f` |
+| `refs/heads/codex/android-standalone` | `febc27d2e0636185643c80f3a41f8d6c61244956` |
+| `refs/heads/codex/android-tablet` | `1e7bd50e5cd2f81e9db61e07e20f418ce822ca10` |
+| `refs/heads/codex/merge-coaching-workspace` | `6941a00170fe69e5072962a6b2a53e8c03ca8202` |
+| `refs/heads/codex/merge-luna-chat` | `d303a54a971d7dcbc1bfe6fd50722111f856592a` |
+| `refs/heads/codex/merge-practice-and-celebrations` | `4814329f2cab97c8e53d15019deaf29661a31cf5` |
+| `refs/heads/codex/merge-robot-live-integration` | `128920ac00cb67c84743a2e353d9f968ed260b7e` |
+| `refs/heads/codex/merge-robot-network-memory` | `d464d445809ef64b0aa96c17cdee798c93909658` |
+| `refs/heads/codex/merge-room-discovery` | `f2841930d9336182a17eca22e1f688b31fb92494` |
+| `refs/heads/codex/vbot-app-scaffold` | `75fad97c89c8d7d1c6a9ac4aa908f517b4f14cdb` |
+| `refs/heads/main` | `555e0f3725e7144858d57c217eaab28afdc56186` |
+| `refs/remotes/origin/add-llm-log` | `50ed0157fcfc6b33aa566a46cab66ac46493f83a` |
+| `refs/remotes/origin/claude/dog-dance-variety-551640` | `7982c9a2586690cfb018095c3e02f80819ed9392` |
+| `refs/remotes/origin/claude/vbot-agent-mcp-integration-3e1ae9` | `b5c0aab68e74d2a979b46b81c6fb7c8c2eeb1a9f` |
+| `refs/remotes/origin/codex/android-standalone` | `b112822ff4e291e6eeb8d543785519440975d0fe` |
+| `refs/remotes/origin/codex/merge-coaching-workspace` | `6941a00170fe69e5072962a6b2a53e8c03ca8202` |
+| `refs/remotes/origin/codex/merge-luna-chat` | `d303a54a971d7dcbc1bfe6fd50722111f856592a` |
+| `refs/remotes/origin/codex/merge-practice-and-celebrations` | `4814329f2cab97c8e53d15019deaf29661a31cf5` |
+| `refs/remotes/origin/codex/merge-robot-live-integration` | `128920ac00cb67c84743a2e353d9f968ed260b7e` |
+| `refs/remotes/origin/codex/merge-robot-network-memory` | `d464d445809ef64b0aa96c17cdee798c93909658` |
+| `refs/remotes/origin/codex/merge-room-discovery` | `f2841930d9336182a17eca22e1f688b31fb92494` |
+| `refs/remotes/origin/codex/vbot-app-scaffold` | `75fad97c89c8d7d1c6a9ac4aa908f517b4f14cdb` |
+| `refs/remotes/origin/feature/vbot-qwen` | `3c7809d07d80a5df0f69c36b13519e4a1f56f490` |
+| `refs/remotes/origin/main` | `555e0f3725e7144858d57c217eaab28afdc56186` |
+| `refs/remotes/origin/opening-recognition` | `06d564af2f2fa635a54d1e2cb48d7b138ec608fd` |
+
+Imported ten uncommitted files from the Claude MCP worktree: Studio pairing QR,
+Android camera/scanner wiring, tests and terminal QR helper. Timestamped backups
+are in ignored .local/full-integration-backup-20261108-154903. The source worktree
+changes and all three stashes remain preserved; the other Claude worktree was clean.
+Old UI stash work was previously reconciled. Private journals and generated assets
+were not reapplied. Studio now declares the native Browser plugin as well as scanner.
+
+Includes visible live-game Simple Demo reaction controls, cloud routing, hosted
+robot address trust, Studio cloud controls, Qwen sessions, bot account selection,
+Test Dashboard, and rehearsed dance variety. Validation: 267 Node tests passed;
+649 Python tests ran with six skips and no failures; both web builds passed.
+Android compilation, pinned signature verification and emulator checks run in CI.
+This audit does not claim tablet installation, robot motion or venue acceptance.
