@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DEFAULT_REACTION_PROFILE, vbotEventText, vbotReactionLabel, type ReactionProfile } from '../vbotDemo';
 import type { VbotCompanionControl } from '../useVbotCompanion';
+import { VoiceModeControl } from './VoiceModeControl';
 
 type Props = { control: VbotCompanionControl; gameId: string | null; canArm: boolean; ended: boolean; blockedReason?: string; practice?: boolean; demoOpponent?: boolean };
 
@@ -97,6 +98,7 @@ export function VbotCompanion({ control, gameId, canArm, ended, blockedReason, p
     {!canArm && !ended && blockedReason && <p className="vbot-notice">{blockedReason}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
     {status && !nativeAvailable && <p className="vbot-notice">Restart the local coach server to enable integrated VBOT controls.</p>}
+    <VoiceModeControl />
     {status?.armed || status?.busy ? <div className="vbot-actions"><button className="vbot-off" disabled={pending} onClick={() => void control.off()}>{status?.victoryPending ? 'Cancel victory dance & turn off' : 'Turn reactions off'}</button></div>
       : <>
         <details className="vbot-settings"><summary>Robot connection · remembered networks</summary>

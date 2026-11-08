@@ -32,6 +32,9 @@ tablet_access = TabletAccess(os.environ.get('CHESS_TABLET_TOKEN', ''), os.enviro
 from vbot_demo import demo as vbot_demo
 import diagnostics
 import vbot_speech
+from vbot_voice import VoiceMode
+
+voice_mode = VoiceMode(vbot_demo)
 
 # Reuse the bot's one canonical game stream for result celebrations.
 runtime.game_observer = lambda game: vbot_demo.observe_game_end(game, runtime.game_state)
@@ -1665,6 +1668,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_bytes(200, tablet_access.page(), 'text/html; charset=utf-8')
             return
+        if urlsplit(self.path).path == "/api/vbot/voice":
+            if not self._vbot_local_request():
+                self._send(403, {"message": "Pair this device to use voice mode."})
+            else:
+                self._send(200, voice_mode.status())
+            return
         if urlsplit(self.path).path.startswith("/api/diagnostics/"):
             name = urlsplit(self.path).path.rsplit("/", 1)[1]
             if not self._vbot_local_request():
@@ -1826,6 +1835,8 @@ class Handler(BaseHTTPRequestHandler):
                     response = vbot_demo.reconcile(payload, runtime.game_state)
                 elif self.path == "/api/vbot/commentary":
                     response = qwen_vbot_commentary(payload)
+                elif self.path == "/api/vbot/voice":
+                    response = voice_mode.set_enabled(payload.get("enabled"))
                 elif self.path == "/api/vbot/say/ask":
                     response = vbot_speech.ask_qwen(payload)
                 elif self.path == "/api/vbot/say/speak":
@@ -2020,6 +2031,7 @@ if __name__ == "__main__":
     )
     print(f"Coach trigger: {MISTAKE_THRESHOLD_CP} cp")
     threading.Thread(target=bootstrap_bot, name="bot-bootstrap", daemon=True).start()
+    voice_mode.resume()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     try:
         server.serve_forever()

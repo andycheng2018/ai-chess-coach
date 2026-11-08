@@ -4043,6 +4043,9 @@ header {
 .test-steps li.fail .test-step-icon { color: #f08f84; }
 .test-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 4px; }
 .test-dashboard-foot { margin: 14px 0 0; }
+.test-voice { margin-top: 12px; }
+.test-voice:not(:has(.voice-mode)) { display: none; }
+.test-voice .voice-mode { margin: 0; padding: 0; background: none; }
 .test-speech { display: grid; gap: 10px; margin-top: 12px; }
 .test-speech h2 { margin: 0; color: #f1efec; font-size: 17px; }
 .test-speech .fine-print, .test-speech-answer p { margin: 0; }
@@ -4053,3 +4056,14 @@ header {
 .test-speech-answer p { color: #e8e6e3; line-height: 1.5; overflow-wrap: anywhere; }
 .test-speech-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 @media (max-width: 700px) { .test-card-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Qwen voice mode */
+.voice-mode { display: grid; gap: 8px; margin: 12px 0; padding: 12px; border-radius: 8px; background: #1f1d1b; }
+.voice-mode-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.voice-mode-top strong { color: #f1efec; font-size: 14px; }
+.voice-mode p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.voice-mode .voice-mode-state { color: #e8e6e3; font-weight: 700; }
+.voice-mode .voice-mode-state.error { color: #f4b8b1; }
+.voice-mode-turns { display: grid; gap: 8px; margin: 0; padding: 8px 0 0; list-style: none; border-top: 1px solid var(--border); }
+.voice-mode-turns li { display: grid; gap: 2px; font-size: 12.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.voice-mode-turns b { color: #e8e6e3; font-weight: 700; }

@@ -2,17 +2,15 @@
 """Say one short text through the dog's built-in voice. The text arrives on stdin.
 
 The only route this helper can call is /speech/set_speak, so it has no path to a
-head, body or navigation command. It takes the same controller lock as the other
-helpers, which stops it from talking over a chess reaction or a show.
+head, body or navigation command. It deliberately ignores the controller lock: that
+lock guards motion, and an idle VBOT Studio connection holds it for minutes at a time.
 """
 from __future__ import annotations
 
 import argparse
-import fcntl
 import importlib.metadata
 import json
 import os
-from pathlib import Path
 import re
 import sys
 import uuid
@@ -37,7 +35,11 @@ def clean(raw):
     return " ".join(text.split())[:MAX_CHARS].strip()
 
 
-def speak(text, pre_check, request_id):
+def text_of(value):
+    return value.decode("utf-8", "replace") if isinstance(value, bytes) else (value or "")
+
+
+def speak(text, pre_check, request_id, node=None):
     os.environ["ZENOH_SESSION_CONFIG_URI"] = SESSION
     import aorta as sdk
     import set_speak_schema_meta as schema
@@ -54,12 +56,16 @@ def speak(text, pre_check, request_id):
         schema.SetSpeakRequestAddPreCheck(builder, pre_check)
         schema.SetSpeakRequestAddHumanLanguageText(builder, words)
         return schema.SetSpeakRequestEnd(builder)
-    options = sdk.ClientOptions(timeout_ms=CALL_TIMEOUT_MS, enforce_single_provider=True, allow_retry=False)
-    with sdk.Node("edu_sdk") as node:
-        with node.create_client_typed(ROUTE, SetSpeakResponse.GetRootAs, request_schema_meta=schema, options=options) as client:
+
+    def call(active):
+        options = sdk.ClientOptions(timeout_ms=CALL_TIMEOUT_MS, enforce_single_provider=True, allow_retry=False)
+        with active.create_client_typed(ROUTE, SetSpeakResponse.GetRootAs, request_schema_meta=schema, options=options) as client:
             response = client.call(fill).decode()
-        message = response.Message()
-        return response.Status(), response.ErrorCode(), (message.decode("utf-8", "replace") if isinstance(message, bytes) else message or "")[:300]
+        return response.Status(), response.ErrorCode(), text_of(response.Message())[:300]
+    if node is not None:
+        return call(node)
+    with sdk.Node("edu_sdk") as own:
+        return call(own)
 
 
 def main(argv=None):
@@ -79,15 +85,7 @@ def main(argv=None):
             return refuse("sdk", f"Install the documented SDK pairing: {name}=={version}")
     if not os.access(SESSION, os.R_OK):
         return refuse("sdk", "The documented EDU session file is unavailable.")
-    directory = Path(__file__).resolve().parent
-    with (directory / "controller.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            return refuse("busy", "Another controller, such as a chess reaction or show, is using the dog.")
-        if (directory / "unresolved-action.json").exists():
-            return refuse("unresolved_action", "An unresolved robot action needs onsite inspection first.")
-        status, error_code, message = speak(text, args.pre_check, request_id)
+    status, error_code, message = speak(text, args.pre_check, request_id)
     spoken = status == 0 and error_code == 0
     emit(event="speak_result", requestId=request_id, ok=spoken, preCheck=args.pre_check, chars=len(text),
          status=status, errorCode=error_code, message=message)

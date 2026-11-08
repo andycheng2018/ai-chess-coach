@@ -24,7 +24,7 @@ cp -p ai-chess-coach/server/coach/qwen_adapter.py "ai-chess-coach/server/coach/q
 echo "Backups: ~/chess-coach/.env.bak-$TS, server/app.py.bak-$TS and server/coach/qwen_adapter.py.bak-$TS"
 EOF
 
-scp -q -o "$PX" "$ROOT/server/app.py" "$ROOT/server/diagnostics.py" "$ROOT/server/vbot_speech.py" "$MS:chess-coach/ai-chess-coach/server/"
+scp -q -o "$PX" "$ROOT/server/app.py" "$ROOT/server/diagnostics.py" "$ROOT/server/vbot_speech.py" "$ROOT/server/vbot_voice.py" "$MS:chess-coach/ai-chess-coach/server/"
 scp -q -o "$PX" "$ROOT/server/coach/qwen_adapter.py" "$MS:chess-coach/ai-chess-coach/server/coach/"
 
 ssh -o "$PX" "$MS" 'bash -s' <<'EOF'
@@ -38,4 +38,12 @@ docker compose up -d --build 2>&1 | tail -3
 sleep 5
 docker ps --filter name=chess-coach-backend-1 --format '{{.Names}}: {{.Status}}'
 EOF
+# Links VBOT Studio on this Mac to the cloud server. The key stays in .env (git-ignored).
+MAIN=$(git -C "$ROOT" worktree list --porcelain | sed -n '1s/^worktree //p')
+if ! grep -q '^CHESS_CLOUD_TOKEN=' "$MAIN/.env"; then
+  cp -p "$MAIN/.env" "$MAIN/.env.bak-$(date +%Y%m%d-%H%M%S)"
+  KEY=$(ssh -o "$PX" "$MS" "sed -nE 's/^CHESS_TABLET_TOKEN=//p' ~/chess-coach/.env")
+  [ -n "$KEY" ] && printf '\nCHESS_CLOUD_URL=https://chess-api.urbot.ai\nCHESS_CLOUD_TOKEN=%s\n' "$KEY" >> "$MAIN/.env"
+  unset KEY
+fi
 echo "Done. Open the app, then Menu > Test Dashboard > Run all tests."
