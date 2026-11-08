@@ -227,7 +227,9 @@ Local debug builds remain available with `npm run vbot:android:sync`, then
 `cd vbot-app/android && ./gradlew assembleDebug`. Signed release builds require
 the existing signing environment documented in `ANDROID_UPDATES.md`.
 
-**Updating.** New permanently signed Studio versions can update one another in
+**Updating.** Open **App updates → Open Studio releases** for the permanent
+Studio-only download page. No update token is required. Finish a show and
+disconnect before opening the installer. New permanently signed Studio versions can update one another in
 place. Earlier CI debug builds used different signatures and may require a
 one-time migration: export saved shows and record pairing information first.
 Do not uninstall without preserving your data. The Studio package is distinct
