@@ -30,6 +30,7 @@ from tablet_access import TabletAccess, TABLET_ORIGIN, TABLET_HEADER, parse_orig
 tablet_access = TabletAccess(os.environ.get('CHESS_TABLET_TOKEN', ''), os.environ.get('CHESS_TABLET_URL', ''),
                              parse_origins(os.environ.get('CHESS_TABLET_ORIGINS', '')))
 from vbot_demo import demo as vbot_demo
+import diagnostics
 
 # Reuse the bot's one canonical game stream for result celebrations.
 runtime.game_observer = lambda game: vbot_demo.observe_game_end(game, runtime.game_state)
@@ -1663,6 +1664,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_bytes(200, tablet_access.page(), 'text/html; charset=utf-8')
             return
+        if urlsplit(self.path).path.startswith("/api/diagnostics/"):
+            name = urlsplit(self.path).path.rsplit("/", 1)[1]
+            if not self._vbot_local_request():
+                self._send(403, {"message": "Pair this device to run connection tests."})
+            elif name not in diagnostics.CHECKS:
+                self._send(404, {"message": "Not found"})
+            else:
+                self._send(200, diagnostics.run_check(name, vbot_demo, self._diagnostics_server_info()))
+            return
         if urlsplit(self.path).path in {"/vbot", "/vbot/", "/api/vbot/status"}:
             if not self._vbot_local_request():
                 self._send(403, {"message": "Open VBOT Demo locally on the demo Mac."})
@@ -1953,6 +1963,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         return
+
+    def _diagnostics_server_info(self) -> dict[str, Any]:
+        try:
+            stockfish = find_stockfish()
+        except Exception:
+            stockfish = None
+        return {"publicUrl": tablet_access.url, "stockfish": bool(stockfish), "coachConfigured": coach_is_configured(),
+                "coachProvider": os.getenv("LLM_PROVIDER", "openai").lower()}
 
     def _host_pairing_page_allowed(self):
         port = self.server.server_port

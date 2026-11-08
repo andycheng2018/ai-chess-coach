@@ -12,8 +12,9 @@ import requests
 class QwenClient:
     def __init__(self, timeout=60, max_retries=0):
         base = os.getenv('QWEN_BASE_URL', 'http://127.0.0.1:18000/v1').rstrip('/')
-        if not base.startswith(('http://127.0.0.1:', 'http://localhost:', 'https://')):
-            raise ValueError('QWEN_BASE_URL must be a local tunnel or HTTPS endpoint')
+        # host.docker.internal is this machine as seen from the hosted Docker backend.
+        if not base.startswith(('http://127.0.0.1:', 'http://localhost:', 'http://host.docker.internal:', 'https://')):
+            raise ValueError('QWEN_BASE_URL must be a local tunnel, the Docker host or an HTTPS endpoint')
         self.url = base + '/chat/completions'
         self.timeout = timeout
         self.responses = self

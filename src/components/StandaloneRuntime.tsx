@@ -4,12 +4,16 @@ import { Browser } from '@capacitor/browser';
 import { authenticatedBackendFetch, readConnection } from '../nativeBackend';
 import { standalone, type LocalSettings, type AndroidUpdate } from '../standaloneRuntime';
 import { ServerConnectionPanel } from './TabletConnection';
+import { TestDashboard } from './TestDashboard';
+
+const TEST_DASHBOARD_HASH = '#test-dashboard';
 
 export function StandaloneRuntime({ children }: { children: ReactNode }) {
   const android = Capacitor.getPlatform() === 'android';
   // A saved Chess Buddy server (a Mac or a hosted one) replaces the on-device backend.
   const [server] = useState(() => readConnection());
   const [serverOpen, setServerOpen] = useState(() => !android && typeof window !== 'undefined' && window.location.hash === '#pair-server');
+  const [testsOpen, setTestsOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === TEST_DASHBOARD_HASH);
   const [ready, setReady] = useState(!android);
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState<LocalSettings>({});
@@ -38,6 +42,11 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
     } catch (cause) { setUpdateError(String((cause as Error).message || cause)); }
     finally { setCheckingUpdate(false); }
   }
+  useEffect(() => {
+    const route = () => setTestsOpen(window.location.hash === TEST_DASHBOARD_HASH);
+    window.addEventListener('hashchange', route);
+    return () => window.removeEventListener('hashchange', route);
+  }, []);
   useEffect(() => {
     if (android) void checkUpdate();
   }, [android]);
@@ -95,10 +104,14 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
     setServerOpen(false);
     if (window.location.hash === '#pair-server') history.replaceState(null, '', window.location.pathname + window.location.search);
   }}>{android && server && updates}</ServerConnectionPanel>;
+  const testDashboard = testsOpen && <TestDashboard onPair={() => setServerOpen(true)} onClose={() => {
+    setTestsOpen(false);
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }} />;
   const serverButton = server && !serverOpen && <button className="tablet-connection-button ghost" onClick={() => setServerOpen(true)}>
     Server · {new URL(server.url).host}</button>;
-  if (!android) return <>{children}{serverButton}{serverPanel}</>;
-  if (server) return <>{children}{serverButton}{serverPanel}</>;
+  if (!android) return <>{children}{serverButton}{testDashboard}{serverPanel}</>;
+  if (server) return <>{children}{serverButton}{testDashboard}{serverPanel}</>;
   if (!ready) return <div className="tablet-connection-backdrop"><section className="card tablet-connection-card"><h1>Starting Chess Buddy on this tablet…</h1><p>Loading the local chess engine and coaching backend.</p>{error && <><p role="alert">{error}</p><button className="primary" onClick={() => window.location.reload()}>Try again</button>{updates}</>}</section></div>;
   return <>
     {children}
@@ -136,6 +149,7 @@ export function StandaloneRuntime({ children }: { children: ReactNode }) {
       <p className="fine-print">Keys are stored with Android Keystore encryption. Keep this app running during games. Turn robot reactions off before changing settings. The ongoing notification can stop the local backend.</p>
       <button className="ghost" disabled={busy} onClick={() => setOpen(false)}>Continue to Chess Buddy</button>
     </section></div>}
+    {testDashboard}
     {serverPanel}
   </>;
 }

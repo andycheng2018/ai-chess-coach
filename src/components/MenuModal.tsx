@@ -226,6 +226,19 @@ export const MenuModal: React.FC<Props> = ({
             </div>
             <span className="menu-arrow">→</span>
           </button>
+
+          <button
+            type="button"
+            className="menu-item-row"
+            onClick={() => { window.location.hash = 'test-dashboard'; onClose(); }}
+          >
+            <div className="menu-item-icon">🩺</div>
+            <div className="menu-item-text">
+              <strong>Test Dashboard</strong>
+              <span>Check the cloud server, MCP bridge, Qwen and the dog's link</span>
+            </div>
+            <span className="menu-arrow">→</span>
+          </button>
         </div>
 
         {/* Backend & Bot Diagnostic Info */}
