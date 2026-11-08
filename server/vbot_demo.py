@@ -16,16 +16,16 @@ import uuid
 from vbot_networks import NetworkBook, normalize_target
 from vbot_ssh import REMOTE_ROOT, known_host_fingerprints, ssh_argv
 from capture_practice import PRACTICE_ID, exercise as capture_exercise, assess_capture
-from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES, MAX_SMALL_DURATION_MS, JUMP_PRESETS
+from vbot_policy import CelebrationPolicy, GOOD_LABELS, SMALL_PRESETS, HEAD_PRESETS, SAD_PRESET, RULES, MAX_SMALL_DURATION_MS, JUMP_PRESETS, DANCE_PRESETS, EXTRA_DANCE_PRESETS
 from vbot_performance import performance_plan
 
-PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET)
-# Demo (the chess app's default choice) dances Rock You on every second human
-# move, whatever the coach says. A request that names no style stays Balanced.
+PRESETS = ("actions/ROCKYOU.json", "actions/CHEER_R.json", *SMALL_PRESETS, SAD_PRESET, *EXTRA_DANCE_PRESETS)
+# Demo (the chess app's default choice) dances on every second human move,
+# whatever the coach says. A request that names no style stays Balanced.
 REACTION_PROFILES = ("demo", "quiet", "balanced", "showmanship")
 DEFAULT_REACTION_PROFILE = "balanced"
 DEMO_REST_SECONDS = 3
-DEMO_REASON = "Demo mode: Rock You every second move."
+DEMO_REASON = "Demo mode: a dance every second move."
 SCHEMA_HASH = "a8584e3f6c005fea6579d699c6991f97b2482e01df228a537e3d89e1323eb818"
 PROFILE_PATH = Path(os.environ.get('CHESS_DATA_HOME', Path(__file__).resolve().parents[1])) / "vbot-demo" / "device-verification.local.json"
 
@@ -184,6 +184,7 @@ class VbotDemo:
         self.demo_next_ply = None
         self.stream_line = ()
         self.last_small_preset = None
+        self.last_dance_preset = None
         self.last_dance_finished = float("-inf")
         self.verification = verification if verification is not None else load_verification()
         self.fingerprint_reader = fingerprint_reader
@@ -326,6 +327,19 @@ class VbotDemo:
         weighted = [preset for preset in options for _ in range(4 if preset in JUMP_PRESETS else 1)]
         preset = self.chooser(weighted)
         self.last_small_preset = preset
+        return preset
+
+    def _dance_presets(self, target):
+        if self.mode != "live":
+            return list(DANCE_PRESETS)
+        # _run disarms on an unrehearsed preset for tested-preset connections,
+        # so live mode only offers what this dog has already performed.
+        return [preset for preset in DANCE_PRESETS if self._verified_entry(target, preset)] or [self.preset]
+
+    def _choose_dance(self, pool):
+        options = [preset for preset in pool if preset != self.last_dance_preset] or pool
+        preset = self.chooser(options)
+        self.last_dance_preset = preset
         return preset
 
     def touch_operator(self) -> None:
@@ -597,6 +611,7 @@ class VbotDemo:
             self.policy = CelebrationPolicy()
             self.stream_line = ()
             self.last_small_preset = None
+            self.last_dance_preset = None
             self.generation += 1
             self._event("armed", mode=mode, gameId=game_id, preset=preset)
             return self.status()
@@ -840,7 +855,7 @@ class VbotDemo:
         return self.reaction_profile == "demo" and self.session_kind == "game"
 
     def _submit_demo(self, record, fields):
-        """Demo mode: Rock You on every second human move, ignoring the coach verdict.
+        """Demo mode: a dance on every second human move, ignoring the coach verdict.
 
         Counts by ply, so a skipped analysis still counts as a move. A move that
         lands while the dog is busy or resting is not queued; the dance waits
@@ -849,19 +864,19 @@ class VbotDemo:
         ply = record.get("ply")
         if self.demo_next_ply is None:
             self.demo_next_ply = ply + 2
-            return self._event("skipped", reason="Demo mode: Rock You on your next move.", tier="demo", **fields)
+            return self._event("skipped", reason="Demo mode: dancing on your next move.", tier="demo", **fields)
         if ply < self.demo_next_ply:
-            return self._event("skipped", reason="Demo mode: Rock You on your next move.", tier="demo", **fields)
+            return self._event("skipped", reason="Demo mode: dancing on your next move.", tier="demo", **fields)
         if self.busy or self.clock() - max(self.last_started, self.last_finished) < self.cooldown:
-            return self._event("skipped", reason="Demo mode: VBOT is still dancing or resting; Rock You on your next move.", tier="demo", **fields)
+            return self._event("skipped", reason="Demo mode: VBOT is still dancing or resting; dancing on your next move.", tier="demo", **fields)
         self.demo_next_ply = ply + 4
-        preset = PRESETS[0]
+        preset = self._choose_dance(self._dance_presets(self.target))
         self.cooldown = DEMO_REST_SECONDS
         self.last_started = self.clock()
         context = {"tier": "demo", "reason": DEMO_REASON, "paceReason": None, "metrics": None, "preset": preset, **fields}
         if self.mode == "rehearsal":
             self.last_dance_finished = self.clock()
-            return self._event("rehearsed", message="Would request Rock You; no robot contacted.", **context)
+            return self._event("rehearsed", message="Would request this dance; no robot contacted.", **context)
         self.busy = True
         request_id = uuid.uuid4().hex
         generation = self.generation
@@ -942,6 +957,9 @@ class VbotDemo:
             if not pool:
                 return self._event("skipped", reason="No rehearsed brief preset is available for this pace/target.", tier=tier, **fields)
             preset = self._choose_small(pool)
+        if tier == "major" and not practice_reward and not decision.get("demoCapture"):
+            # Capture rewards promise Rock You by name; other milestones rotate.
+            preset = self._choose_dance(self._dance_presets(self.target))
         self.cooldown = RULES["danceRestSeconds"] if tier in {"major", "sad"} else (3 if self.reaction_profile == "showmanship" else RULES["smallRestSeconds"])
         self.last_started = self.clock()
         context = {"tier":tier, "reason":decision["reason"], "paceReason":pace_reason,

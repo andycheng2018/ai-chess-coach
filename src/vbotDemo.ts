@@ -32,7 +32,7 @@ export type VbotNetwork = {
   profiles: { id: string; label: string; targets: string[] }[];
 };
 export type ReactionProfile = 'demo' | 'quiet' | 'balanced' | 'showmanship';
-/** The chess app's default: Rock You on every second move. */
+/** The chess app's default: a dance on every second move. */
 export const DEFAULT_REACTION_PROFILE: ReactionProfile = 'demo';
 export type PerformancePlan = {
   title: string; dances: number; pace: string; target: string; allRehearsed: boolean;
@@ -108,7 +108,12 @@ export function vbotReactionLabel(preset: string): string {
     'actions/SHAKEHAND.json': 'Handshake', 'actions/SHAKEHAND_L.json': 'Left handshake',
     'actions/HIGH_FIVE_R.json': 'Right high-five', 'actions/HIGH_FIVE_L.json': 'Left high-five',
     'actions/SAYYES.json': 'Approving yes', 'actions/ROCKYOU.json': 'Rock You',
-    'actions/GRIEVANCE.json': 'Sad reaction',
+    'actions/GRIEVANCE.json': 'Sad reaction', 'actions/CHEER_R.json': 'Cheer', 'actions/CHEER_L.json': 'Left cheer',
+    'actions/RHYTHM.json': 'Rhythm', 'actions/RHYTHMIC_SWING.json': 'Rhythmic swing', 'actions/RELAXED_SWING.json': 'Relaxed swing',
+    'actions/TWIST_BUTT.json': 'Hip twist', 'actions/GUITAR.json': 'Guitar', 'actions/PIANO.json': 'Piano',
+    'actions/DRUM.json': 'Drum', 'actions/DRUMER.json': 'Drummer', 'actions/SAXOPHONE.json': 'Saxophone',
+    'actions/VIOLIN.json': 'Violin', 'actions/CONDUCT.json': 'Conductor', 'actions/HAPPY_BOUNCE_B.json': 'Happy bounce',
+    'actions/EXCITED.json': 'Excited', 'actions/ENJOY.json': 'Enjoy',
   };
   return labels[preset] || preset.split('/').pop()?.replace('.json', '').replaceAll('_', ' ') || 'Reaction';
 }
