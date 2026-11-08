@@ -60,9 +60,16 @@ test('a failed Stop reports that future cues may still run', async () => {
   assert.match(current.detail, /may still run/);
 });
 
-test('a plugin call that never answers is abandoned at the signal deadline', async () => {
-  const fetcher = nativeFetcher(() => new Promise(() => {}));
-  await assert.rejects(fetcher('/api/app/status', { signal: AbortSignal.timeout(20) }), /aborted/);
+test('a plugin call that never answers is abandoned at the signal deadline', async () => {  const fetcher = nativeFetcher(() => new Promise(() => {}));
+  // AbortSignal.timeout uses an unreferenced timer in Node, so it may not keep
+  // the test process alive long enough to deliver the signal.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), 20);
+  try {
+    await assert.rejects(fetcher('/api/app/status', { signal: deadline.signal }), /aborted/);
+  } finally {
+    clearTimeout(timer);
+  }
   const stopped = new AbortController();
   stopped.abort();
   await assert.rejects(fetcher('/api/app/status', { signal: stopped.signal }), /aborted/);
