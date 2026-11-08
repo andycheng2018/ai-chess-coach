@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react';
+import { backendUrl } from '../backendUrl';
+import { VoiceModeControl } from './VoiceModeControl';
 import { askQwenToSpeak, isCloudBackend, runDiagnostic, sayOnDog, type DiagnosticName, type DiagnosticReport, type DiagnosticStatus } from '../diagnostics';
 
 const CARDS: { name: DiagnosticName; title: string; description: string }[] = [
@@ -13,10 +15,6 @@ const STEP_ICON: Record<DiagnosticStatus, string> = { pass: '✓', warn: '!', fa
 function formatLatency(ms: number | null | undefined) {
   if (ms == null) return '';
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
-}
-
-function backendUrl() {
-  return window.__CHESS_BACKEND_URL__ || import.meta.env.VITE_BOT_CONTROL_URL || 'http://127.0.0.1:8765';
 }
 
 export function TestDashboard({ onClose, onPair }: { onClose: () => void; onPair: () => void }) {
@@ -102,6 +100,7 @@ export function TestDashboard({ onClose, onPair }: { onClose: () => void; onPair
           </section>;
         })}
       </div>
+      <section className="card test-voice"><VoiceModeControl /></section>
       <section className="card test-speech" aria-labelledby="test-speech-title">
         <h2 id="test-speech-title">Make the dog talk</h2>
         <p className="fine-print">Qwen answers here first. Then the dog says exactly those words in its own voice, without its onboard model.</p>

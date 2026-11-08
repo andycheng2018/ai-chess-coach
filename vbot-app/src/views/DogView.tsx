@@ -1,3 +1,4 @@
+import { VoiceModeCard } from '../components/VoiceModeCard';
 import { KIND_LABEL, type CapabilityKind } from '../domain/catalog';
 import { CLOUD_MISSING } from '../transport/cloud';
 import { FAKE_FAULTS, type FakeFault } from '../transport/fake';
@@ -26,6 +27,7 @@ export function DogView({ studio, onBrowse }: { studio: Studio; onBrowse: () => 
     <div className="view">
       <ViewHeader title="Your dog" subtitle="Connect, see what it can do right now, and find out why anything is unavailable." />
       <div className="dog-grid">
+        <VoiceModeCard />
         <section className="card hero-card">
           <FacePreview label={connected ? 'happy' : 'sleep'} playing={connected} />
           <div className="hero-status">

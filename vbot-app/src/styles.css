@@ -278,3 +278,14 @@ button:disabled { cursor: not-allowed; }
 .pad-hold { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .move-pad { margin-bottom: 18px; }
 .view { padding-bottom: 96px; }
+
+/* Qwen voice mode */
+.voice-card { display: grid; gap: 10px; }
+.voice-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.voice-card-top h2 { margin: 0; }
+.voice-card p { margin: 0; }
+.voice-state { font-weight: 700; }
+.voice-state.is-error { color: var(--bad); }
+.voice-turns { display: grid; gap: 10px; margin: 0; padding: 10px 0 0; list-style: none; border-top: 1px solid var(--line); }
+.voice-turns li { display: grid; gap: 2px; color: var(--muted); overflow-wrap: anywhere; }
+.voice-turns b { color: var(--ink); }
