@@ -1848,6 +1848,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 elif self.path == "/api/vbot/voice":
                     response = voice_mode.set_enabled(payload.get("enabled"))
+                elif self.path == "/api/vbot/voice/demo-mode":
+                    response = voice_mode.set_demo_mode(payload.get("enabled"))
                 elif self.path == "/api/vbot/voice/session/new":
                     response = voice_mode.new_session()
                 elif self.path == "/api/vbot/voice/session/continue":

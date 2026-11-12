@@ -14,7 +14,7 @@ from vbot_app_control import AppController, MAX_BODY, route  # noqa: E402
 
 PORT = int(os.environ.get('VBOT_APP_PORT', '8791'))
 CLOUD_VOICE_PATH = '/api/vbot/voice'
-VOICE_ACTIONS = {'voice/session/new', 'voice/session/continue', 'voice/message'}
+VOICE_ACTIONS = {'voice/session/new', 'voice/session/continue', 'voice/message', 'voice/demo-mode'}
 CLOUD_ORIGIN = 'http://localhost:5173'  # One of the origins the cloud server accepts for this key.
 DIST = Path(__file__).resolve().parents[1] / 'vbot-app' / 'dist'
 DEV_ORIGINS = {'http://localhost:5180', 'http://127.0.0.1:5180'}

@@ -23,7 +23,7 @@ class QwenClient:
         return QwenClient(timeout=timeout, max_retries=max_retries)
 
     def create(self, *, model, instructions, input, text=None,
-               max_output_tokens=1200, store=False, **kwargs):
+               max_output_tokens=1200, store=False, reasoning_effort=None, **kwargs):
         if not isinstance(instructions, str):
             raise TypeError('Expected string instructions')
         messages = [{'role': 'system', 'content': instructions}]
@@ -37,6 +37,8 @@ class QwenClient:
         else:
             raise TypeError('Expected string or chat-message list')
         payload={'model':model,'messages':messages,'stream':False,'max_tokens':max_output_tokens}
+        if reasoning_effort:  # Thinking spends the same token cap as the answer; 'none' turns it off.
+            payload['reasoning_effort']=reasoning_effort
         if text:
             fmt=text.get('format',{})
             if fmt.get('type')!='json_schema':

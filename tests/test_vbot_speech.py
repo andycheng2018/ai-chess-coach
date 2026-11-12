@@ -70,6 +70,32 @@ class SayTests(unittest.TestCase):
             self.assertIn('installed', vbot_speech.say(demo(), {'text': 'hi'})['reason'])
 
 
+class FitSpokenTests(unittest.TestCase):
+    def test_short_text_is_unchanged(self):
+        self.assertEqual(vbot_speech.fit_spoken('Hi there. I am Big Head!'), 'Hi there. I am Big Head!')
+
+    def test_long_text_ends_at_the_last_whole_sentence(self):
+        english = 'The loop is predict, add, repeat. ' * 20
+        fitted = vbot_speech.fit_spoken(english)
+        self.assertLessEqual(len(fitted), vbot_speech.MAX_SPOKEN)
+        self.assertTrue(fitted.endswith('repeat.'))
+        chinese = '你知道小狗为什么怕夏天吗？因为一热尾巴就直了。' * 30
+        fitted = vbot_speech.fit_spoken(chinese)
+        self.assertLessEqual(len(fitted), vbot_speech.MAX_SPOKEN)
+        self.assertTrue(fitted.endswith(('。', '？')))
+
+    def test_text_without_sentence_ends_stops_at_a_word_with_an_ellipsis(self):
+        fitted = vbot_speech.fit_spoken('word ' * 200)
+        self.assertLessEqual(len(fitted), vbot_speech.MAX_SPOKEN)
+        self.assertTrue(fitted.endswith('word\u2026'))
+        self.assertLessEqual(len(vbot_speech.fit_spoken('y' * 900)), vbot_speech.MAX_SPOKEN)
+
+    def test_the_dog_speaks_fitted_text_unchanged(self):
+        for raw in ('The loop is predict, add, repeat. ' * 20, 'word ' * 200, '你好。' * 300):
+            fitted = vbot_speech.fit_spoken(vbot_speech.spoken_text(raw, limit=None))
+            self.assertEqual(robot_speak.clean(fitted), fitted)
+
+
 class HelperTests(unittest.TestCase):
     def test_server_and_dog_clean_text_identically(self):
         for raw in ('<think>a</think>hi', 'plain **bold** `x`', 'a\x07b\nc', 'y' * 900, '<think>never closed'):

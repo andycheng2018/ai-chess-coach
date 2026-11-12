@@ -18,6 +18,13 @@ test('QR imports keep only the exact public room and explicit color',()=>{
  assert.equal(normalizeRoomInvitation(' https://lichess.org/AbCd1234?color=black&tracking=discard '),'https://lichess.org/game/AbCd1234?color=black');
  assert.equal(normalizeRoomInvitation('https://lichess.org/game/AbCd1234?color=white'),'https://lichess.org/game/AbCd1234?color=white');
 });
+test('real SenseRobot room QRs (scanned from the robot, Nov 2026) are accepted as-is',()=>{
+ for(const [url,id] of [['https://lichess.org/game/6PMfSkRD?color=black','6PMfSkRD'],['https://lichess.org/game/vVvrdnVc?color=black','vVvrdnVc']]) {
+  assert.equal(normalizeRoomInvitation(url),url);
+  const room=roomJoinPreview(url);
+  assert.equal(room.challengeId,id);assert.equal(room.color,'black');assert.equal(room.playerColor,'white');
+ }
+});
 test('QR imports reject unrelated, private, and ambiguous invitations',()=>{
  for(const url of ['WIFI:S:network;P:secret;;','https://example.com/AbCd1234?color=white','https://lichess.org/AbCd1234/white','https://lichess.org/AbCd1234secret?color=white','https://lichess.org/AbCd1234','https://lichess.org/AbCd1234?color=white&color=black','https://user:password@lichess.org/AbCd1234?color=white','https://lichess.org:8443/AbCd1234?color=white','https://lichess.org/AbCd1234?color=white#private']) assert.throws(()=>normalizeRoomInvitation(url));
 });

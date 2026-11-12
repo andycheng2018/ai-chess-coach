@@ -336,6 +336,43 @@ class VoiceModeTests(unittest.TestCase):
         say.assert_called_once()
         self.assertTrue(status['turns'][-1]['spoken'])
 
+    def test_demo_mode_is_off_by_default_and_selectable(self):
+        mode, _ = self.make(FakeProcess([]))
+        self.assertFalse(mode.status()['demoMode'])
+        self.assertTrue(mode.set_demo_mode(True)['demoMode'])
+        self.assertTrue(VoiceMode(demo(), data_home=mode.path.parent, ask=Mock()).status()['demoMode'])  # Survives restarts.
+        with self.assertRaises(ValueError):
+            mode.set_demo_mode('yes')
+        with patch.dict(os.environ, {'VBOT_VOICE_DEMO_MODE': '1'}):
+            fresh, _ = self.make(FakeProcess([]))
+            self.assertTrue(fresh.status()['demoMode'])
+            self.assertFalse(fresh.set_demo_mode(False)['demoMode'])  # The saved choice beats the default.
+
+    def test_demo_mode_starts_a_fresh_conversation_after_a_silence(self):
+        mode, ask = self.make(FakeProcess([]))
+        mode.set_demo_mode(True)
+        with patch.object(vbot_voice.time, 'time', return_value=1_000_000):
+            self.answered_turn(mode, 'my lucky number is forty-seven')
+        first = mode.status()['activeSession']
+        with patch.object(vbot_voice.time, 'time', return_value=1_000_000 + vbot_voice.DEMO_IDLE_SECONDS - 5):
+            self.answered_turn(mode, 'what is my lucky number')
+        self.assertEqual(mode.status()['activeSession'], first)
+        self.assertIn('forty-seven', ask.call_args.args[0][0]['content'])
+        with patch.object(vbot_voice.time, 'time', return_value=1_000_000 + 3 * vbot_voice.DEMO_IDLE_SECONDS):
+            self.answered_turn(mode, 'hi, who are you')
+        self.assertNotEqual(mode.status()['activeSession'], first)
+        self.assertEqual(ask.call_args.args[0], [])  # The new visitor hears nothing about the last one.
+        self.assertEqual(len(mode.status()['sessions']), 2)
+
+    def test_without_demo_mode_a_silence_keeps_the_conversation(self):
+        mode, _ = self.make(FakeProcess([]))
+        with patch.object(vbot_voice.time, 'time', return_value=1_000_000):
+            self.answered_turn(mode, 'hello')
+        first = mode.status()['activeSession']
+        with patch.object(vbot_voice.time, 'time', return_value=1_000_000 + 10 * vbot_voice.DEMO_IDLE_SECONDS):
+            self.answered_turn(mode, 'hello again')
+        self.assertEqual(mode.status()['activeSession'], first)
+
     def test_typed_message_uses_the_open_session_to_the_dog(self):
         process = FakeProcess([{'event': 'ready'}])
         mode, _ = self.make(process)
@@ -398,6 +435,54 @@ class QwenPromptTests(unittest.TestCase):
         self.assertIn('unsure', messages[-1]['content'])
         self.assertEqual(answer['reply'], 'Did you mean dances?')
         self.assertIn('clarifying question', vbot_voice.INSTRUCTIONS)
+        self.assertIn('Big Head', vbot_voice.INSTRUCTIONS)
+        self.assertIn('大头', vbot_voice.INSTRUCTIONS)
+        self.assertEqual(client.return_value.create.call_args.kwargs['instructions'], vbot_voice.INSTRUCTIONS)
+
+    def test_instructions_are_honest_about_missing_tools_and_identity(self):
+        text = vbot_voice.INSTRUCTIONS
+        for phrase in ('you have no tool yet to:', 'move, turn, jump', 'change your speaker volume', 'contact a person or a specialist',
+                       'cannot do that yet', 'Never invent another reason', 'never deny being Qwen', '打头'):
+            self.assertIn(phrase, text)
+        self.assertNotIn('cannot move your body', text)
+        self.assertIn('Being a robot dog is simply who you are', text)  # A positive persona, not a hedge.
+        self.assertIn('This robot dog body is you', text)  # Embodied in the VBOT, not a voice in the cloud.
+        self.assertIn('Bring up a limit when someone asks you to do something you cannot', text)
+        self.assertIn('what you want most is to make each conversation as warm and fun as it can be', text)
+
+    @patch.dict(os.environ, {'QWEN_BASE_URL': 'http://127.0.0.1:18000/v1'})
+    def test_a_cut_off_answer_is_retried_once_without_thinking(self):
+        good = SimpleNamespace(output_text=json.dumps({'understood': 'x', 'clarifying': False, 'reply': 'Hello!'}))
+        client = Mock()
+        client.return_value.create.side_effect = [SimpleNamespace(output_text='{"understood": "x", "repl'), good]
+        with patch('coach.qwen_adapter.QwenClient', client):
+            self.assertEqual(vbot_voice.ask_qwen([], 'hi', False)['reply'], 'Hello!')
+        first, second = client.return_value.create.call_args_list
+        self.assertEqual(first.kwargs['max_output_tokens'], vbot_voice.REPLY_TOKENS)
+        self.assertEqual(second.kwargs['reasoning_effort'], 'none')
+        client.return_value.create.side_effect = RuntimeError('Qwen timed out')
+        with patch('coach.qwen_adapter.QwenClient', client), self.assertRaises(RuntimeError):
+            vbot_voice.ask_qwen([], 'hi', False)  # A timeout is not retried.
+
+    @patch.dict(os.environ, {'QWEN_BASE_URL': 'http://127.0.0.1:18000/v1'})
+    def test_long_replies_end_at_a_whole_sentence(self):
+        long_reply = 'Autoregression means predicting the next word. ' * 12
+        client = Mock()
+        client.return_value.create.return_value = SimpleNamespace(output_text=json.dumps({'understood': 'x', 'clarifying': False, 'reply': long_reply}))
+        with patch('coach.qwen_adapter.QwenClient', client):
+            reply = vbot_voice.ask_qwen([], 'explain autoregression', True)['reply']
+        self.assertLessEqual(len(reply), 400)
+        self.assertTrue(reply.endswith('word.'), reply[-30:])
+
+    @patch.dict(os.environ, {'QWEN_BASE_URL': 'http://127.0.0.1:18000/v1'})
+    def test_time_question_brings_the_clock_to_qwen(self):
+        client = Mock()
+        client.return_value.create.return_value = SimpleNamespace(output_text=json.dumps({'understood': 'time', 'clarifying': False, 'reply': 'Noon.'}))
+        with patch('coach.qwen_adapter.QwenClient', client):
+            vbot_voice.ask_qwen([], 'what time is it', False)
+        instructions = client.return_value.create.call_args.kwargs['instructions']
+        self.assertTrue(instructions.startswith(vbot_voice.INSTRUCTIONS))
+        self.assertIn('"local_time"', instructions)
 
 
 if __name__ == '__main__':

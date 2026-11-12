@@ -3,7 +3,7 @@ import { cloudFetcher, type CloudPairing } from '../transport/cloudPairing';
 
 type Turn = { id: string; heard: string; understood: string; clarifying: boolean; reply: string; error?: string; source?: 'voice' | 'typed' };
 type Session = { id: string; title: string; startedAt: number; updatedAt: number; turnCount: number };
-type Status = { available: boolean; reason?: string; enabled: boolean; state: string; message?: string; activeSession?: string | null; sessions?: Session[]; turns: Turn[] };
+type Status = { available: boolean; reason?: string; enabled: boolean; state: string; message?: string; activeSession?: string | null; sessions?: Session[]; turns: Turn[]; demoMode?: boolean; demoIdleMinutes?: number };
 
 const BASE = '/api/app/voice';
 const OFF_TEXT = 'Off. The dog’s built-in assistant is answering.';
@@ -75,6 +75,10 @@ export function VoiceModeCard({ pairing }: { pairing: CloudPairing | null }) {
           </label>
           <button className="btn" disabled={busy} onClick={() => void send('/session/new', {})}>New session</button>
         </div>
+        <label className="voice-demo-mode">
+          <input type="checkbox" checked={Boolean(status.demoMode)} disabled={busy} onChange={event => void send('/demo-mode', { enabled: event.target.checked })} />
+          {' '}Demo mode: start a fresh conversation after {status.demoIdleMinutes ?? 10} minutes of silence, so each new visitor starts clean
+        </label>
         <form className="voice-input" onSubmit={event => {
           event.preventDefault();
           const message = text.trim();
