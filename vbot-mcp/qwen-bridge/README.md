@@ -33,7 +33,7 @@ kill "$PID"
 
 The key may be loaded from a secret store instead of typing it inline. The example above is a placeholder, not a recommended place to store real values in shell history. The MCP token is generated for local tests and needs a stable securely stored value for deployment.
 
-Expected: `PASS initialize`, `PASS notifications/initialized`, `PASS tools/list: qwen_ask`, `PASS tools/call: VBOT MCP READY`.
+Expected: `PASS initialize`, `PASS notifications/initialized`, `PASS tools/list: qwen_ask, current_time, current_weather, chess_game_state, chess_coach_explain`, `PASS tools/call: VBOT MCP READY`, `PASS tools/call current_time: …`, then a PASS or INFO line per configurable tool. Set `MCP_SKIP_QWEN=1` to skip the two calls that reach Qwen. The read-only tools are described in `../README.md`.
 
 Run offline tests:
 
