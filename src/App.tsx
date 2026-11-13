@@ -18,7 +18,7 @@ import { notifyVbotMove } from './vbotDemo';
 import { useVbotCompanion } from './useVbotCompanion';
 import { VbotCompanion } from './components/VbotCompanion';
 import { VbotPerformance } from './components/VbotPerformance';
-import { createDemoStarter, hostCheckValid, type DemoHostCheck } from './demoPerformance';
+import { createDemoStarter, demoWelcomeState, hostCheckValid, type DemoHostCheck } from './demoPerformance';
 import { DemoWelcome, needsDemoWelcome, acknowledgeDemoWelcome, resetDemoWelcome } from './components/DemoWelcome';
 import { GameQrDialog } from './components/GameQrDialog';
 import { CapturePractice } from './components/CapturePractice';
@@ -5469,8 +5469,10 @@ export default function App() {
 
     {demoWelcomeOpen && <DemoWelcome
       onStart={() => void startVisitorDemo()}
-      busy={demoStarting || vbotCompanion.pending}
-      startDisabled={!demoPrepared || vbotCompanion.offline || !demoTarget || Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy)}
+      starting={demoStarting}
+      checking={vbotCompanion.pending}
+      state={demoWelcomeState({ target: demoTarget, offline: vbotCompanion.offline, prepared: demoPrepared,
+        armed: Boolean(vbotCompanion.status?.armed), busy: Boolean(vbotCompanion.status?.busy) })}
       startError={demoStartError || vbotCompanion.error}
       hostControls={<fieldset className="demo-host-checks"><legend>Enable the visitor Start button</legend>
         <label><input type="checkbox" disabled={demoStarting || !demoTarget} checked={demoHost.target === demoTarget && demoHost.space} onChange={event => confirmDemoHost('space', event.target.checked)} /> Clear, stable floor; people are outside the dog’s moving space.</label>
