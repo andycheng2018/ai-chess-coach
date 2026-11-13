@@ -36,3 +36,16 @@ export function createDemoStarter() {
     } finally { inFlight = false; }
   };
 }
+
+export type DemoWelcomeState =
+  | { kind: 'ready' | 'needs-host' }
+  | { kind: 'no-dog' | 'offline' | 'robot-busy'; message: string };
+
+/** What the visitor welcome can offer right now. Without a reachable dog the
+ * Start button is replaced, so visitors never face a big button that cannot work. */
+export function demoWelcomeState(input: { target: string; offline: boolean; armed: boolean; busy: boolean; prepared: boolean }): DemoWelcomeState {
+  if (input.offline) return { kind: 'offline', message: 'The robot dog controller isn’t reachable right now, so the dog show is off. Chess still works.' };
+  if (!input.target) return { kind: 'no-dog', message: 'No robot dog is connected to this device, so the dog show is off. Chess still works.' };
+  if (input.armed || input.busy) return { kind: 'robot-busy', message: 'The dog is busy with another session. Turn its reactions off before starting the show.' };
+  return { kind: input.prepared ? 'ready' : 'needs-host' };
+}

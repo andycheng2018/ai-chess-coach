@@ -51,3 +51,12 @@ test('busy robots and missing rehearsal evidence cannot start',async()=>{
   await assert.rejects(api.createDemoStarter()(grant(),()=>control),/rehearsal profile/);
   await assert.rejects(api.createDemoStarter()(grant(),()=>({...control,status:{...control.status,armed:true}})));
 });
+test('welcome hides the dog show when no dog can start, and only asks the host when one can',()=>{
+  const api=load(async()=>plan);const base={target,offline:false,armed:false,busy:false,prepared:false};
+  assert.equal(api.demoWelcomeState({...base,target:''}).kind,'no-dog');
+  assert.equal(api.demoWelcomeState({...base,target:'',offline:true}).kind,'offline');
+  assert.equal(api.demoWelcomeState({...base,armed:true}).kind,'robot-busy');
+  assert.equal(api.demoWelcomeState({...base,busy:true,prepared:true}).kind,'robot-busy');
+  assert.equal(api.demoWelcomeState(base).kind,'needs-host');
+  assert.equal(api.demoWelcomeState({...base,prepared:true}).kind,'ready');
+});
