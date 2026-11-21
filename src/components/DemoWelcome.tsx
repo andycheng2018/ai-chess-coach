@@ -1,6 +1,10 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { DemoWelcomeState } from '../demoPerformance';
 
+/** Temporarily off: on some Android devices the welcome popup ignored every tap
+ * and blocked the whole app during live demos. Flip to true once that is fixed. */
+export const DEMO_WELCOME_ENABLED = false;
+
 export const DEMO_WELCOME_KEY = 'chessbuddy.demo-welcome.seen.v1';
 export function needsDemoWelcome() {
   try { return sessionStorage.getItem(DEMO_WELCOME_KEY) !== '1'; }
