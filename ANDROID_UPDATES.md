@@ -90,3 +90,26 @@ Never commit shell environment files or print the password in a build log.
 The private signing bundle and a native release using it still need provisioning
 and verification if the GitHub secret has not yet been configured. Source checks
 alone are not evidence that a published update is installed on a tablet.
+
+## Touch witnesses (release gates)
+
+Added after a live demo where the visitor welcome popup ignored every tap on Android.
+
+- **Browser witness** (`npm run test:ui`, blocks releases): builds the app twice
+  (welcome popup off, as shipped, and on), opens it on Android phone and tablet
+  touch screens with the backend offline and with a real dog status from
+  `server/vbot_demo.py`, and fails if any button in a launch modal cannot be
+  tapped, a launch modal shows a disabled primary button with nothing on screen to
+  enable it, a launch modal cannot be dismissed by touch, or the home screen
+  ignores touch afterwards. Failure screenshots: `touch-witness-failure-*.png`.
+  Locally it needs Python with `requirements.txt`; set `WITNESS_PYTHON` if it is
+  not `.venv/bin/python`.
+- **Android witness** (`LaunchTouchWitnessTest`): the release APK on its own fresh
+  emulator, driven from launch to a working home screen with real UiAutomator taps.
+  It reports only for now (`continue-on-error`); remove that line in
+  `.github/workflows/android-apk.yml` once it has passed a few times.
+
+The welcome popup is off unless the app is built with `VITE_DEMO_WELCOME=on`.
+The browser witness always builds it on too, so turning it back on cannot
+reintroduce a dead end without failing the build. The Android witness tests whatever
+the release ships, so it covers the popup as soon as a release turns it on.
