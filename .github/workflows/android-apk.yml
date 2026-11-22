@@ -40,6 +40,21 @@ jobs:
           python -m pip install -r requirements.txt
           node --test tests/*.test.mjs
           python -m unittest discover -s tests
+      # Touch witness (browser): the built app on Android-sized touch screens, popup off and on,
+      # backend offline and with a real dog status. Blocks the release if anything at launch
+      # cannot be tapped or dismissed. See tests/ui/touch_witness.test.mjs.
+      - name: Touch witness in a mobile browser
+        env:
+          WITNESS_PYTHON: python
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:ui
+      - name: Save browser touch witness screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Touch-witness-browser-failures
+          path: touch-witness-failure-*.png
       - run: npm run build
       - run: npx cap sync android
       - name: Build installable demo APK
@@ -68,12 +83,30 @@ jobs:
           target: google_apis
           arch: x86_64
           disable-animations: true
-          script: cd android && ./gradlew connectedReleaseAndroidTest --no-daemon
+          script: cd android && ./gradlew connectedReleaseAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.notClass=com.andy.chessbuddy.LaunchTouchWitnessTest
       - name: Save native test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Android-runtime-test-results
+          path: android/app/build/outputs/androidTest-results/
+      # Touch witness (Android): the release APK on its own fresh emulator, launched and driven
+      # with real screen taps. Reports only for now (continue-on-error). Once it has passed on a
+      # few runs, delete continue-on-error so a launch that ignores touch blocks the release.
+      - name: Touch witness on Android with real taps
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: cd android && ./gradlew connectedReleaseAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=com.andy.chessbuddy.LaunchTouchWitnessTest
+      - name: Save Android touch witness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Touch-witness-android-results
           path: android/app/build/outputs/androidTest-results/
       - name: Remove temporary signing files
         if: always()

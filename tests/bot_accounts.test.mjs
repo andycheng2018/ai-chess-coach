@@ -53,3 +53,18 @@ test('errors never echo the pasted token', () => {
   assert.equal(result.ok, false);
   assert.ok(!result.error.includes(secret));
 });
+
+test('an unreachable server is explained, retried, and never reads as removed tokens', () => {
+  const { describeBotAccountsLoadError } = load('botAccounts');
+  const offline = describeBotAccountsLoadError(new TypeError('Failed to fetch'), 'https://chess-api.urbot.ai');
+  assert.equal(offline.kind, 'unreachable'); assert.equal(offline.retry, true);
+  assert.match(offline.text, /chess-api\.urbot\.ai/); assert.match(offline.text, /not been removed/);
+  // Cloudflare tunnel down (1033) arrives as HTTP 530 with an HTML body.
+  const tunnel = describeBotAccountsLoadError(new Error('530 '), 'https://chess-api.urbot.ai');
+  assert.equal(tunnel.kind, 'unreachable'); assert.match(tunnel.text, /HTTP 530/);
+  const local = describeBotAccountsLoadError(new TypeError('Failed to fetch'), 'http://127.0.0.1:8765');
+  assert.match(local.text, /on this device/);
+  const refused = describeBotAccountsLoadError(new Error('403 Forbidden'), 'https://chess-api.urbot.ai');
+  assert.equal(refused.kind, 'unauthorized'); assert.equal(refused.retry, false); assert.match(refused.text, /Pair this device/);
+  assert.equal(describeBotAccountsLoadError(new Error('Bad JSON'), 'https://x.example').kind, 'other');
+});

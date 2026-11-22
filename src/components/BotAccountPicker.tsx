@@ -3,7 +3,8 @@ import {
   addBotAccount, getBotAccounts, removeBotAccount, selectBotAccount,
   type BotAccountList, type BotRuntimeStatus,
 } from '../botControl';
-import { EMPTY_BOT_ACCOUNT_DRAFT, accountOptionLabel, buildNewAccount, maskedToken, type BotAccountDraft } from '../botAccounts';
+import { EMPTY_BOT_ACCOUNT_DRAFT, accountOptionLabel, buildNewAccount, describeBotAccountsLoadError, maskedToken, type BotAccountDraft, type BotAccountsLoadProblem } from '../botAccounts';
+import { backendUrl } from '../backendUrl';
 
 type Props = {
   /** Non-empty when the account cannot change (a game is starting or running). */
@@ -22,6 +23,9 @@ export function BotAccountPicker({ blockedReason, onStatus }: Props) {
   const [pending, setPending] = useState(false);
   const [managing, setManaging] = useState(false);
   const [draft, setDraft] = useState<BotAccountDraft>(EMPTY_BOT_ACCOUNT_DRAFT);
+  const [loadProblem, setLoadProblem] = useState<BotAccountsLoadProblem | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   const apply = useCallback((next: BotAccountList) => {
     setList(next);
@@ -29,12 +33,21 @@ export function BotAccountPicker({ blockedReason, onStatus }: Props) {
     if (next.message) setNotice(next.message);
   }, [onStatus]);
 
+  // The first load retries on its own while the backend is unreachable (for example a
+  // hosted server whose computer is off), so the accounts reappear without a restart.
   useEffect(() => {
     let alive = true;
-    getBotAccounts().then(next => { if (alive) { setList(next); setError(''); } })
-      .catch(err => { if (alive) setError(`Could not load bot accounts: ${message(err)}`); });
+    setLoading(true);
+    getBotAccounts().then(next => { if (alive) { setList(next); setLoadProblem(null); } })
+      .catch(err => { if (alive) setLoadProblem(describeBotAccountsLoadError(err, backendUrl())); })
+      .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [attempt]);
+  useEffect(() => {
+    if (list || !loadProblem?.retry) return;
+    const timer = window.setTimeout(() => setAttempt(value => value + 1), 15000);
+    return () => window.clearTimeout(timer);
+  }, [list, loadProblem]);
 
   async function run(action: () => Promise<BotAccountList>) {
     setPending(true); setError(''); setNotice('');
@@ -56,7 +69,12 @@ export function BotAccountPicker({ blockedReason, onStatus }: Props) {
   if (!list) {
     return <div className="setup-group bot-account-picker">
       <label className="setup-label">Bot account</label>
-      {error ? <div className="inline-error">{error}</div> : <small className="muted">Loading bot accounts…</small>}
+      {loadProblem ? <div className="inline-error" role="alert">{loadProblem.text}{loadProblem.retry ? ' Trying again every 15 seconds.' : ''}</div>
+        : <small className="muted">Loading bot accounts…</small>}
+      {loadProblem && <div className="bot-account-row">
+        <button type="button" className="ghost" disabled={loading} onClick={() => setAttempt(value => value + 1)}>{loading ? 'Checking…' : 'Retry now'}</button>
+        {loadProblem.remote && <button type="button" className="ghost" onClick={() => window.dispatchEvent(new Event('chessbuddy:server-settings'))}>Server settings</button>}
+      </div>}
     </div>;
   }
 

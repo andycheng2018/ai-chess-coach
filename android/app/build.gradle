@@ -98,6 +98,8 @@ dependencies {
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    // Real-touch launch witness (LaunchTouchWitnessTest): taps the WebView like a person would.
+    androidTestImplementation "androidx.test.uiautomator:uiautomator:2.3.0"
     implementation project(':capacitor-cordova-android-plugins')
 }
 

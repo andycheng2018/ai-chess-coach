@@ -4067,3 +4067,6 @@ header {
 .voice-mode-turns { display: grid; gap: 8px; margin: 0; padding: 8px 0 0; list-style: none; border-top: 1px solid var(--border); }
 .voice-mode-turns li { display: grid; gap: 2px; font-size: 12.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .voice-mode-turns b { color: #e8e6e3; font-weight: 700; }
+/* A disabled Start must not look like a big green go button. */
+.demo-welcome-start:disabled { opacity:1; background:#3a3733; color:#9b958e; box-shadow:none; text-shadow:none; }
+.demo-welcome-notice { margin:0 0 14px; padding:12px 14px; border:1px solid var(--border); border-radius:10px; background:#ffffff08; color:#e8e6e3; font-size:15px; line-height:1.5; }

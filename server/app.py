@@ -30,12 +30,15 @@ from tablet_access import TabletAccess, TABLET_ORIGIN, TABLET_HEADER, parse_orig
 tablet_access = TabletAccess(os.environ.get('CHESS_TABLET_TOKEN', ''), os.environ.get('CHESS_TABLET_URL', ''),
                              parse_origins(os.environ.get('CHESS_TABLET_ORIGINS', '')))
 from vbot_demo import demo as vbot_demo
+from vbot_game_context import CONTEXT_HEADER, ContextAccess, game_snapshot
 import diagnostics
 import vbot_speech
 from vbot_cloud_studio import CloudStudio
 from vbot_voice import VoiceMode
 
 voice_mode = VoiceMode(vbot_demo)
+# Read-only game snapshot for the dog's MCP bridge; its own token, never the pairing key.
+context_access = ContextAccess(os.environ.get('CHESS_CONTEXT_TOKEN', ''))
 cloud_studio = CloudStudio(vbot_demo)
 
 # Reuse the bot's one canonical game stream for result celebrations.
@@ -1661,6 +1664,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self) -> None:  # noqa: N802
+        if urlsplit(self.path).path == '/api/vbot/game-context':
+            # Checked before the pairing gate: this route has its own read-only token
+            # and returns no addresses, accounts, events or tokens (see vbot_game_context).
+            if not context_access.authorized(self.headers.get(CONTEXT_HEADER, ''), self.headers.get('Origin', '')):
+                self._send(403, {'message': 'Game context needs its read-only token.'})
+            else:
+                self._send(200, game_snapshot(vbot_demo, runtime.game_state, runtime.last_game_id))
+            return
         if self._tablet_api_denied():
             return
         if urlsplit(self.path).path == '/tablet':

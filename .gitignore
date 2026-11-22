@@ -43,3 +43,6 @@ vbot-demo/unresolved-action.json
 
 # Local bot account registry and saved bot tokens (CHESS_DATA_HOME/bot-accounts).
 /bot-accounts/
+
+# Touch witness failure screenshots (npm run test:ui)
+touch-witness-failure-*.png

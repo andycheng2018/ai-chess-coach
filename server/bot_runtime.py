@@ -696,9 +696,14 @@ class LichessBotRuntime:
                 "timeControlKnown": cached.get("timeControlKnown", False),
                 "clock": dict(cached["clock"]) if isinstance(cached.get("clock"), dict) else None,
                 "initialFen": cached["initialFen"],
+                "players": dict(cached["players"]) if isinstance(cached.get("players"), dict) else None,
                 "state": dict(cached["state"]),
                 "updatedAt": cached["updatedAt"],
             }
+
+    def last_game_id(self) -> str | None:
+        with self._lock:
+            return self._last_game_id or None
 
     def _wait_for_game_start(self, *, opponent: str = "", since: float, timeout: float = 8.0) -> str | None:
         """Wait for the bot event stream to report the newly started game.
@@ -982,6 +987,7 @@ class LichessBotRuntime:
             while not self._stop.is_set() and not finished:
                 initial_fen = "startpos"
                 bot_color: chess.Color | None = None
+                players: dict[str, str] | None = None
                 game_clock = None
                 game_rated = None
                 try:
@@ -1030,6 +1036,11 @@ class LichessBotRuntime:
                                 white_id = str(white.get("id") or white.get("name") or "").lower()
                                 black_id = str(black.get("id") or black.get("name") or "").lower()
                                 username = player.lower()
+                                # Display names only, for read-only game context.
+                                players = {
+                                    "white": str(white.get("name") or white.get("id") or "")[:40],
+                                    "black": str(black.get("name") or black.get("id") or "")[:40],
+                                }
                                 if white_id == username:
                                     bot_color = chess.WHITE
                                 elif black_id == username:
@@ -1052,6 +1063,7 @@ class LichessBotRuntime:
                                     "rated": game_rated,
                                     "timeControlKnown": True,
                                     "clock": dict(game_clock) if isinstance(game_clock, dict) else None if game_clock is None else {"invalid":True},
+                                    "players": dict(players) if players else None,
                                     "state": dict(state),
                                     "updatedAt": int(time.time() * 1000),
                                 }

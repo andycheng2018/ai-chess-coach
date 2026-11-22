@@ -18,8 +18,8 @@ import { notifyVbotMove } from './vbotDemo';
 import { useVbotCompanion } from './useVbotCompanion';
 import { VbotCompanion } from './components/VbotCompanion';
 import { VbotPerformance } from './components/VbotPerformance';
-import { createDemoStarter, hostCheckValid, type DemoHostCheck } from './demoPerformance';
-import { DemoWelcome, needsDemoWelcome, acknowledgeDemoWelcome, resetDemoWelcome } from './components/DemoWelcome';
+import { createDemoStarter, demoWelcomeState, hostCheckValid, type DemoHostCheck } from './demoPerformance';
+import { DemoWelcome, DEMO_WELCOME_ENABLED, needsDemoWelcome, acknowledgeDemoWelcome, resetDemoWelcome } from './components/DemoWelcome';
 import { GameQrDialog } from './components/GameQrDialog';
 import { CapturePractice } from './components/CapturePractice';
 import { JoinRoomDialog } from './components/JoinRoomDialog';
@@ -1714,7 +1714,7 @@ export default function App() {
   const [capturePracticeOpen, setCapturePracticeOpen] = useState(false);
   const [roomLinkOpen, setRoomLinkOpen] = useState(() => readRoomJoinDraft() !== null);
   const [performanceOpen, setPerformanceOpen] = useState(false);
-  const [demoWelcomeOpen, setDemoWelcomeOpen] = useState(needsDemoWelcome);
+  const [demoWelcomeOpen, setDemoWelcomeOpen] = useState(() => DEMO_WELCOME_ENABLED && needsDemoWelcome());
   const [demoHost, setDemoHost] = useState<DemoHostCheck>({ target: '', space: false, stop: false, checkedAt: 0 });
   const [demoStarting, setDemoStarting] = useState(false);
   const [demoStartError, setDemoStartError] = useState('');
@@ -4447,10 +4447,10 @@ export default function App() {
       navHidden={navHidden}
     />
 
-    <div className="capture-practice-entry"><button className="ghost" disabled={startingGame || vbotCompanion.pending || Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy)}
+    <div className="capture-practice-entry">{DEMO_WELCOME_ENABLED && <><button className="ghost" disabled={startingGame || vbotCompanion.pending || Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy)}
       title={vbotCompanion.status?.armed || vbotCompanion.status?.busy ? 'Stop robot reactions before welcoming the next guest.' : 'Show the quick introduction for the next visitor.'}
       onClick={() => { resetDemoWelcome(); setDemoStartError(''); setDemoWelcomeOpen(true); }}>👋 Next guest</button>
-      {Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy) && <span>Stop dog reactions before welcoming the next guest.</span>}
+      {Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy) && <span>Stop dog reactions before welcoming the next guest.</span>}</>}
       <button className="primary" onClick={() => setCapturePracticeOpen(true)}>🎯 Capture Practice</button><span>Easy queen and rook captures + Rock You rewards</span>
       <button className="ghost" onClick={() => setPerformanceOpen(true)}>🎭 Dog stage{vbotCompanion.status?.sessionKind === 'performance' && (vbotCompanion.status.armed || vbotCompanion.status.busy) ? ' · Show live' : ' · Preview & perform'}</button>
     </div>
@@ -5467,10 +5467,12 @@ export default function App() {
       </div>
     )}
 
-    {demoWelcomeOpen && <DemoWelcome
+    {DEMO_WELCOME_ENABLED && demoWelcomeOpen && <DemoWelcome
       onStart={() => void startVisitorDemo()}
-      busy={demoStarting || vbotCompanion.pending}
-      startDisabled={!demoPrepared || vbotCompanion.offline || !demoTarget || Boolean(vbotCompanion.status?.armed || vbotCompanion.status?.busy)}
+      starting={demoStarting}
+      checking={vbotCompanion.pending}
+      state={demoWelcomeState({ target: demoTarget, offline: vbotCompanion.offline, prepared: demoPrepared,
+        armed: Boolean(vbotCompanion.status?.armed), busy: Boolean(vbotCompanion.status?.busy) })}
       startError={demoStartError || vbotCompanion.error}
       hostControls={<fieldset className="demo-host-checks"><legend>Enable the visitor Start button</legend>
         <label><input type="checkbox" disabled={demoStarting || !demoTarget} checked={demoHost.target === demoTarget && demoHost.space} onChange={event => confirmDemoHost('space', event.target.checked)} /> Clear, stable floor; people are outside the dog’s moving space.</label>
