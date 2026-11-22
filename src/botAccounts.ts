@@ -59,3 +59,26 @@ export function buildNewAccount(draft: BotAccountDraft): { ok: true; account: Ne
   if (token.length < 8 || /\s/.test(token)) return { ok: false, error: 'Paste the bot account’s Lichess API token.' };
   return { ok: true, account: { label, username, token, select: true } };
 }
+
+export type BotAccountsLoadProblem = { kind: 'unreachable' | 'unauthorized' | 'other'; text: string; retry: boolean; remote: boolean };
+
+/** Explain a failed bot account load in words a demo host can act on. Accounts and their
+ * tokens live on the backend, so an unreachable backend never means they were removed. */
+export function describeBotAccountsLoadError(error: unknown, serverUrl: string): BotAccountsLoadProblem {
+  const raw = typeof (error as { message?: unknown })?.message === 'string' ? (error as { message: string }).message : String(error);
+  const host = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i.exec(serverUrl)?.[1] || serverUrl;
+  const local = /^(127\.0\.0\.1|localhost|\[::1\])(:|$)/.test(host);
+  const where = local ? 'the coach backend on this device' : `the Chess Buddy server at ${host}`;
+  const status = Number(/^(\d{3})\b/.exec(raw)?.[1] || 0);
+  const network = (error as { name?: unknown })?.name === 'TypeError' || /failed to fetch|load failed|networkerror|network request failed/i.test(raw);
+  if (network || (status >= 500 && status <= 599)) {
+    return { kind: 'unreachable', retry: true, remote: !local, text: `Can’t reach ${where}${status ? ` (HTTP ${status})` : ''}. `
+      + 'Your bot accounts and their tokens are saved there and have not been removed; they come back as soon as it answers. '
+      + (local ? 'Restart the app if this lasts.' : 'If that server is a computer, make sure it is on and signed in after any restart.') };
+  }
+  if (status === 401 || status === 403) {
+    return { kind: 'unauthorized', retry: false, remote: !local, text: `${where[0].toUpperCase()}${where.slice(1)} refused this device (HTTP ${status}). `
+      + 'Pair this device with the server again; the saved bot accounts on the server are unchanged.' };
+  }
+  return { kind: 'other', retry: true, remote: !local, text: `Could not load bot accounts: ${raw}` };
+}
