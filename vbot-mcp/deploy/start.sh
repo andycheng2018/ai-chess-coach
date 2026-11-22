@@ -3,6 +3,12 @@
 # Secrets live in ~/vbot-qwen-mcp/env (mode 0600), never in this file or the plist:
 #   QWEN_API_KEY    Caddy gateway key (same value as ~/qwen-api-proxy/Caddyfile)
 #   QWEN_MCP_TOKEN  bearer the robot sends to /mcp (a different secret)
+# Optional, for the read-only tools (each tool says what is missing if unset):
+#   VBOT_TIMEZONE        current_time zone (default America/Los_Angeles)
+#   VBOT_LOCATION        current_weather place, e.g. VBOT_LOCATION=Los Angeles, California (no quotes:
+#                        this file is read literally, so quotes would become part of the place name)
+#   CHESS_CONTEXT_TOKEN  same value as CHESS_CONTEXT_TOKEN in ~/chess-coach/.env (a third secret)
+# current_time/current_weather import vbot_live_context.py, copied here from server/.
 set -euo pipefail
 cd "$HOME/vbot-qwen-mcp"
 # Read KEY=value lines literally (no shell expansion of the secret values).

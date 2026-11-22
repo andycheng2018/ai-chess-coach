@@ -229,7 +229,7 @@ class VbotDemo:
                 return
             self.records[record_id] = (self.clock(), {key: record.get(key) for key in (
                 "recordId", "gameId", "ply", "playerColor", "playedMoveUci", "playedMove", "classification", "fenBefore", "savedAt", "evaluationAfter",
-                "engineDiagnostics", "opponentReplyUci")})
+                "engineDiagnostics", "opponentReplyUci", "centipawnLoss", "bestMove")})
             while len(self.records) > 256:
                 self.records.popitem(last=False)
 
